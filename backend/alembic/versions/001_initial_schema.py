@@ -120,6 +120,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # pgcrypto extension is intentionally left installed — it may be shared
+    # across schemas/databases and is harmless to leave in place.
     op.drop_table("daily_briefings")
     op.drop_table("alerts")
     op.drop_table("commentary")
