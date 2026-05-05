@@ -1,7 +1,7 @@
 # backend/app/main.py
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import trades, commentary
+from app.routers import trades, commentary, alerts, market, briefing
 
 app = FastAPI(title="TradeMinder API", version="0.1.0")
 
@@ -21,3 +21,6 @@ async def health():
 
 app.include_router(trades.router)
 app.include_router(commentary.router)
+app.include_router(alerts.router)
+app.include_router(market.router)
+app.include_router(briefing.router)
