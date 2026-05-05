@@ -2,8 +2,8 @@
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Optional
-from pydantic import BaseModel, ConfigDict
+from typing import Annotated, Optional
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class RationaleResponse(BaseModel):
@@ -35,16 +35,16 @@ class RationaleResponse(BaseModel):
 
 class TradeCreate(BaseModel):
     wheel_id: Optional[uuid.UUID] = None
-    type: str
-    category: str
-    strategy: str
-    ticker: str
+    type: Annotated[str, Field(min_length=1, max_length=10)]
+    category: Annotated[str, Field(min_length=1, max_length=20)]
+    strategy: Annotated[str, Field(min_length=1, max_length=30)]
+    ticker: Annotated[str, Field(min_length=1, max_length=10)]
     open_date: date
     expiry_date: Optional[date] = None
-    strike_price: Optional[Decimal] = None
-    quantity: int
-    premium: Optional[Decimal] = None
-    collateral: Optional[Decimal] = None
+    strike_price: Optional[Annotated[Decimal, Field(ge=0)]] = None
+    quantity: Annotated[int, Field(gt=0)]
+    premium: Optional[Annotated[Decimal, Field(ge=0)]] = None
+    collateral: Optional[Annotated[Decimal, Field(ge=0)]] = None
     exit_strategy: Optional[str] = None
     signal_action: Optional[str] = None
     rationale_notes: Optional[str] = None  # stored in rationale.notes
