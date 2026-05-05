@@ -4,7 +4,7 @@ from typing import Optional, TYPE_CHECKING
 from sqlalchemy import Date, Text, DateTime, ForeignKey, Index, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID, ARRAY
-from sqlalchemy.sql import func
+from sqlalchemy.sql import func, text
 from app.database import Base
 
 if TYPE_CHECKING:
@@ -25,5 +25,5 @@ class Commentary(Base):
 
     __table_args__ = (
         Index("idx_commentary_trade", "trade_id"),
-        Index("idx_commentary_date", "entry_date"),
+        Index("idx_commentary_date", text("entry_date DESC")),
     )

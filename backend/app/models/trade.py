@@ -40,7 +40,7 @@ class Trade(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
     rationale: Mapped[Optional["Rationale"]] = relationship(back_populates="trade", cascade="all, delete-orphan", uselist=False)
-    commentary: Mapped[list["Commentary"]] = relationship(back_populates="trade", cascade="all, delete-orphan", order_by="Commentary.created_at.desc()")
+    commentary: Mapped[list["Commentary"]] = relationship(back_populates="trade", cascade="all, delete-orphan")
     alerts: Mapped[list["Alert"]] = relationship(back_populates="trade", cascade="all, delete-orphan")
 
     __table_args__ = (
