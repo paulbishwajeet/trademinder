@@ -12,6 +12,11 @@ services:
       - ./backend/docker/init-test-db.sql:/docker-entrypoint-initdb.d/init-test-db.sql
     ports:
       - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trademinder -d trademinder"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   backend:
     build: ./backend
@@ -19,7 +24,8 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://trademinder:password@db:5432/trademinder
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     ports:
       - "8000:8000"
     volumes:
