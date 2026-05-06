@@ -33,12 +33,30 @@ def test_pnl_sell_put_otm():
     assert _compute_unrealized_pnl(trade, 200.0) == 350.0
 
 
+def test_pnl_sell_put_credit_spread():
+    # PutCreditSpread uses same formula as Put
+    # Strike 190, current price 185 → intrinsic = 5.00
+    # (3.50 - 5.00) * 1 * 100 = -150.00
+    trade = Trade(type="Sell", strategy="PutCreditSpread",
+                  strike_price=Decimal("190.00"), premium=Decimal("3.50"), quantity=1)
+    assert _compute_unrealized_pnl(trade, 185.0) == -150.0
+
+
 def test_pnl_sell_covered_call_itm():
     # Strike 195, current price 200 → intrinsic = 5.00
     # (2.00 - 5.00) * 2 * 100 = -600.00
     trade = Trade(type="Sell", strategy="CoveredCall",
                   strike_price=Decimal("195.00"), premium=Decimal("2.00"), quantity=2)
     assert _compute_unrealized_pnl(trade, 200.0) == -600.0
+
+
+def test_pnl_sell_call_itm():
+    # Bare Call uses same formula as CoveredCall
+    # Strike 195, current price 200 → intrinsic = 5.00
+    # (2.00 - 5.00) * 1 * 100 = -300.00
+    trade = Trade(type="Sell", strategy="Call",
+                  strike_price=Decimal("195.00"), premium=Decimal("2.00"), quantity=1)
+    assert _compute_unrealized_pnl(trade, 200.0) == -300.0
 
 
 def test_pnl_null_for_missing_strike():
@@ -143,3 +161,34 @@ async def test_refresh_records_error_for_missing_ticker(client: AsyncClient, db_
     assert result["trades_updated"] == 0
     assert len(result["errors"]) == 1
     assert "AAPL" in result["errors"][0]
+
+
+async def test_refresh_leaves_existing_price_unchanged_when_ticker_missing(client: AsyncClient, db_session: AsyncSession):
+    from datetime import date as dt
+    from sqlalchemy import select as sa_select
+    import uuid
+    from app.models.trade import Trade as TradeModel
+
+    resp = await client.post("/api/trades", json={
+        "type": "Sell", "category": "Wheel", "strategy": "Put",
+        "ticker": "AAPL", "open_date": str(dt.today()),
+        "strike_price": "190.00", "premium": "3.50", "quantity": 1,
+    })
+    trade_id = resp.json()["id"]
+
+    # Seed an existing current_price
+    stmt = sa_select(TradeModel).where(TradeModel.id == uuid.UUID(trade_id))
+    r = await db_session.execute(stmt)
+    t = r.scalar_one()
+    t.current_price = 188.0
+    await db_session.commit()
+
+    # Now refresh with empty prices (ticker not found)
+    with patch("app.services.price_fetcher._fetch_prices_from_yfinance", return_value={}):
+        result = await refresh_open_trades(db_session)
+
+    assert result["trades_updated"] == 0
+
+    # Existing price must be unchanged
+    await db_session.refresh(t)
+    assert float(t.current_price) == 188.0
