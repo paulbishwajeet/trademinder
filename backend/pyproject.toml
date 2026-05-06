@@ -16,6 +16,7 @@ dependencies = [
     "pydantic-settings>=2.2.0",
     "yfinance>=0.2.40",
     "anthropic>=0.26.0",
+    "apscheduler>=3.10.4,<4.0",
 ]
 
 [project.optional-dependencies]
