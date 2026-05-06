@@ -77,9 +77,12 @@ async def test_get_alerts_for_trade(client: AsyncClient, db_session: AsyncSessio
     assert data[0]["trade_id"] == trade_id
 
 
-async def test_stub_market_returns_501(client: AsyncClient):
-    response = await client.get("/api/market/quote/AAPL")
-    assert response.status_code == 501
+async def test_market_quote_no_longer_stub(client: AsyncClient):
+    from unittest.mock import patch
+    mock_result = {"ticker": "AAPL", "price": 150.0, "change_pct": 0.0, "last_updated": "2026-05-05T00:00:00Z"}
+    with patch("app.routers.market.fetch_quote", return_value=mock_result):
+        response = await client.get("/api/market/quote/AAPL")
+    assert response.status_code == 200
 
 
 async def test_stub_briefing_returns_501(client: AsyncClient):
