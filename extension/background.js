@@ -12,6 +12,13 @@ chrome.runtime.onInstalled.addListener(() => {
       });
     }
   });
+
+  chrome.contextMenus.create({
+    id: 'tm-add',
+    title: 'Add to TradeMinder',
+    contexts: ['page'],
+    documentUrlPatterns: ['https://*.etrade.com/*'],
+  });
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -24,4 +31,36 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     });
     return true; // async response
   }
+
+  if (message.type === 'ROW_CONTEXT') {
+    // Update context menu title/state based on whether position is tracked
+    const isTracked = message.isTracked;
+    chrome.contextMenus.update('tm-add', {
+      title: isTracked ? 'Already in TradeMinder' : 'Add to TradeMinder',
+      enabled: !isTracked,
+    });
+    // Store row info so we can use it when context menu is clicked
+    chrome.storage.session
+      ? chrome.storage.session.set({ tmPendingRow: message.info })
+      : chrome.storage.local.set({ tmPendingRow: message.info });
+    sendResponse({ ok: true });
+    return true;
+  }
+});
+
+chrome.contextMenus.onClicked.addListener((info, tab) => {
+  if (info.menuItemId !== 'tm-add') return;
+  if (!tab?.id) return;
+
+  const fetchPending = (cb) => {
+    if (chrome.storage.session) {
+      chrome.storage.session.get('tmPendingRow', (r) => cb(r.tmPendingRow || null));
+    } else {
+      chrome.storage.local.get('tmPendingRow', (r) => cb(r.tmPendingRow || null));
+    }
+  };
+
+  fetchPending((rowInfo) => {
+    chrome.tabs.sendMessage(tab.id, { type: 'SHOW_ADD_MODAL', info: rowInfo });
+  });
 });

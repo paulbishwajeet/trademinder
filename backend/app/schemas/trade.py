@@ -2,7 +2,7 @@
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Annotated, Optional
+from typing import Annotated, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -53,7 +53,7 @@ class TradeCreate(BaseModel):
 class TradeUpdate(BaseModel):
     exit_strategy: Optional[str] = None
     signal_action: Optional[str] = None
-    status: Optional[str] = None
+    status: Optional[Literal["open", "closed", "expired", "assigned"]] = None
     current_price: Optional[Decimal] = None
     unrealized_pnl: Optional[Decimal] = None
 

@@ -34,6 +34,9 @@ let isProcessing = false;
 let allCategories = [];
 let activeFilter = 'all';
 
+// column name → cell index, built once from the header row
+let columnIndexCache = null;
+
 // ============================================================
 // INIT
 // ============================================================
@@ -58,6 +61,44 @@ async function loadCategoriesAndStart() {
   }
   insertFilterToolbar();
   startObserver();
+}
+
+// ============================================================
+// COLUMN MAP — resolves header names to col-attribute values
+// ============================================================
+function buildColumnMap() {
+  if (columnIndexCache) return columnIndexCache;
+  const headerRow = document.querySelector(ETRADE.headerRow);
+  if (!headerRow) return {};
+  const map = {};
+  headerRow.querySelectorAll('[role="columnheader"]').forEach((cell) => {
+    const colNum = cell.getAttribute('col');
+    if (colNum == null) return;
+    // Use the title span to avoid picking up arrow icon text
+    const titleEl = cell.querySelector('.HeaderCell---title---2VEL5');
+    const raw = (titleEl ? titleEl.textContent : cell.textContent)
+      .trim()
+      .replace(/\u00a0/g, ' ')  // &nbsp; → regular space
+      .replace(/\s+/g, ' ')
+      .toLowerCase();
+    if (raw) map[raw] = colNum;
+  });
+  columnIndexCache = map;
+  return map;
+}
+
+// Use the col attribute (matches between header and data rows regardless of rowheader offset)
+function getRowCellText(row, colNum) {
+  const cell = row.querySelector(`[col="${colNum}"]`);
+  return cell ? cell.textContent.trim() : null;
+}
+
+function parseNumeric(text) {
+  if (!text) return null;
+  // Remove $, commas, spaces; handle parentheses as negative
+  const cleaned = text.replace(/[$, ]/g, '').replace(/\(([^)]+)\)/, '-$1');
+  const n = parseFloat(cleaned);
+  return isNaN(n) ? null : n;
 }
 
 // ============================================================
@@ -98,7 +139,24 @@ function getRowInfo(row) {
     }
   }
 
-  return { ticker, isOption, isITM, fullSymbol, optionDetails };
+  // Extract Qty and Price Paid from grid cells using header column map
+  const colMap = buildColumnMap();
+  // Header text after &nbsp; normalization: "qty #" and "price paid $"
+  const qtyCol       = colMap['qty #']       ?? colMap['qty'] ?? null;
+  const pricePaidCol = colMap['price paid $'] ?? colMap['price paid'] ?? null;
+
+  let quantity  = null;
+  let pricePaid = null;
+
+  if (qtyCol != null) {
+    const raw = parseNumeric(getRowCellText(row, qtyCol));
+    if (raw != null) quantity = Math.abs(raw);  // qty is negative for short positions
+  }
+  if (pricePaidCol != null) {
+    pricePaid = parseNumeric(getRowCellText(row, pricePaidCol));
+  }
+
+  return { ticker, isOption, isITM, fullSymbol, optionDetails, quantity, pricePaid };
 }
 
 function parseOptionSymbol(fullSymbol) {
@@ -357,6 +415,207 @@ function applyFiltersToAll() {
     if (!cacheKey) return;
     const status = statusCache.get(cacheKey) || null;
     applyFilter(row, status);
+  });
+}
+
+// ============================================================
+// RIGHT-CLICK CONTEXT MENU — inform background of row state
+// ============================================================
+document.addEventListener('contextmenu', (e) => {
+  const row = e.target.closest(ETRADE.positionRows);
+  if (!row) return;
+
+  const info = getRowInfo(row);
+  if (!info) return;
+
+  const cacheKey = info.fullSymbol || info.ticker;
+  const status = statusCache.get(cacheKey) || null;
+  const isTracked = !!(status && status.trade_id);
+
+  chrome.runtime.sendMessage({
+    type: 'ROW_CONTEXT',
+    isTracked,
+    info: {
+      ticker: info.ticker,
+      isOption: info.isOption,
+      isITM: info.isITM,
+      fullSymbol: info.fullSymbol || null,
+      type: info.optionDetails?.type || null,
+      strike: info.optionDetails?.strike || null,
+      expiry: info.optionDetails?.expiry || null,
+      dte: info.optionDetails?.dte || null,
+      quantity: info.quantity || null,
+      pricePaid: info.pricePaid || null,
+      tradeId: status?.trade_id || null,
+    },
+  });
+}, true);
+
+// Handle message from background to show modal
+chrome.runtime.onMessage.addListener((message) => {
+  if (message.type === 'SHOW_ADD_MODAL') {
+    showAddTradeModal(message.info || {});
+  }
+});
+
+// ============================================================
+// ADD TRADE MODAL
+// ============================================================
+function showAddTradeModal(info) {
+  if (document.getElementById('tm-modal-overlay')) return; // already open
+
+  const overlay = document.createElement('div');
+  overlay.id = 'tm-modal-overlay';
+
+  const today = new Date().toISOString().split('T')[0];
+
+  // Derive sensible defaults from DOM info
+  const defaultType = info.isOption ? 'Sell' : 'Buy';
+  const defaultStrategy = info.isOption
+    ? (info.type === 'Put' ? 'Sell Put' : 'Sell Call')
+    : 'Stock';
+
+  overlay.innerHTML = `
+    <div id="tm-modal">
+      <div id="tm-modal-header">
+        <span id="tm-modal-title">Add to TradeMinder</span>
+        <button id="tm-modal-close" title="Close">✕</button>
+      </div>
+      <form id="tm-modal-form" autocomplete="off">
+        <div class="tm-field-row">
+          <label>Ticker</label>
+          <input type="text" name="ticker" value="${info.ticker || ''}" required />
+        </div>
+        <div class="tm-field-row">
+          <label>Type (Sell/Buy)</label>
+          <select name="type">
+            <option value="Sell" ${defaultType === 'Sell' ? 'selected' : ''}>Sell</option>
+            <option value="Buy" ${defaultType === 'Buy' ? 'selected' : ''}>Buy</option>
+          </select>
+        </div>
+        <div class="tm-field-row tm-field-full">
+          <label>Strategy <span class="tm-required">*</span></label>
+          <select name="strategy">
+            <option value="Sell Put" ${defaultStrategy === 'Sell Put' ? 'selected' : ''}>Sell Put</option>
+            <option value="Sell Call" ${defaultStrategy === 'Sell Call' ? 'selected' : ''}>Sell Call</option>
+            <option value="Buy Put" ${defaultStrategy === 'Buy Put' ? 'selected' : ''}>Buy Put</option>
+            <option value="Buy Call" ${defaultStrategy === 'Buy Call' ? 'selected' : ''}>Buy Call</option>
+            <option value="Put Credit Spread" ${defaultStrategy === 'Put Credit Spread' ? 'selected' : ''}>Put Credit Spread</option>
+            <option value="Call Credit Spread">Call Credit Spread</option>
+            <option value="Covered Call" ${defaultStrategy === 'Covered Call' ? 'selected' : ''}>Covered Call</option>
+            <option value="Stock" ${defaultStrategy === 'Stock' ? 'selected' : ''}>Stock</option>
+          </select>
+        </div>
+        <div class="tm-field-row tm-field-full">
+          <label>Category <span class="tm-required">*</span></label>
+          <select name="category">
+            <option value="Wheel">Wheel</option>
+            <option value="Speculative">Speculative</option>
+            <option value="Momentum">Momentum</option>
+            <option value="Short Term">Short Term</option>
+            <option value="Long Term">Long Term</option>
+            <option value="Coach Suggested">Coach Suggested</option>
+          </select>
+        </div>
+        <div class="tm-field-row">
+          <label>Strike</label>
+          <input type="number" name="strike_price" step="0.01" value="${info.strike != null ? info.strike : ''}" placeholder="optional" />
+        </div>
+        <div class="tm-field-row">
+          <label>Expiry</label>
+          <input type="date" name="expiry_date" value="${info.expiry || ''}" />
+        </div>
+        <div class="tm-field-row">
+          <label>Qty</label>
+          <input type="number" name="quantity" min="1" step="1" value="${info.quantity != null ? info.quantity : 1}" required />
+        </div>
+        <div class="tm-field-row">
+          <label>Premium <span class="tm-required">*</span></label>
+          <input type="number" name="premium" step="0.01" min="0" value="${info.pricePaid != null ? info.pricePaid : ''}" placeholder="0.00" required />
+        </div>
+        <div class="tm-field-row">
+          <label>Open Date</label>
+          <input type="date" name="open_date" value="${today}" required />
+        </div>
+        <div class="tm-field-row tm-field-full">
+          <label>Exit Strategy</label>
+          <input type="text" name="exit_strategy" placeholder="e.g. Close at 50% profit" />
+        </div>
+        <div class="tm-field-row tm-field-full">
+          <label>Notes</label>
+          <textarea name="rationale_notes" rows="2" placeholder="Why are you entering this trade?"></textarea>
+        </div>
+        <div id="tm-modal-error" class="tm-hidden"></div>
+        <div id="tm-modal-actions">
+          <button type="button" id="tm-modal-cancel">Cancel</button>
+          <button type="submit" id="tm-modal-submit">Add Trade</button>
+        </div>
+      </form>
+    </div>`;
+
+  document.body.appendChild(overlay);
+
+  const closeModal = () => overlay.remove();
+  overlay.querySelector('#tm-modal-close').addEventListener('click', closeModal);
+  overlay.querySelector('#tm-modal-cancel').addEventListener('click', closeModal);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) closeModal(); });
+
+  overlay.querySelector('#tm-modal-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const errorEl = overlay.querySelector('#tm-modal-error');
+    const submitBtn = overlay.querySelector('#tm-modal-submit');
+    errorEl.classList.add('tm-hidden');
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Adding…';
+
+    const fd = new FormData(e.target);
+    const strike_price = fd.get('strike_price') ? parseFloat(fd.get('strike_price')) : null;
+    const expiry_date = fd.get('expiry_date') || null;
+    const payload = {
+      ticker: fd.get('ticker').trim().toUpperCase(),
+      type: fd.get('type'),
+      strategy: fd.get('strategy'),
+      category: fd.get('category'),
+      quantity: parseInt(fd.get('quantity'), 10),
+      premium: parseFloat(fd.get('premium')),
+      open_date: fd.get('open_date'),
+      ...(strike_price != null && { strike_price }),
+      ...(expiry_date && { expiry_date }),
+      ...(fd.get('exit_strategy') && { exit_strategy: fd.get('exit_strategy').trim() }),
+      ...(fd.get('rationale_notes')?.trim() && { rationale_notes: fd.get('rationale_notes').trim() }),
+    };
+
+    try {
+      const resp = await fetch(`${tmApiUrl}/api/trades`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(8000),
+      });
+
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error(err.detail || `HTTP ${resp.status}`);
+      }
+
+      const trade = await resp.json();
+
+      // Invalidate cache so the row refreshes
+      const cacheKey = info.fullSymbol || info.ticker;
+      statusCache.delete(cacheKey);
+      if (info.ticker) statusCache.delete(info.ticker);
+      processedRows.forEach((val, key) => {
+        if (val === cacheKey || val === info.ticker) processedRows.delete(key);
+      });
+      processVisibleRows();
+      closeModal();
+
+    } catch (err) {
+      errorEl.textContent = err.message || 'Failed to add trade';
+      errorEl.classList.remove('tm-hidden');
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Add Trade';
+    }
   });
 }
 
