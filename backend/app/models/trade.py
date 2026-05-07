@@ -2,7 +2,7 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional, TYPE_CHECKING
-from sqlalchemy import String, Integer, Numeric, Date, Text, DateTime, Index
+from sqlalchemy import String, Integer, Numeric, Date, Text, DateTime, ForeignKey, Index
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func, text
@@ -12,6 +12,8 @@ if TYPE_CHECKING:
     from app.models.rationale import Rationale
     from app.models.commentary import Commentary
     from app.models.alert import Alert
+    from app.models.category import Category
+    from app.models.signal import TechnicalSignal
 
 
 class Trade(Base):
@@ -21,6 +23,7 @@ class Trade(Base):
     wheel_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
     type: Mapped[str] = mapped_column(String(10), nullable=False)
     category: Mapped[str] = mapped_column(String(20), nullable=False)
+    category_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("categories.id"), nullable=True)
     strategy: Mapped[str] = mapped_column(String(30), nullable=False)
     ticker: Mapped[str] = mapped_column(String(10), nullable=False)
     open_date: Mapped[date] = mapped_column(Date, nullable=False)
@@ -42,6 +45,8 @@ class Trade(Base):
     rationale: Mapped[Optional["Rationale"]] = relationship(back_populates="trade", cascade="all, delete-orphan", uselist=False)
     commentary: Mapped[list["Commentary"]] = relationship(back_populates="trade", cascade="all, delete-orphan")
     alerts: Mapped[list["Alert"]] = relationship(back_populates="trade", cascade="all, delete-orphan")
+    category_obj: Mapped[Optional["Category"]] = relationship(back_populates="trades")
+    signals: Mapped[list["TechnicalSignal"]] = relationship(back_populates="trade", cascade="all, delete-orphan")
 
     __table_args__ = (
         Index("idx_trades_ticker", "ticker"),

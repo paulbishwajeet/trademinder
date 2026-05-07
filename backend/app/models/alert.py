@@ -24,6 +24,7 @@ class Alert(Base):
     is_dismissed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     triggered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     dismissed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    snoozed_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     trade: Mapped["Trade"] = relationship(back_populates="alerts")
 
