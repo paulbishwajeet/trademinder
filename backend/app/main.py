@@ -2,7 +2,7 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import trades, commentary, alerts, market, briefing
+from app.routers import trades, commentary, alerts, market, briefing, categories, positions, signals
 from app.scheduler import scheduler, start_scheduler
 
 
@@ -34,3 +34,6 @@ app.include_router(commentary.router)
 app.include_router(alerts.router)
 app.include_router(market.router)
 app.include_router(briefing.router)
+app.include_router(categories.router)
+app.include_router(positions.router)
+app.include_router(signals.router)

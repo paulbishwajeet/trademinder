@@ -32,8 +32,17 @@ async def alert_engine_job() -> None:
         await run_alert_engine(db)
 
 
+async def signal_engine_job() -> None:
+    if not is_market_hours():
+        return
+    from app.services.signal_engine import run as run_signal_engine
+    async with AsyncSessionLocal() as db:
+        await run_signal_engine(db)
+
+
 def start_scheduler(interval_minutes: int | None = None) -> None:
     minutes = interval_minutes or settings.price_refresh_interval_minutes
     scheduler.add_job(price_refresh_job, "interval", minutes=minutes, id="price_refresh")
     scheduler.add_job(alert_engine_job, "interval", minutes=minutes, seconds=30, id="alert_engine")
+    scheduler.add_job(signal_engine_job, "interval", minutes=minutes, seconds=60, id="signal_engine")
     scheduler.start()
