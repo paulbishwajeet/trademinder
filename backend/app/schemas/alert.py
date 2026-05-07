@@ -18,3 +18,4 @@ class AlertResponse(BaseModel):
     is_dismissed: bool
     triggered_at: datetime
     dismissed_at: Optional[datetime] = None
+    snoozed_until: Optional[datetime] = None

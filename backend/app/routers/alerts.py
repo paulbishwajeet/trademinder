@@ -1,7 +1,8 @@
 # backend/app/routers/alerts.py
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
@@ -12,11 +13,19 @@ from app.schemas.alert import AlertResponse
 router = APIRouter(prefix="/api/alerts", tags=["alerts"])
 
 
+class SnoozeRequest(BaseModel):
+    hours: int = 24
+
+
 @router.get("", response_model=list[AlertResponse])
 async def list_alerts(db: AsyncSession = Depends(get_db)):
+    now = datetime.now(timezone.utc)
     stmt = (
         select(Alert)
-        .where(Alert.is_dismissed == False)  # noqa: E712
+        .where(
+            Alert.is_dismissed == False,  # noqa: E712
+            (Alert.snoozed_until == None) | (Alert.snoozed_until <= now),  # noqa: E711
+        )
         .order_by(Alert.triggered_at.desc())
     )
     result = await db.execute(stmt)
@@ -52,6 +61,19 @@ async def dismiss_alert(alert_id: uuid.UUID, db: AsyncSession = Depends(get_db))
         raise HTTPException(status_code=404, detail="Alert not found")
     alert.is_dismissed = True
     alert.dismissed_at = datetime.now(timezone.utc)
+    await db.commit()
+    await db.refresh(alert)
+    return alert
+
+
+@router.post("/{alert_id}/snooze", response_model=AlertResponse)
+async def snooze_alert(alert_id: uuid.UUID, payload: SnoozeRequest, db: AsyncSession = Depends(get_db)):
+    stmt = select(Alert).where(Alert.id == alert_id)
+    result = await db.execute(stmt)
+    alert = result.scalar_one_or_none()
+    if alert is None:
+        raise HTTPException(status_code=404, detail="Alert not found")
+    alert.snoozed_until = datetime.now(timezone.utc) + timedelta(hours=payload.hours)
     await db.commit()
     await db.refresh(alert)
     return alert

@@ -104,7 +104,6 @@ async def update_trade(trade_id: uuid.UUID, payload: TradeUpdate, db: AsyncSessi
     for field, value in payload.model_dump(exclude_none=True).items():
         setattr(trade, field, value)
     await db.commit()
-    await db.refresh(trade)
     # Re-fetch with rationale after commit
     stmt2 = select(Trade).where(Trade.id == trade_id).options(selectinload(Trade.rationale))
     result2 = await db.execute(stmt2)
@@ -139,3 +138,24 @@ async def delete_trade(trade_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Trade not found")
     await db.delete(trade)
     await db.commit()
+
+
+class CategoryAssignRequest(BaseModel):
+    category_id: Optional[uuid.UUID] = None
+
+
+@router.patch("/{trade_id}/category", response_model=TradeListItem)
+async def assign_category(
+    trade_id: uuid.UUID,
+    payload: CategoryAssignRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    stmt = select(Trade).where(Trade.id == trade_id)
+    result = await db.execute(stmt)
+    trade = result.scalar_one_or_none()
+    if trade is None:
+        raise HTTPException(status_code=404, detail="Trade not found")
+    trade.category_id = payload.category_id
+    await db.commit()
+    await db.refresh(trade)
+    return trade
