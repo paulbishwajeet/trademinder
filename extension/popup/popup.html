@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="header">
+    <span class="logo">TM</span>
+    <span class="title">TradeMinder</span>
+  </div>
+
+  <div class="section">
+    <label class="label">Backend URL</label>
+    <input type="text" id="apiUrl" class="input" placeholder="http://localhost:8000">
+    <div id="statusDot" class="status-dot"></div>
+  </div>
+
+  <div class="section">
+    <label class="label">Stages</label>
+    <label class="toggle"><input type="checkbox" id="stage1" checked> Category indicators</label>
+    <label class="toggle"><input type="checkbox" id="stage2" checked> Commentary + AI summary</label>
+    <label class="toggle"><input type="checkbox" id="stage3" checked> Alert-based coloring</label>
+    <label class="toggle"><input type="checkbox" id="stage4" checked> Technical signal flags</label>
+  </div>
+
+  <button id="save" class="btn">Save</button>
+  <div id="saved" class="saved-msg" style="display:none">✓ Saved</div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

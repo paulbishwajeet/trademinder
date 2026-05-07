@@ -1,0 +1,111 @@
+/* TradeMinder content styles */
+
+.tm-badge {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 11px;
+  line-height: 1;
+  pointer-events: auto;
+}
+
+.tm-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 7px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  background: rgba(107, 114, 128, 0.12);
+  color: #374151;
+  border: 1px solid rgba(107, 114, 128, 0.25);
+}
+
+.tm-tag.tm-urgent {
+  background: rgba(239, 68, 68, 0.15);
+  color: #dc2626;
+  border-color: rgba(239, 68, 68, 0.4);
+}
+
+.tm-tag.tm-warning {
+  background: rgba(245, 158, 11, 0.15);
+  color: #d97706;
+  border-color: rgba(245, 158, 11, 0.4);
+}
+
+.tm-tag.tm-info {
+  background: rgba(139, 92, 246, 0.12);
+  color: #7c3aed;
+  border-color: rgba(139, 92, 246, 0.3);
+}
+
+.tm-tag.tm-ok {
+  background: rgba(34, 197, 94, 0.1);
+  color: #15803d;
+  border-color: rgba(34, 197, 94, 0.3);
+}
+
+.tm-tag.tm-untracked {
+  background: transparent;
+  color: #9ca3af;
+  border-color: transparent;
+  font-style: italic;
+}
+
+.tm-alert-label {
+  font-weight: 600;
+}
+
+.tm-dte {
+  font-weight: 400;
+  opacity: 0.8;
+}
+
+.tm-dot {
+  font-size: 9px;
+  line-height: 1;
+}
+
+.tm-dot.tm-bullish { color: #16a34a; }
+.tm-dot.tm-bearish { color: #dc2626; }
+
+/* Filter toolbar */
+#tm-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+
+.tm-filter-btn {
+  padding: 3px 10px;
+  border-radius: 12px;
+  border: 1px solid #d1d5db;
+  background: #fff;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  color: #374151;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  transition: background 0.1s;
+}
+
+.tm-filter-btn:hover,
+.tm-filter-btn.active {
+  background: #3b82f6;
+  color: #fff;
+  border-color: #3b82f6;
+}
+
+.tm-filter-label {
+  font-size: 11px;
+  color: #6b7280;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  margin-right: 2px;
+}
