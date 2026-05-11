@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom'
 import { DashboardPage } from './pages/DashboardPage'
 import { TradesPage } from './pages/TradesPage'
 import { TradeDetailPage } from './pages/TradeDetailPage'
+import { MarginDashboardPage } from './pages/MarginDashboardPage'
 
 function NavItem({ to, label }: { to: string; label: string }) {
   return (
@@ -25,12 +26,14 @@ export default function App() {
           <span className="font-bold text-gray-900 mr-4">TradeMinder</span>
           <NavItem to="/" label="Dashboard" />
           <NavItem to="/trades" label="Trades" />
+          <NavItem to="/margin" label="Margin" />
         </nav>
         <main>
           <Routes>
             <Route path="/" element={<DashboardPage />} />
             <Route path="/trades" element={<TradesPage />} />
             <Route path="/trades/:id" element={<TradeDetailPage />} />
+            <Route path="/margin" element={<MarginDashboardPage />} />
           </Routes>
         </main>
       </div>

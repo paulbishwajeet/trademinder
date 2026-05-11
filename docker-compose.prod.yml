@@ -1,0 +1,53 @@
+# Production compose — use this for QNAP Container Station deployment.
+# 1. Copy this file and .env.example to your NAS (or git clone the repo).
+# 2. Create .env from .env.example and fill in real values.
+# 3. In Container Station → Create Application → paste the compose or point to this file.
+#
+# Access the app at http://<NAS_IP>:<FRONTEND_PORT>  (default port 3000)
+
+services:
+  db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: trademinder
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      POSTGRES_DB: trademinder
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trademinder -d trademinder"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql+asyncpg://trademinder:${DB_PASSWORD}@db:5432/trademinder
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ALERT_ENGINE_INTERVAL_MINUTES: ${ALERT_ENGINE_INTERVAL_MINUTES:-15}
+      MARKET_HOURS_START: ${MARKET_HOURS_START:-09:30}
+      MARKET_HOURS_END: ${MARKET_HOURS_END:-16:00}
+      PRICE_REFRESH_INTERVAL_MINUTES: ${PRICE_REFRESH_INTERVAL_MINUTES:-15}
+      BRIEFING_GENERATE_TIME: ${BRIEFING_GENERATE_TIME:-08:00}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    # Run DB migrations before starting the server (idempotent — safe on every restart)
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+
+  frontend:
+    build:
+      context: ./frontend
+      target: prod
+    ports:
+      - "${FRONTEND_PORT:-3000}:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  pgdata:
