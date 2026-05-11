@@ -47,6 +47,7 @@ class TradeCreate(BaseModel):
     collateral: Optional[Annotated[Decimal, Field(ge=0)]] = None
     exit_strategy: Optional[str] = None
     signal_action: Optional[str] = None
+    etrade_symbol: Optional[str] = None  # full OCC symbol from E*TRADE href, e.g. "AAPL--260508C00290000"
     rationale_notes: Optional[str] = None  # stored in rationale.notes
 
 

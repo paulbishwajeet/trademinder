@@ -35,6 +35,7 @@ class Trade(Base):
     collateral: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 2), nullable=True)
     exit_strategy: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     signal_action: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    etrade_symbol: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
     status: Mapped[str] = mapped_column(String(10), nullable=False, default="open")
     current_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2), nullable=True)
     last_price_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)

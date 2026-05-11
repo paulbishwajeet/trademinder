@@ -581,6 +581,9 @@ function showAddTradeModal(info) {
       open_date: fd.get('open_date'),
       ...(strike_price != null && { strike_price }),
       ...(expiry_date && { expiry_date }),
+      // Store the E*TRADE full symbol (e.g. "AAPL--260508C00290000") so future
+      // position lookups can match directly instead of reconstructing from fields.
+      ...(info.fullSymbol && { etrade_symbol: info.fullSymbol }),
       ...(fd.get('exit_strategy') && { exit_strategy: fd.get('exit_strategy').trim() }),
       ...(fd.get('rationale_notes')?.trim() && { rationale_notes: fd.get('rationale_notes').trim() }),
     };

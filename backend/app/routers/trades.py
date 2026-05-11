@@ -58,6 +58,7 @@ async def create_trade(payload: TradeCreate, db: AsyncSession = Depends(get_db))
         collateral=payload.collateral,
         exit_strategy=payload.exit_strategy,
         signal_action=payload.signal_action,
+        etrade_symbol=payload.etrade_symbol,
     )
     db.add(trade)
     await db.flush()  # get trade.id before creating rationale

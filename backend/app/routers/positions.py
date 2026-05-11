@@ -105,8 +105,15 @@ async def positions_status(
             response[key] = PositionStatus(ticker=ticker, full_symbol=pos_input.full_symbol)
             continue
 
-        # Pick the best matching trade: prefer matching strike/expiry for options
-        trade = _pick_best_trade(trades, pos_input)
+        # Direct match on etrade_symbol (set when trade is added via extension modal).
+        # One E*TRADE symbol maps to exactly one open position — no reconstruction needed.
+        trade = None
+        if pos_input.full_symbol:
+            trade = next((t for t in trades if t.etrade_symbol == pos_input.full_symbol), None)
+
+        # Fallback: reconstruct match from instrument type + strike + expiry
+        if trade is None:
+            trade = _pick_best_trade(trades, pos_input)
 
         alert = best_alert.get(trade.id)
         cat = trade.category_obj
@@ -150,17 +157,45 @@ async def positions_status(
 
 
 def _pick_best_trade(trades: list[Trade], pos_input) -> Trade:
-    """Pick the most relevant trade for a position. Prefers strike/expiry match for options."""
+    """Pick the most relevant trade for a position.
+
+    Matching order:
+    1. Narrow by instrument type (stock vs call vs put) so a stock row never
+       accidentally matches a covered-call trade on the same ticker.
+    2. Within the narrowed set, match by strike + expiry for options.
+    3. Fallback: most recently created (handles the single-trade common case).
+    """
     if len(trades) == 1:
         return trades[0]
+
+    # Step 1: filter by instrument type derived from the DOM row.
+    # pos_input.type comes from the extension: "Stock", "Call", "Put", or "Option".
+    # Trade.strategy is a free-form string, but it always contains the keyword.
+    pos_type = (pos_input.type or "").lower()
+    if pos_type == "stock":
+        narrowed = [t for t in trades if "stock" in t.strategy.lower()]
+    elif pos_type == "call":
+        narrowed = [t for t in trades if "call" in t.strategy.lower() or "leap" in t.strategy.lower()]
+    elif pos_type == "put":
+        narrowed = [t for t in trades if "put" in t.strategy.lower()]
+    else:
+        narrowed = trades  # "Option" or unknown — skip type filter
+
+    candidates = narrowed if narrowed else trades  # don't lose all candidates on a miss
+
+    if len(candidates) == 1:
+        return candidates[0]
+
+    # Step 2: for options, match by strike + expiry (uniquely identifies a contract).
     if pos_input.strike and pos_input.expiry:
-        for t in trades:
+        for t in candidates:
             if (t.strike_price is not None
                     and abs(float(t.strike_price) - pos_input.strike) < 0.01
                     and t.expiry_date == pos_input.expiry):
                 return t
-    # Fallback: most recently created
-    return max(trades, key=lambda t: t.created_at)
+
+    # Step 3: fallback — most recently created
+    return max(candidates, key=lambda t: t.created_at)
 
 
 @router.get("/dashboard/today", response_model=list[DashboardTodayItem])
