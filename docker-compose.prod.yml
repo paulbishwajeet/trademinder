@@ -37,7 +37,7 @@ services:
         condition: service_healthy
     restart: unless-stopped
     # Run DB migrations before starting the server (idempotent — safe on every restart)
-    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 3001"
 
   frontend:
     build:

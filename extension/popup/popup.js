@@ -13,7 +13,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Load saved settings
   chrome.storage.local.get(['tmApiUrl', 'tmStages'], (result) => {
-    apiUrlInput.value = result.tmApiUrl || 'http://localhost:8000';
+    apiUrlInput.value = result.tmApiUrl || 'http://localhost:3001';
     const stages = result.tmStages || { stage1: true, stage2: true, stage3: true, stage4: true };
     Object.entries(stageChecks).forEach(([key, el]) => {
       el.checked = stages[key] !== false;

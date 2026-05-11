@@ -72,8 +72,8 @@ docker compose exec backend alembic upgrade head
 ```
 
 - Frontend: http://localhost:3000
-- Backend API: http://localhost:8000
-- API docs: http://localhost:8000/docs
+- Backend API: http://localhost:3001
+- API docs: http://localhost:3001/docs
 
 ```bash
 docker compose down        # stop
@@ -103,10 +103,10 @@ cp .env.example .env      # from repo root
 alembic upgrade head
 
 # 5. Start backend
-uvicorn app.main:app --reload --port 8000
+uvicorn app.main:app --reload --port 3001
 ```
 
-API: http://localhost:8000 · Docs: http://localhost:8000/docs
+API: http://localhost:3001 · Docs: http://localhost:3001/docs
 
 ---
 
@@ -118,7 +118,7 @@ npm install
 npm run dev
 ```
 
-Frontend: http://localhost:3000. Vite proxies `/api/*` to `http://localhost:8000`.
+Frontend: http://localhost:3000. Vite proxies `/api/*` to `http://localhost:3001`.
 
 ---
 
@@ -314,13 +314,13 @@ GET    /api/briefing/{date}
 POST   /api/trades/{id}/summarize
 ```
 
-Full interactive docs: http://localhost:8000/docs
+Full interactive docs: http://localhost:3001/docs
 
 ---
 
 ## Chrome Extension
 
-The extension overlays TradeMinder data on the E\*TRADE portfolio page in four stages. Enabled/disabled individually via the popup settings UI. API URL is configurable (default: `http://localhost:8000`).
+The extension overlays TradeMinder data on the E\*TRADE portfolio page in four stages. Enabled/disabled individually via the popup settings UI. API URL is configurable (default: `http://localhost:3001`).
 
 ### Stage 1 — Category Indicators
 Reads ticker from DOM → calls `/api/positions/status` → injects a TM badge column and adds a filter toolbar above the grid.
@@ -493,7 +493,7 @@ Production target is a **QNAP TS-251+** running Container Station.
 | Constraint | Detail |
 |---|---|
 | Architecture | Intel Celeron J1800 — `linux/amd64` only |
-| Port conflicts | QNAP uses 80/443/8080; use 8000 (backend) and 3000 (frontend) |
+| Port conflicts | QNAP uses 80/443/8080; use 3001 (backend) and 3000 (frontend) |
 | Volumes | Map to `/share/trademinder/` for persistence across Container Station updates |
 | Memory | Keep `shared_buffers=128MB`; full stack fits in ~1GB |
 
@@ -503,7 +503,6 @@ docker buildx build --platform linux/amd64 \
   -t yourdockerhub/trademinder-backend:latest --push ./backend
 
 docker buildx build --platform linux/amd64 \
-  --build-arg VITE_API_URL=http://<qnap-local-ip>:8000 \
   -t yourdockerhub/trademinder-frontend:latest --push ./frontend
 
 # Deploy on QNAP
@@ -564,7 +563,7 @@ Migration 002 (categories, signals), category CRUD, `/api/positions/status`, com
 
 **AI briefing is pull, not push** — generated at 8am and stored; page load fetches the stored briefing. Avoids latency and preserves history.
 
-**Extension talks directly to local backend** — calls `http://localhost:8000` (configurable). No relay server, no cloud dependency.
+**Extension talks directly to local backend** — calls `http://localhost:3001` (configurable). No relay server, no cloud dependency.
 
 **Virtual scroll handled with MutationObserver + row cache** — E\*TRADE recycles DOM rows on scroll. The extension tracks `rowId → cacheKey` (avoids re-processing unchanged rows) and `cacheKey → status` (avoids re-fetching the same ticker data).
 
