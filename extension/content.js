@@ -30,6 +30,10 @@ let stageEnabled = { stage1: true, stage2: true, stage3: true, stage4: true };
 const processedRows = new Map();
 // cacheKey → PositionStatus: avoids re-fetching same data
 const statusCache = new Map();
+// ticker → RSI-14 value (null = fetch failed)
+const rsiCache = new Map();
+// all base tickers seen while processing rows (for batch RSI fetch)
+const seenTickers = new Set();
 let isProcessing = false;
 let allCategories = [];
 let activeFilter = 'all';
@@ -59,7 +63,9 @@ async function loadCategoriesAndStart() {
   } catch (e) {
     // Backend not running — proceed with empty categories
   }
-  insertFilterToolbar();
+  // Don't insert the toolbar here — the grid may not be in the DOM yet.
+  // startObserver() retries until the content area exists, at which point
+  // the grid root is also guaranteed to be present.
   startObserver();
 }
 
@@ -201,6 +207,8 @@ async function processVisibleRows() {
       const info = getRowInfo(row);
       if (!info) return;
 
+      seenTickers.add(info.ticker);
+
       const cacheKey = info.fullSymbol || info.ticker;
       const prevKey = processedRows.get(rowId);
 
@@ -219,6 +227,7 @@ async function processVisibleRows() {
       if (statusCache.has(item.cacheKey)) {
         applyTMToRow(item.row, statusCache.get(item.cacheKey), item.info);
         applyFilter(item.row, statusCache.get(item.cacheKey));
+        applyRsiToRow(item.row, item.info.ticker);
       } else {
         needsFetch.push(item);
       }
@@ -251,6 +260,7 @@ async function processVisibleRows() {
       statusCache.set(item.cacheKey, status);
       applyTMToRow(item.row, status, item.info);
       applyFilter(item.row, status);
+      applyRsiToRow(item.row, item.info.ticker);
     });
 
   } catch (err) {
@@ -357,6 +367,79 @@ function injectBadge(row, status, info) {
 }
 
 // ============================================================
+// RSI COLUMN
+// ============================================================
+function getRsiClass(rsi) {
+  if (rsi < 30) return 'rsi-oversold';
+  if (rsi < 40) return 'rsi-near-oversold';
+  if (rsi <= 60) return 'rsi-neutral';
+  if (rsi <= 70) return 'rsi-near-overbought';
+  return 'rsi-overbought';
+}
+
+function applyRsiToRow(row, ticker) {
+  const badge = row.querySelector('.tm-badge');
+  if (!badge) return;
+
+  let pill = badge.querySelector('.tm-rsi-pill');
+
+  if (!rsiCache.has(ticker)) {
+    pill?.remove();
+    return;
+  }
+
+  const rsi = rsiCache.get(ticker);
+
+  if (!pill) {
+    pill = document.createElement('span');
+    badge.appendChild(pill);
+  }
+
+  if (rsi === null) {
+    pill.className = 'tm-rsi-pill rsi-error';
+    pill.textContent = 'RSI —';
+    return;
+  }
+
+  pill.className = `tm-rsi-pill ${getRsiClass(rsi)}`;
+  pill.textContent = `RSI ${rsi.toFixed(1)}`;
+}
+
+async function fetchRsiForAll() {
+  const btn = document.getElementById('tm-rsi-btn');
+  const tickers = [...seenTickers];
+  if (!tickers.length) return;
+
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Fetching…'; }
+
+  try {
+    const resp = await fetch(`${tmApiUrl}/api/market/rsi`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tickers }),
+      signal: AbortSignal.timeout(60000),
+    });
+
+    if (resp.ok) {
+      const data = await resp.json();
+      Object.entries(data).forEach(([ticker, rsi]) => {
+        rsiCache.set(ticker, typeof rsi === 'number' ? rsi : null);
+      });
+    }
+  } catch (err) {
+    if (err.name !== 'AbortError') console.debug('TradeMinder RSI fetch failed:', err.message);
+  }
+
+  // Re-apply RSI to all currently visible rows
+  document.querySelectorAll(ETRADE.positionRows).forEach(row => {
+    const info = getRowInfo(row);
+    if (info?.ticker) applyRsiToRow(row, info.ticker);
+  });
+
+  if (btn) { btn.disabled = false; btn.textContent = '🔄 Refresh RSI'; }
+}
+
+// ============================================================
 // FILTER TOOLBAR
 // ============================================================
 function insertFilterToolbar() {
@@ -381,6 +464,19 @@ function insertFilterToolbar() {
   allCategories.forEach(cat => {
     toolbar.appendChild(makeFilterBtn(`${cat.icon || ''} ${cat.name}`.trim(), cat.name));
   });
+
+  // Divider
+  const sep = document.createElement('span');
+  sep.style.cssText = 'width:1px;height:16px;background:#e2e8f0;margin:0 4px;display:inline-block;vertical-align:middle';
+  toolbar.appendChild(sep);
+
+  // RSI fetch button
+  const rsiBtn = document.createElement('button');
+  rsiBtn.id = 'tm-rsi-btn';
+  rsiBtn.className = 'tm-rsi-btn';
+  rsiBtn.textContent = '📊 Fetch RSI';
+  rsiBtn.addEventListener('click', fetchRsiForAll);
+  toolbar.appendChild(rsiBtn);
 
   gridRoot.parentNode.insertBefore(toolbar, gridRoot);
 }
@@ -631,6 +727,10 @@ function startObserver() {
     setTimeout(startObserver, 500);
     return;
   }
+
+  // Grid is in the DOM — safe to insert toolbar now.
+  // The guard inside insertFilterToolbar prevents duplicate insertion on retries.
+  insertFilterToolbar();
 
   processVisibleRows();
 

@@ -1,13 +1,18 @@
 # backend/app/routers/market.py
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.services.price_fetcher import fetch_quote, refresh_open_trades
+from app.services.price_fetcher import fetch_quote, refresh_open_trades, fetch_rsi_batch
 from app.services.alert_engine import run as run_alert_engine
 
 router = APIRouter(prefix="/api/market", tags=["market"])
+
+
+class RsiRequest(BaseModel):
+    tickers: list[str]
 
 NOT_IMPLEMENTED = JSONResponse({"detail": "not implemented"}, status_code=501)
 
@@ -30,6 +35,15 @@ async def refresh_prices(db: AsyncSession = Depends(get_db)):
         "alerts_created": alert_result["alerts_created"],
         "errors": price_result["errors"],
     }
+
+
+@router.post("/rsi")
+async def get_rsi_batch(payload: RsiRequest) -> dict[str, float | None]:
+    """Fetch RSI-14 for a list of tickers. Returns { ticker: rsi } map."""
+    tickers = [t.upper() for t in payload.tickers if t.strip()]
+    if not tickers:
+        return {}
+    return await fetch_rsi_batch(tickers)
 
 
 @router.get("/options/{ticker}")
