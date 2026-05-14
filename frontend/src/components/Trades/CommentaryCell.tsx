@@ -15,9 +15,13 @@ export function CommentaryCell({ tradeId, ticker }: Props) {
   const [loading, setLoading] = useState(true)
 
   const fetchEntries = useCallback(async () => {
-    const data = await commentaryApi.list(tradeId)
-    setEntries(data)
-    setLoading(false)
+    setLoading(true)
+    try {
+      const data = await commentaryApi.list(tradeId)
+      setEntries(data)
+    } finally {
+      setLoading(false)
+    }
   }, [tradeId])
 
   useEffect(() => {
@@ -54,6 +58,9 @@ export function CommentaryCell({ tradeId, ticker }: Props) {
             <Dialog.Title className="text-sm font-semibold text-gray-800">
               Commentary — {ticker}
             </Dialog.Title>
+            <Dialog.Description className="sr-only">
+              Commentary entries for {ticker}
+            </Dialog.Description>
             <Dialog.Close className="text-gray-400 hover:text-gray-600 text-xl leading-none">
               ×
             </Dialog.Close>
