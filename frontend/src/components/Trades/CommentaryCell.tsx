@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import type { Commentary } from '../../types'
 import { commentaryApi } from '../../api/commentary'
@@ -14,15 +14,15 @@ export function CommentaryCell({ tradeId, ticker }: Props) {
   const [entries, setEntries] = useState<Commentary[]>([])
   const [loading, setLoading] = useState(true)
 
-  const fetchEntries = async () => {
+  const fetchEntries = useCallback(async () => {
     const data = await commentaryApi.list(tradeId)
     setEntries(data)
     setLoading(false)
-  }
+  }, [tradeId])
 
   useEffect(() => {
     fetchEntries()
-  }, [tradeId])
+  }, [fetchEntries])
 
   return (
     <Dialog.Root open={open} onOpenChange={setOpen}>
