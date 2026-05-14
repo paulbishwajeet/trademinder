@@ -211,11 +211,15 @@ def _fetch_chain(
                 last = _safe_float(row.get("lastPrice"))
                 iv = _safe_float(row.get("impliedVolatility"))
                 oi = _safe_int(row.get("openInterest"))
+                volume = _safe_int(row.get("volume"))
+                # yfinance 1.3+ returns OI=0 for LEAPS; fall back to volume
+                if oi == 0 and volume > 0:
+                    oi = volume
 
-                if bid <= 0 and ask <= 0:
+                if bid <= 0 and ask <= 0 and last <= 0:
                     continue
                 mid = (bid + ask) / 2 if bid > 0 and ask > 0 else last
-                if mid <= 0 or iv < 0.01 or K <= 0:
+                if mid <= 0 or iv < 0.005 or K <= 0:
                     continue
 
                 capital = spot if side == "call" else K
