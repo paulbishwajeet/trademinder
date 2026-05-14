@@ -150,7 +150,10 @@ def _annotate_earnings(
     today = date.today()
 
     def _count(exp_str: str) -> int:
-        exp = date.fromisoformat(exp_str)
+        try:
+            exp = date.fromisoformat(exp_str)
+        except (ValueError, TypeError):
+            return 0
         return sum(1 for d in earnings_dates if today < d <= exp)
 
     df = df.copy()
@@ -169,7 +172,7 @@ def _fetch_chain(
 
     t = yf.Ticker(ticker)
     spot = t.fast_info.last_price
-    if not spot:
+    if not spot or float(spot) <= 0:
         raise ValueError(f"Could not fetch live price for {ticker}")
     spot = float(spot)
 
@@ -183,6 +186,8 @@ def _fetch_chain(
     for exp_str in expirations:
         exp_date = datetime.strptime(exp_str, "%Y-%m-%d").date()
         dte = (exp_date - today).days
+        if dte <= 0:
+            continue
         T = dte / 365.0
         try:
             chain = t.option_chain(exp_str)
