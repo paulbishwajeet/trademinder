@@ -43,12 +43,22 @@ export function TradeTable({ trades, onDelete }: Props) {
               <td className="px-4 py-3"><PnLDisplay value={trade.unrealized_pnl} /></td>
               <td className="px-4 py-3"><StatusBadge status={trade.status} /></td>
               <td className="px-4 py-3">
-                <button
-                  onClick={() => onDelete(trade.id)}
-                  className="text-red-500 hover:text-red-700 text-xs"
-                >
-                  Delete
-                </button>
+                <div className="flex items-center gap-3">
+                  {trade.strategy === 'Stock' && trade.status === 'open' && (
+                    <Link
+                      to={`/scanner?ticker=${trade.ticker}`}
+                      className="text-blue-500 hover:text-blue-700 text-xs"
+                    >
+                      Scan →
+                    </Link>
+                  )}
+                  <button
+                    onClick={() => onDelete(trade.id)}
+                    className="text-red-500 hover:text-red-700 text-xs"
+                  >
+                    Delete
+                  </button>
+                </div>
               </td>
             </tr>
           ))}
