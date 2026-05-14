@@ -106,7 +106,9 @@ export function ScannerPage() {
       if (result.options.length === 0) {
         setScanState({ status: 'empty', ticker })
       } else {
-        const defaultTab: TabKey = form.optType === 'puts' ? 'puts' : 'calls'
+        const defaultTab: TabKey = form.optType === 'puts'
+          ? 'puts'
+          : scanState.status === 'success' ? scanState.activeTab : 'calls'
         setScanState({ status: 'success', result, activeTab: defaultTab })
       }
     } catch (err) {
