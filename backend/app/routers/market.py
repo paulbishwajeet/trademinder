@@ -56,7 +56,7 @@ async def get_options(
     min_oi: int = Query(25, ge=0),
     max_delta: float = Query(0.70, gt=0, le=1.0),
 ):
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     try:
         result = await loop.run_in_executor(
             None,
