@@ -1,20 +1,23 @@
 # backend/app/routers/market.py
-from fastapi import APIRouter, Depends, HTTPException
+import asyncio
+from functools import partial
+from typing import Literal
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.services.price_fetcher import fetch_quote, refresh_open_trades, fetch_rsi_batch
 from app.services.alert_engine import run as run_alert_engine
+from app.services.options_scanner import run_scan
+from app.services.price_fetcher import fetch_quote, fetch_rsi_batch, refresh_open_trades
 
 router = APIRouter(prefix="/api/market", tags=["market"])
 
 
 class RsiRequest(BaseModel):
     tickers: list[str]
-
-NOT_IMPLEMENTED = JSONResponse({"detail": "not implemented"}, status_code=501)
 
 
 @router.get("/quote/{ticker}")
@@ -39,7 +42,6 @@ async def refresh_prices(db: AsyncSession = Depends(get_db)):
 
 @router.post("/rsi")
 async def get_rsi_batch(payload: RsiRequest) -> dict[str, float | None]:
-    """Fetch RSI-14 for a list of tickers. Returns { ticker: rsi } map."""
     tickers = [t.upper() for t in payload.tickers if t.strip()]
     if not tickers:
         return {}
@@ -47,10 +49,26 @@ async def get_rsi_batch(payload: RsiRequest) -> dict[str, float | None]:
 
 
 @router.get("/options/{ticker}")
-async def get_options(ticker: str):
-    return NOT_IMPLEMENTED
+async def get_options(
+    ticker: str,
+    opt_type: Literal["calls", "puts", "both"] = Query("both", alias="type"),
+    min_dte: int = Query(365, ge=1),
+    min_oi: int = Query(25, ge=0),
+    max_delta: float = Query(0.70, gt=0, le=1.0),
+):
+    loop = asyncio.get_event_loop()
+    try:
+        result = await loop.run_in_executor(
+            None,
+            partial(run_scan, ticker.upper(), opt_type, min_dte, min_oi, max_delta),
+        )
+        return result
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @router.post("/prefetch/{ticker}")
 async def prefetch_indicators(ticker: str):
-    return NOT_IMPLEMENTED
+    return JSONResponse({"detail": "not implemented"}, status_code=501)
