@@ -321,17 +321,15 @@ function injectBadge(row, status, info) {
   let badge = row.querySelector('.tm-badge');
   if (!badge) {
     badge = document.createElement('div');
-    badge.className = 'tm-badge';
-    badge.style.cssText = [
-      'position:absolute',
-      'right:-195px',
-      'top:50%',
-      'transform:translateY(-50%)',
-      'z-index:100',
-      'pointer-events:auto',
-      'white-space:nowrap',
-    ].join(';');
-    row.style.overflow = 'visible';
+
+    // Copy E*TRADE's column cell classes from a sibling so the div is
+    // structurally uniform with the other cells in the row.
+    const sibling = row.querySelector('[col]');
+    if (sibling) {
+      sibling.classList.forEach(cls => badge.classList.add(cls));
+    }
+    badge.classList.add('tm-badge');
+    badge.style.cssText = 'display:flex;align-items:center;padding:0 8px;white-space:nowrap;min-width:180px;flex-shrink:0;';
     row.appendChild(badge);
   }
 
