@@ -42,6 +42,11 @@ let activeFilter = 'all';
 let _panelClickOutside = null;
 let _panelEsc = null;
 let _threadAbortCtrl = null;
+let _hoverTrigger = null;
+let _hoverHideTimer = null;
+let _hoverTradeId = null;
+let _hoverTicker = null;
+let _hoverRow = null;
 
 // column name → cell index, built once from the header row
 let columnIndexCache = null;
@@ -376,10 +381,12 @@ function injectBadge(row, status, info) {
     btn.className = 'tm-commentary-btn';
     const cached = commentaryCountCache.get(tradeId);
     btn.textContent = cached != null ? `💬 ${cached}` : '💬 …';
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      openCommentaryPanel(tradeId, info.ticker, row);
-    });
+
+    // Hover shows the body-level trigger — clicking the pill itself would
+    // propagate to E*TRADE's capture listener and expand the row.
+    btn.addEventListener('mouseenter', () => showCommentaryTrigger(tradeId, info.ticker, row, btn));
+    btn.addEventListener('mouseleave', () => scheduleHideCommentaryTrigger());
+
     badge.appendChild(btn);
 
     if (!commentaryCountCache.has(tradeId)) {
@@ -433,6 +440,47 @@ function applyRsiToRow(row, ticker) {
 // ============================================================
 // COMMENTARY
 // ============================================================
+function getOrCreateTrigger() {
+  if (_hoverTrigger) return _hoverTrigger;
+  _hoverTrigger = document.createElement('button');
+  _hoverTrigger.id = 'tm-commentary-trigger';
+  _hoverTrigger.textContent = '💬 Open';
+  document.body.appendChild(_hoverTrigger);
+
+  _hoverTrigger.addEventListener('mouseenter', () => clearTimeout(_hoverHideTimer));
+  _hoverTrigger.addEventListener('mouseleave', () => scheduleHideCommentaryTrigger());
+  _hoverTrigger.addEventListener('click', () => {
+    if (_hoverTradeId && _hoverRow) {
+      openCommentaryPanel(_hoverTradeId, _hoverTicker, _hoverRow);
+    }
+    hideCommentaryTrigger();
+  });
+
+  return _hoverTrigger;
+}
+
+function showCommentaryTrigger(tradeId, ticker, row, pillEl) {
+  clearTimeout(_hoverHideTimer);
+  _hoverTradeId = tradeId;
+  _hoverTicker = ticker;
+  _hoverRow = row;
+
+  const trigger = getOrCreateTrigger();
+  const rect = pillEl.getBoundingClientRect();
+  trigger.style.top = `${rect.top}px`;
+  trigger.style.left = `${rect.left}px`;
+  trigger.style.display = 'flex';
+}
+
+function scheduleHideCommentaryTrigger() {
+  _hoverHideTimer = setTimeout(hideCommentaryTrigger, 150);
+}
+
+function hideCommentaryTrigger() {
+  clearTimeout(_hoverHideTimer);
+  if (_hoverTrigger) _hoverTrigger.style.display = 'none';
+}
+
 async function fetchCommentaryCount(tradeId) {
   try {
     const resp = await fetch(`${tmApiUrl}/api/trades/${tradeId}/commentary`, {
