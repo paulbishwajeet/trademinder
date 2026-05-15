@@ -332,9 +332,16 @@ function injectBadge(row, status, info) {
   if (!badge) {
     badge = document.createElement('div');
     badge.className = 'tm-badge';
+    // Align badge left edge with the right edge of the Actions column (col="1").
+    // Using position:absolute on the row (not injecting into E*TRADE's cell)
+    // keeps us outside React's render tree — no risk of being cleared on scroll.
+    const actionsCell = row.querySelector('[col="1"]');
+    const actionsRight = actionsCell
+      ? actionsCell.offsetLeft + actionsCell.offsetWidth
+      : 339; // fallback: Symbol(~274) + Actions(65)
     badge.style.cssText = [
       'position:absolute',
-      'right:-195px',
+      `left:${actionsRight}px`,
       'top:50%',
       'transform:translateY(-50%)',
       'z-index:100',
