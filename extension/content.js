@@ -32,11 +32,16 @@ const processedRows = new Map();
 const statusCache = new Map();
 // ticker → RSI-14 value (null = fetch failed)
 const rsiCache = new Map();
+// trade_id → commentary count (populated on first badge render)
+const commentaryCountCache = new Map();
 // all base tickers seen while processing rows (for batch RSI fetch)
 const seenTickers = new Set();
 let isProcessing = false;
 let allCategories = [];
 let activeFilter = 'all';
+let _panelClickOutside = null;
+let _panelEsc = null;
+let _threadAbortCtrl = null;
 
 // column name → cell index, built once from the header row
 let columnIndexCache = null;
@@ -364,6 +369,26 @@ function injectBadge(row, status, info) {
     <span class="tm-tag tm-${severity}" data-category="${catName}">
       ${sevIcon} ${catIcon} ${catName || '—'}${alertHtml}${dte != null ? ` · <span class="tm-dte">${dte}d</span>` : ''}${signalDots}
     </span>`;
+
+  if (status.trade_id) {
+    const tradeId = status.trade_id;
+    const btn = document.createElement('span');
+    btn.className = 'tm-commentary-btn';
+    const cached = commentaryCountCache.get(tradeId);
+    btn.textContent = cached != null ? `💬 ${cached}` : '💬 …';
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openCommentaryPanel(tradeId, info.ticker, row);
+    });
+    badge.appendChild(btn);
+
+    if (!commentaryCountCache.has(tradeId)) {
+      // Count fetched once per session per tradeId; re-fetch happens via updateCommentaryBadge after mutations
+      fetchCommentaryCount(tradeId).then(() => {
+        btn.textContent = `💬 ${commentaryCountCache.get(tradeId) ?? 0}`;
+      });
+    }
+  }
 }
 
 // ============================================================
@@ -403,6 +428,202 @@ function applyRsiToRow(row, ticker) {
 
   pill.className = `tm-rsi-pill ${getRsiClass(rsi)}`;
   pill.textContent = `RSI ${rsi.toFixed(1)}`;
+}
+
+// ============================================================
+// COMMENTARY
+// ============================================================
+async function fetchCommentaryCount(tradeId) {
+  try {
+    const resp = await fetch(`${tmApiUrl}/api/trades/${tradeId}/commentary`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    if (resp.ok) {
+      const entries = await resp.json();
+      commentaryCountCache.set(tradeId, entries.length);
+    }
+  } catch (e) {
+    if (e.name !== 'TimeoutError' && e.name !== 'AbortError') {
+      console.debug('[TM] fetchCommentaryCount', tradeId, e);
+    }
+  }
+}
+
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function updateCommentaryBadge(tradeId, count) {
+  commentaryCountCache.set(tradeId, count);
+  document.querySelectorAll(ETRADE.positionRows).forEach(row => {
+    const btn = row.querySelector('.tm-commentary-btn');
+    if (!btn) return;
+    const rowId = row.id;
+    const cacheKey = processedRows.get(rowId);
+    if (!cacheKey) return;
+    const status = statusCache.get(cacheKey);
+    if (status?.trade_id === tradeId) {
+      btn.textContent = `💬 ${count}`;
+    }
+  });
+}
+
+function getOrCreatePanel() {
+  let panel = document.getElementById('tm-commentary-panel');
+  if (panel) return panel;
+
+  panel = document.createElement('div');
+  panel.id = 'tm-commentary-panel';
+  panel.innerHTML = `
+    <div class="tm-cp-header">
+      <span class="tm-cp-title"></span>
+      <button class="tm-cp-close">×</button>
+    </div>
+    <div class="tm-cp-thread"></div>
+    <div class="tm-cp-form">
+      <textarea class="tm-cp-note-input" rows="3" placeholder="What happened or what did you decide?"></textarea>
+      <input class="tm-cp-tags-input" type="text" placeholder="Tags: rolled, exit-change (comma-separated)" />
+      <button class="tm-cp-submit" type="button">Add Note</button>
+    </div>`;
+  document.body.appendChild(panel);
+
+  panel.querySelector('.tm-cp-close').addEventListener('click', closeCommentaryPanel);
+
+  panel.querySelector('.tm-cp-submit').addEventListener('click', async () => {
+    const tradeId = panel.dataset.tradeId;
+    if (!tradeId) return;
+    const noteEl = panel.querySelector('.tm-cp-note-input');
+    const tagsEl = panel.querySelector('.tm-cp-tags-input');
+    const submitBtn = panel.querySelector('.tm-cp-submit');
+    const note = noteEl.value.trim();
+    if (!note) return;
+    const tags = tagsEl.value.split(',').map(t => t.trim()).filter(Boolean);
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Adding…';
+    try {
+      const resp = await fetch(`${tmApiUrl}/api/trades/${tradeId}/commentary`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ note, ...(tags.length > 0 && { tags }) }),
+        signal: AbortSignal.timeout(8000),
+      });
+      if (resp.ok) {
+        noteEl.value = '';
+        tagsEl.value = '';
+        await renderCommentaryThread(tradeId, panel);
+      }
+    } catch (e) { /* silent */ } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Add Note';
+    }
+  });
+
+  return panel;
+}
+
+function openCommentaryPanel(tradeId, ticker, anchorRow) {
+  const panel = getOrCreatePanel();
+  panel.dataset.tradeId = tradeId;
+  panel.querySelector('.tm-cp-title').textContent = `${ticker} · Commentary`;
+  panel.querySelector('.tm-cp-note-input').value = '';
+  panel.querySelector('.tm-cp-tags-input').value = '';
+  panel.querySelector('.tm-cp-submit').disabled = false;
+  panel.querySelector('.tm-cp-submit').textContent = 'Add Note';
+
+  panel.style.display = 'flex';
+
+  const rect = anchorRow.getBoundingClientRect();
+  const margin = 8;
+  panel.style.left = `${Math.max(margin, window.innerWidth - 320 - margin)}px`;
+
+  const openUpward = rect.bottom > window.innerHeight * 0.6;
+  if (openUpward) {
+    panel.style.top = '';
+    panel.style.bottom = `${window.innerHeight - rect.top + 4}px`;
+  } else {
+    panel.style.bottom = '';
+    panel.style.top = `${rect.bottom + 4}px`;
+  }
+
+  renderCommentaryThread(tradeId, panel);
+
+  if (_panelClickOutside) document.removeEventListener('mousedown', _panelClickOutside);
+  _panelClickOutside = (e) => { if (!panel.contains(e.target)) closeCommentaryPanel(); };
+  setTimeout(() => document.addEventListener('mousedown', _panelClickOutside), 0);
+
+  if (_panelEsc) document.removeEventListener('keydown', _panelEsc);
+  _panelEsc = (e) => { if (e.key === 'Escape') closeCommentaryPanel(); };
+  document.addEventListener('keydown', _panelEsc);
+}
+
+function closeCommentaryPanel() {
+  const panel = document.getElementById('tm-commentary-panel');
+  if (panel) panel.style.display = 'none';
+  if (_panelClickOutside) {
+    document.removeEventListener('mousedown', _panelClickOutside);
+    _panelClickOutside = null;
+  }
+  if (_panelEsc) {
+    document.removeEventListener('keydown', _panelEsc);
+    _panelEsc = null;
+  }
+}
+
+async function renderCommentaryThread(tradeId, panel) {
+  if (_threadAbortCtrl) _threadAbortCtrl.abort();
+  _threadAbortCtrl = new AbortController();
+  const signal = _threadAbortCtrl.signal;
+
+  const threadEl = panel.querySelector('.tm-cp-thread');
+  threadEl.innerHTML = '<p class="tm-cp-loading">Loading…</p>';
+
+  try {
+    const resp = await fetch(`${tmApiUrl}/api/trades/${tradeId}/commentary`, { signal });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const entries = await resp.json();
+
+    updateCommentaryBadge(tradeId, entries.length);
+
+    if (entries.length === 0) {
+      threadEl.innerHTML = '<p class="tm-cp-empty">No notes yet.</p>';
+      return;
+    }
+
+    threadEl.innerHTML = entries.map(entry => `
+      <div class="tm-cp-entry">
+        <div class="tm-cp-entry-header">
+          <span class="tm-cp-date">${escapeHtml(entry.entry_date)}</span>
+          <button class="tm-cp-delete" data-id="${escapeHtml(entry.id)}">×</button>
+        </div>
+        <p class="tm-cp-note-text">${escapeHtml(entry.note)}</p>
+        ${entry.tags && entry.tags.length > 0
+          ? `<div class="tm-cp-tags-row">${entry.tags.map(t => `<span class="tm-cp-tag">${escapeHtml(t)}</span>`).join('')}</div>`
+          : ''}
+      </div>`).join('');
+
+    threadEl.querySelectorAll('.tm-cp-delete').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id = btn.dataset.id;
+        try {
+          const r = await fetch(`${tmApiUrl}/api/commentary/${id}`, {
+            method: 'DELETE',
+            signal: AbortSignal.timeout(5000),
+          });
+          if (r.ok || r.status === 204) renderCommentaryThread(tradeId, panel);
+        } catch (e) { /* silent */ }
+      });
+    });
+
+  } catch (e) {
+    if (e.name !== 'AbortError') {
+      threadEl.innerHTML = '<p class="tm-cp-fetch-error">Failed to load notes.</p>';
+    }
+  }
 }
 
 async function fetchRsiForAll() {
