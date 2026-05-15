@@ -354,30 +354,9 @@ function injectBadge(row, status, info) {
     return;
   }
 
-  const catIcon  = status.category_icon  || '';
-  const catName  = status.category_name  || '';
-  const severity = status.alert_severity || 'ok';
-  const sevIcon  = { urgent:'🔴', warning:'🟡', info:'🟣', ok:'🟢' }[severity] || '🟢';
-  const alertTitle = status.alert_title || '';
   const dte = info.optionDetails?.dte;
 
-  // Stage 4 signal dots (inactive in Stage 1 but structure is here)
-  const signalDots = stageEnabled.stage4
-    ? (status.active_signals || []).map(s => {
-        const bullish = ['macd_bullish','rsi_oversold','bb_breakout_lower','above_ma200','golden_cross'];
-        return `<span class="tm-dot ${bullish.includes(s.type) ? 'tm-bullish' : 'tm-bearish'}" title="${s.notes || ''}">●</span>`;
-      }).join('')
-    : '';
-
-  // Stage 3 alert label (inactive in Stage 1 for now)
-  const alertHtml = (stageEnabled.stage3 && alertTitle)
-    ? ` · <span class="tm-alert-label">${alertTitle}</span>`
-    : '';
-
-  badge.innerHTML = `
-    <span class="tm-tag tm-${severity}" data-category="${catName}">
-      ${sevIcon} ${catIcon} ${catName || '—'}${alertHtml}${dte != null ? ` · <span class="tm-dte">${dte}d</span>` : ''}${signalDots}
-    </span>`;
+  badge.innerHTML = dte != null ? `<span class="tm-dte">${dte}d</span>` : '';
 
   if (status.trade_id) {
     const tradeId = status.trade_id;
