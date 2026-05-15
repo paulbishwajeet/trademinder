@@ -48,7 +48,17 @@ export function TradeDetailPage() {
           <h1 className="text-2xl font-bold text-gray-900">{trade.ticker}</h1>
           <p className="text-gray-500">{trade.strategy} · {trade.type} · {trade.category}</p>
         </div>
-        <StatusBadge status={trade.status} />
+        <div className="flex items-center gap-3">
+          {trade.strategy === 'Stock' && trade.status === 'open' && (
+            <button
+              onClick={() => navigate(`/scanner?ticker=${trade.ticker}`)}
+              className="px-3 py-1.5 text-sm border border-blue-300 text-blue-600 rounded hover:bg-blue-50"
+            >
+              Scan Options
+            </button>
+          )}
+          <StatusBadge status={trade.status} />
+        </div>
       </div>
 
       <div className="grid grid-cols-2 gap-4 mb-6">
