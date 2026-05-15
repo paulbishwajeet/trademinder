@@ -221,9 +221,10 @@ async function processVisibleRows() {
 
       const cacheKey = info.fullSymbol || info.ticker;
       const prevKey = processedRows.get(rowId);
+      const badgeMissing = !row.querySelector('.tm-badge');
 
-      if (prevKey !== cacheKey) {
-        clearTMFromRow(row);
+      if (prevKey !== cacheKey || badgeMissing) {
+        if (prevKey !== cacheKey) clearTMFromRow(row);
         processedRows.set(rowId, cacheKey);
         toProcess.push({ row, info, cacheKey });
       }
@@ -332,24 +333,20 @@ function injectBadge(row, status, info) {
   if (!badge) {
     badge = document.createElement('div');
     badge.className = 'tm-badge';
-    // Align badge left edge with the right edge of the Actions column (col="1").
-    // Using position:absolute on the row (not injecting into E*TRADE's cell)
-    // keeps us outside React's render tree — no risk of being cleared on scroll.
+    badge.style.cssText = 'display:inline-flex;align-items:center;white-space:nowrap;pointer-events:auto;';
+
     const actionsCell = row.querySelector('[col="1"]');
-    const actionsRight = actionsCell
-      ? actionsCell.offsetLeft + actionsCell.offsetWidth
-      : 339; // fallback: Symbol(~274) + Actions(65)
-    badge.style.cssText = [
-      'position:absolute',
-      `left:${actionsRight}px`,
-      'top:50%',
-      'transform:translateY(-50%)',
-      'z-index:100',
-      'pointer-events:auto',
-      'white-space:nowrap',
-    ].join(';');
-    row.style.overflow = 'visible';
-    row.appendChild(badge);
+    if (actionsCell) {
+      // overflow:visible lets the badge extend past the 65px cell width
+      // without changing the column layout
+      actionsCell.style.overflow = 'visible';
+      actionsCell.appendChild(badge);
+    } else {
+      // Fallback if Actions cell not found
+      badge.style.cssText += 'position:absolute;left:339px;top:50%;transform:translateY(-50%);z-index:100;';
+      row.style.overflow = 'visible';
+      row.appendChild(badge);
+    }
   }
 
   if (!status) {
