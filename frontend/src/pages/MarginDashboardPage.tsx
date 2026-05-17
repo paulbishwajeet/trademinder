@@ -89,7 +89,7 @@ function normalCDF(x: number): number {
  * Black-Scholes put delta (absolute value) = probability of assignment.
  * Returns null when any required input is missing or invalid.
  */
-// @ts-expect-error TS6133 - intentionally unused, will be used in Task 4
+// @ts-expect-error TS6133 - will be used in Task 4
 function bsPutAssignmentProb(
   S: number,        // current stock price
   K: number,        // strike price
@@ -102,21 +102,21 @@ function bsPutAssignmentProb(
   return normalCDF(-d1)
 }
 
-// @ts-expect-error TS6133 - intentionally unused, will be used in Task 4
+// @ts-expect-error TS6133 - will be used in Task 4
 function gainClass(pct: number): string {
   if (pct >= 0.70) return 'text-green-600 font-medium'
   if (pct >= 0.40) return 'text-amber-600 font-medium'
   return 'text-red-600 font-medium'
 }
 
-// @ts-expect-error TS6133 - intentionally unused, will be used in Task 4
+// @ts-expect-error TS6133 - will be used in Task 4
 function probClass(prob: number): string {
   if (prob < 0.15) return 'text-green-600 font-medium'
   if (prob < 0.35) return 'text-amber-600 font-medium'
   return 'text-red-600 font-medium'
 }
 
-// @ts-expect-error TS6133 - intentionally unused, will be used in Task 4
+// @ts-expect-error TS6133 - will be used in Task 4
 function rsiPillClass(rsi: number): string {
   if (rsi < 30)  return 'bg-green-100 text-green-700 border border-green-300'
   if (rsi < 40)  return 'bg-emerald-100 text-emerald-700 border border-emerald-300'
