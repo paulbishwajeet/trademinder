@@ -75,6 +75,56 @@ function fmtPct(n: number): string {
   return n.toFixed(1) + '%'
 }
 
+/** Abramowitz & Stegun rational approximation — accurate to ~7 decimal places. */
+function normalCDF(x: number): number {
+  const a1 =  0.254829592, a2 = -0.284496736, a3 =  1.421413741
+  const a4 = -1.453152027, a5 =  1.061405429, p  =  0.3275911
+  const sign = x < 0 ? -1 : 1
+  const t = 1 / (1 + p * Math.abs(x) / Math.SQRT2)
+  const poly = t * (a1 + t * (a2 + t * (a3 + t * (a4 + t * a5))))
+  return 0.5 * (1 + sign * (1 - poly * Math.exp(-x * x / 2)))
+}
+
+/**
+ * Black-Scholes put delta (absolute value) = probability of assignment.
+ * Returns null when any required input is missing or invalid.
+ */
+// @ts-expect-error TS6133 - intentionally unused, will be used in Task 4
+function bsPutAssignmentProb(
+  S: number,        // current stock price
+  K: number,        // strike price
+  T: number,        // time to expiry in years (DTE / 365)
+  sigma: number,    // implied volatility as decimal (e.g. 0.35 for 35%)
+  r = 0.045,        // risk-free rate (approx T-bill rate)
+): number | null {
+  if (!S || !K || T <= 0 || sigma <= 0) return null
+  const d1 = (Math.log(S / K) + (r + (sigma * sigma) / 2) * T) / (sigma * Math.sqrt(T))
+  return normalCDF(-d1)
+}
+
+// @ts-expect-error TS6133 - intentionally unused, will be used in Task 4
+function gainClass(pct: number): string {
+  if (pct >= 0.70) return 'text-green-600 font-medium'
+  if (pct >= 0.40) return 'text-amber-600 font-medium'
+  return 'text-red-600 font-medium'
+}
+
+// @ts-expect-error TS6133 - intentionally unused, will be used in Task 4
+function probClass(prob: number): string {
+  if (prob < 0.15) return 'text-green-600 font-medium'
+  if (prob < 0.35) return 'text-amber-600 font-medium'
+  return 'text-red-600 font-medium'
+}
+
+// @ts-expect-error TS6133 - intentionally unused, will be used in Task 4
+function rsiPillClass(rsi: number): string {
+  if (rsi < 30)  return 'bg-green-100 text-green-700 border border-green-300'
+  if (rsi < 40)  return 'bg-emerald-100 text-emerald-700 border border-emerald-300'
+  if (rsi <= 60) return 'bg-gray-100 text-gray-600 border border-gray-200'
+  if (rsi <= 70) return 'bg-amber-100 text-amber-700 border border-amber-300'
+  return 'bg-red-100 text-red-700 border border-red-300'
+}
+
 // ─── CSV Parser ───────────────────────────────────────────────────────────────
 
 function parsePortfolioCSV(text: string): ParsedData {
