@@ -38,7 +38,6 @@ interface ExpiryGroup {
   weightedObligation: number
 }
 
-// @ts-expect-error TS6196 - will be used in Task 5
 interface MarketData {
   price: number | null
   rsi: number | null
