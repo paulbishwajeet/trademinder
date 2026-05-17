@@ -251,9 +251,7 @@ export function MarginDashboardPage() {
   const [fileName, setFileName] = useState('')
   const [dragOver, setDragOver] = useState(false)
   const [marketData, setMarketData] = useState<Record<string, MarketData>>({})
-  // @ts-expect-error TS6133 - will be rendered in a later task
   const [marketLoading, setMarketLoading] = useState(false)
-  // @ts-expect-error TS6133 - will be rendered in a later task
   const [marketError, setMarketError] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const abortCtrlRef = useRef<AbortController | null>(null)
@@ -321,7 +319,6 @@ export function MarginDashboardPage() {
     e.target.value = ''
   }
 
-  // @ts-expect-error TS6133 - will be used in a later task
   const enrichedPuts = useMemo((): ShortPut[] => {
     return (parsed?.shortPuts ?? []).map(p => {
       const md = marketData[p.ticker]
@@ -382,7 +379,11 @@ export function MarginDashboardPage() {
   const fullCoveragePct = totalObligation > 0 ? (totalEquity / totalObligation) * 100 : 0
   const nearTermPuts = shortPuts.filter(p => p.dte <= 21)
   const nearTermObligation = nearTermPuts.reduce((s, p) => s + p.obligation, 0)
-  const expiryGroups = groupByExpiry(shortPuts)
+  const expiryGroups = groupByExpiry(enrichedPuts)
+  const totalWeightedObligation = enrichedPuts.reduce((s, p) => s + p.weightedObligation, 0)
+  const adjustedCoverage = totalWeightedObligation > 0
+    ? (liquidBuffer / totalWeightedObligation) * 100
+    : 0
 
   const healthBarColor =
     coveragePct >= 150 ? 'bg-green-500' :
@@ -411,8 +412,21 @@ export function MarginDashboardPage() {
         </button>
       </div>
 
+      {/* Market data status banner */}
+      {(marketLoading || marketError) && (
+        <div className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm mb-4 ${
+          marketLoading
+            ? 'bg-gray-50 border border-gray-200 text-gray-500'
+            : 'bg-amber-50 border border-amber-200 text-amber-700'
+        }`}>
+          {marketLoading
+            ? <><span className="animate-spin">⏳</span> Fetching market data…</>
+            : <><span>⚠️</span> Market data unavailable — probability columns not shown</>}
+        </div>
+      )}
+
       {/* Summary Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
         <SummaryCard
           label="Total Assignment Obligation"
           value={fmt$(totalObligation)}
@@ -428,7 +442,9 @@ export function MarginDashboardPage() {
         <SummaryCard
           label="Liquid Coverage"
           value={fmtPct(coveragePct)}
-          sub={coveragePct >= 100 ? 'Sufficient liquid coverage' : 'Below 1:1 liquid coverage'}
+          sub={marketLoading
+            ? 'Adj. coverage: loading…'
+            : `Adj. coverage: ${fmtPct(adjustedCoverage)}`}
           accentClass={coveragePct >= 100 ? 'border-t-green-500' : coveragePct >= 75 ? 'border-t-amber-500' : 'border-t-red-500'}
         />
         <SummaryCard
@@ -436,6 +452,16 @@ export function MarginDashboardPage() {
           value={fmt$(nearTermObligation)}
           sub={`${nearTermPuts.length} position${nearTermPuts.length !== 1 ? 's' : ''} expiring soon`}
           accentClass={nearTermPuts.length > 0 ? 'border-t-amber-500' : 'border-t-gray-300'}
+        />
+        <SummaryCard
+          label="Confidence-Adjusted Obligation"
+          value={marketLoading ? '—' : fmt$(totalWeightedObligation)}
+          sub={marketLoading
+            ? 'Fetching market data…'
+            : marketError
+            ? 'Market data unavailable'
+            : `${fmtPct(totalWeightedObligation > 0 ? (totalWeightedObligation / totalObligation) * 100 : 0)} of worst-case`}
+          accentClass={marketLoading || marketError ? 'border-t-gray-300' : 'border-t-violet-500'}
         />
       </div>
 
