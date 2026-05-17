@@ -1,6 +1,6 @@
 # Active Feature
 
-**Feature:** Margin Calculator
-**Context File:** context/margin-calculator.md
-**Branch:** margin
+**Feature:** Margin Assignment Confidence
+**Context File:** context/margin.md
+**Branch:** develop
 **Session Started:** 2026-05-17
