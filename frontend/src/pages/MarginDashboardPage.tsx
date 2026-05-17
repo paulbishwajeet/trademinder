@@ -1,5 +1,7 @@
 // frontend/src/pages/MarginDashboardPage.tsx
-import { useState, useCallback, useRef, type DragEvent, type ChangeEvent } from 'react'
+import { useState, useCallback, useMemo, useRef, type DragEvent, type ChangeEvent } from 'react'
+
+const API_URL = 'http://localhost:3001'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -38,7 +40,6 @@ interface ExpiryGroup {
   weightedObligation: number
 }
 
-// @ts-expect-error TS6196 — used in Task 5
 interface MarketData {
   price: number | null
   rsi: number | null
@@ -101,7 +102,6 @@ function normalCDF(x: number): number {
  * Black-Scholes put delta (absolute value) = probability of assignment.
  * Returns null when any required input is missing or invalid.
  */
-// @ts-expect-error TS6133 - will be used in Task 4
 function bsPutAssignmentProb(
   S: number,        // current stock price
   K: number,        // strike price
@@ -250,7 +250,35 @@ export function MarginDashboardPage() {
   const [parsed, setParsed] = useState<ParsedData | null>(null)
   const [fileName, setFileName] = useState('')
   const [dragOver, setDragOver] = useState(false)
+  const [marketData, setMarketData] = useState<Record<string, MarketData>>({})
+  // @ts-expect-error TS6133 - will be rendered in a later task
+  const [marketLoading, setMarketLoading] = useState(false)
+  // @ts-expect-error TS6133 - will be rendered in a later task
+  const [marketError, setMarketError] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
+
+  const fetchMarketData = useCallback(async (tickers: string[]) => {
+    setMarketLoading(true)
+    setMarketError(false)
+    try {
+      const resp = await fetch(`${API_URL}/api/market/rsi`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tickers }),
+      })
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+      const raw: Record<string, { rsi: number | null; price: number | null } | null> = await resp.json()
+      const out: Record<string, MarketData> = {}
+      for (const [ticker, val] of Object.entries(raw)) {
+        out[ticker] = { price: val?.price ?? null, rsi: val?.rsi ?? null }
+      }
+      setMarketData(out)
+    } catch {
+      setMarketError(true)
+    } finally {
+      setMarketLoading(false)
+    }
+  }, [])
 
   const loadFile = useCallback((file: File) => {
     if (!file.name.toLowerCase().endsWith('.csv')) {
@@ -258,13 +286,18 @@ export function MarginDashboardPage() {
       return
     }
     setFileName(file.name)
+    setMarketData({})
+    setMarketError(false)
     const reader = new FileReader()
     reader.onload = (e) => {
       const text = e.target?.result as string
-      setParsed(parsePortfolioCSV(text))
+      const data = parsePortfolioCSV(text)
+      setParsed(data)
+      const tickers = [...new Set(data.shortPuts.map(p => p.ticker))]
+      if (tickers.length > 0) fetchMarketData(tickers)
     }
     reader.readAsText(file)
-  }, [])
+  }, [fetchMarketData])
 
   const onDrop = useCallback((e: DragEvent<HTMLDivElement>) => {
     e.preventDefault()
@@ -278,6 +311,27 @@ export function MarginDashboardPage() {
     if (file) loadFile(file)
     e.target.value = ''
   }
+
+  // @ts-expect-error TS6133 - will be used in a later task
+  const enrichedPuts = useMemo((): ShortPut[] => {
+    return (parsed?.shortPuts ?? []).map(p => {
+      const md = marketData[p.ticker]
+      const stockPrice = md?.price ?? null
+      const rsi = md?.rsi ?? null
+      const ivDecimal = p.iv !== '--' ? parseFloat(p.iv) / 100 : null
+      const T = p.dte / 365
+      const prob = stockPrice !== null && ivDecimal !== null
+        ? bsPutAssignmentProb(stockPrice, p.strike, T, ivDecimal)
+        : null
+      return {
+        ...p,
+        stockPrice,
+        rsi,
+        assignmentProb: prob,
+        weightedObligation: p.obligation * (prob ?? 1),
+      }
+    })
+  }, [parsed, marketData])
 
   // ── Upload screen ──────────────────────────────────────────────────────────
   if (!parsed) {
@@ -341,7 +395,7 @@ export function MarginDashboardPage() {
           <p className="text-sm text-gray-400 mt-0.5">{fileName}</p>
         </div>
         <button
-          onClick={() => { setParsed(null); setFileName('') }}
+          onClick={() => { setParsed(null); setFileName(''); setMarketData({}); setMarketError(false) }}
           className="px-3 py-1.5 text-sm text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
         >
           Upload New File
