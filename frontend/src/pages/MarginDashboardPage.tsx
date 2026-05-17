@@ -16,6 +16,11 @@ interface ShortPut {
   pnl: number
   dte: number
   iv: string
+  gainPct: number            // pnl / |entryPremium|, clamped 0–1; computed in parsePortfolioCSV
+  stockPrice: number | null  // current price from backend; null until loaded
+  rsi: number | null         // RSI-14 from backend; null until loaded
+  assignmentProb: number | null  // BS put delta; null if stockPrice or IV unavailable
+  weightedObligation: number     // obligation × (assignmentProb ?? 1); defaults to full obligation
 }
 
 interface ParsedData {
@@ -30,6 +35,13 @@ interface ExpiryGroup {
   dte: number
   count: number
   obligation: number
+  weightedObligation: number
+}
+
+// @ts-expect-error TS6196 - will be used in Task 5
+interface MarketData {
+  price: number | null
+  rsi: number | null
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -167,6 +179,11 @@ function parsePortfolioCSV(text: string): ParsedData {
     const strike = parseFloat(strikeStr)
     const absQty = Math.abs(qty)
 
+    const obligation = strike * absQty * 100
+    const entryPremium = pricePaid * absQty * 100
+    const absEntry = Math.abs(entryPremium)
+    const gainPct = absEntry > 0 ? Math.min(Math.max(totalGain / absEntry, 0), 1) : 0
+
     shortPuts.push({
       symbol,
       ticker,
@@ -174,12 +191,17 @@ function parsePortfolioCSV(text: string): ParsedData {
       expiryLabel,
       strike,
       qty,
-      obligation: strike * absQty * 100,
-      entryPremium: pricePaid * absQty * 100,
+      obligation,
+      entryPremium,
       closeValue: Math.abs(value),
       pnl: totalGain,
       dte: getDte(expiry),
       iv,
+      gainPct,
+      stockPrice: null,
+      rsi: null,
+      assignmentProb: null,
+      weightedObligation: obligation,   // conservative default: 100% risk until market data loads
     })
   }
 
@@ -191,11 +213,19 @@ function groupByExpiry(positions: ShortPut[]): ExpiryGroup[] {
   const map = new Map<string, ExpiryGroup>()
   for (const p of positions) {
     if (!map.has(p.expiryLabel)) {
-      map.set(p.expiryLabel, { label: p.expiryLabel, expiry: p.expiry, dte: p.dte, count: 0, obligation: 0 })
+      map.set(p.expiryLabel, {
+        label: p.expiryLabel,
+        expiry: p.expiry,
+        dte: p.dte,
+        count: 0,
+        obligation: 0,
+        weightedObligation: 0,
+      })
     }
     const g = map.get(p.expiryLabel)!
     g.count++
     g.obligation += p.obligation
+    g.weightedObligation += p.weightedObligation
   }
   return Array.from(map.values()).sort((a, b) => a.dte - b.dte)
 }
