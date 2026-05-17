@@ -26,7 +26,7 @@
 - `TradesPage.tsx` — trade list table with alert coloring and filters
 - `TradeDetailPage.tsx` — single trade view with commentary thread
 - `ScannerPage.tsx` — IV surface options scanner (routes to /scanner)
-- `MarginDashboardPage.tsx` — CSV-based portfolio margin analysis (no backend dependency)
+- `MarginDashboardPage.tsx` — CSV-based portfolio margin analysis; fires `POST /api/market/rsi` on CSV load to fetch current price + RSI per ticker for Black-Scholes assignment probability
 
 **Frontend Components (`frontend/src/components/`):**
 - `Commentary/` — commentary thread UI
@@ -62,5 +62,5 @@
   - Inline add-trade modal
   - Filter toolbar
 - Options scanner (IV surface, yfinance)
-- Margin dashboard (CSV import, client-side analysis)
+- Margin dashboard (CSV import, client-side analysis, Black-Scholes assignment probability, confidence-adjusted obligation)
 - RSI column / scanner integration

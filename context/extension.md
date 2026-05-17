@@ -110,7 +110,8 @@ let _hoverRow = null;
 
 - Fetched on demand via "📊 Fetch RSI" button in toolbar
 - Batch request: `POST /api/market/rsi` with `{ tickers: [...] }`
-- Results stored in `rsiCache: Map<ticker, number|null>`
+- **Response shape (updated):** `{ "AAPL": { "rsi": 52.3, "price": 213.40 }, "BADTICKER": null }` — each value is a `{rsi, price}` object or `null`, not a bare float. `fetchRsiForAll` extracts `val.rsi` with a type guard: `val && typeof val === 'object' ? val.rsi : null`
+- Results stored in `rsiCache: Map<ticker, number|null>` (only RSI stored; price is used by MarginDashboardPage separately)
 - Applied to badge as `.tm-rsi-pill` with class based on value:
   - `< 30` → `rsi-oversold` (green)
   - `30–40` → `rsi-near-oversold`
@@ -132,7 +133,7 @@ Base URL: `http://localhost:5431` (configurable via chrome.storage in popup)
 | GET | `/api/trades/:id/commentary` | Load commentary thread + count |
 | POST | `/api/trades/:id/commentary` | Add commentary note |
 | DELETE | `/api/commentary/:id` | Delete a note |
-| POST | `/api/market/rsi` | Batch RSI fetch |
+| POST | `/api/market/rsi` | Batch RSI + price fetch — returns `{rsi, price}` per ticker |
 | POST | `/api/trades` | Add new trade (from modal) |
 
 ---
@@ -147,11 +148,11 @@ Base URL: `http://localhost:5431` (configurable via chrome.storage in popup)
 ## Recent Commit History
 
 ```
+573521e  docs: update context files with new port assignments (5430/5431/5432)
+121e6f0  chore: reassign application ports (frontend 5430, backend 5431, postgres 5432)
+495ac9e  fix: update extension fetchRsiForAll to read new {rsi, price} response shape
 0f09a36  feat: remove status tag from badge, keep only DTE and RSI/commentary
 1941a36  fix: inject TM badge inside Actions cell (col=1) after ActionsCellRenderer
-06e8c58  fix: align TM badge with Actions column right edge
-d7444b7  feat: open commentary via hover trigger on document.body
-83e58ae  feat: add commentary button and floating panel to extension badge
 ```
 
 ---
