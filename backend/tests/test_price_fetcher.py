@@ -1,5 +1,6 @@
 # backend/tests/test_price_fetcher.py
 import pytest
+import pandas as _pd
 from unittest.mock import patch, MagicMock
 from decimal import Decimal
 from datetime import date
@@ -195,8 +196,6 @@ async def test_refresh_leaves_existing_price_unchanged_when_ticker_missing(clien
 
 
 # --- _fetch_one_rsi returns {rsi, price} dict ---
-
-import pandas as _pd
 
 
 def _make_close_df(n: int = 30, start: float = 100.0) -> _pd.DataFrame:
