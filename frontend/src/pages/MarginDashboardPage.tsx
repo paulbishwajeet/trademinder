@@ -114,21 +114,18 @@ function bsPutAssignmentProb(
   return normalCDF(-d1)
 }
 
-// @ts-expect-error TS6133 - will be used in Task 4
 function gainClass(pct: number): string {
   if (pct >= 0.70) return 'text-green-600 font-medium'
   if (pct >= 0.40) return 'text-amber-600 font-medium'
   return 'text-red-600 font-medium'
 }
 
-// @ts-expect-error TS6133 - will be used in Task 4
 function probClass(prob: number): string {
   if (prob < 0.15) return 'text-green-600 font-medium'
   if (prob < 0.35) return 'text-amber-600 font-medium'
   return 'text-red-600 font-medium'
 }
 
-// @ts-expect-error TS6133 - will be used in Task 4
 function rsiPillClass(rsi: number): string {
   if (rsi < 30)  return 'bg-green-100 text-green-700 border border-green-300'
   if (rsi < 40)  return 'bg-emerald-100 text-emerald-700 border border-emerald-300'
@@ -589,10 +586,14 @@ export function MarginDashboardPage() {
                 <th className="px-4 py-2.5 text-right font-medium">Close Cost</th>
                 <th className="px-4 py-2.5 text-right font-medium">P&amp;L</th>
                 <th className="px-4 py-2.5 text-right font-medium">IV</th>
+                <th className="px-4 py-2.5 text-right font-medium">Gain %</th>
+                <th className="px-4 py-2.5 text-center font-medium">RSI</th>
+                <th className="px-4 py-2.5 text-right font-medium">Assign. Prob</th>
+                <th className="px-4 py-2.5 text-right font-medium">Wtd. Obligation</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
-              {shortPuts.map((p, i) => (
+              {enrichedPuts.map((p, i) => (
                 <tr key={i} className="hover:bg-gray-50 transition-colors">
                   <td className="px-4 py-2.5">
                     <div className="font-medium text-gray-800">{p.ticker}</div>
@@ -618,6 +619,20 @@ export function MarginDashboardPage() {
                   </td>
                   <td className="px-4 py-2.5 text-right text-gray-500">
                     {p.iv !== '--' ? p.iv + '%' : '—'}
+                  </td>
+                  <td className={`px-4 py-2.5 text-right ${gainClass(p.gainPct)}`}>
+                    {fmtPct(p.gainPct * 100)}
+                  </td>
+                  <td className="px-4 py-2.5 text-center">
+                    {p.rsi != null
+                      ? <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${rsiPillClass(p.rsi)}`}>{p.rsi.toFixed(1)}</span>
+                      : <span className="text-gray-300">—</span>}
+                  </td>
+                  <td className={`px-4 py-2.5 text-right ${p.assignmentProb != null ? probClass(p.assignmentProb) : 'text-gray-300'}`}>
+                    {p.assignmentProb != null ? fmtPct(p.assignmentProb * 100) : '—'}
+                  </td>
+                  <td className="px-4 py-2.5 text-right font-medium text-gray-800">
+                    {p.assignmentProb != null ? fmt$(p.weightedObligation) : '—'}
                   </td>
                 </tr>
               ))}
