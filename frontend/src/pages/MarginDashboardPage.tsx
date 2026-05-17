@@ -256,8 +256,13 @@ export function MarginDashboardPage() {
   // @ts-expect-error TS6133 - will be rendered in a later task
   const [marketError, setMarketError] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
+  const abortCtrlRef = useRef<AbortController | null>(null)
 
   const fetchMarketData = useCallback(async (tickers: string[]) => {
+    abortCtrlRef.current?.abort()
+    const ctrl = new AbortController()
+    abortCtrlRef.current = ctrl
+
     setMarketLoading(true)
     setMarketError(false)
     try {
@@ -265,6 +270,7 @@ export function MarginDashboardPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tickers }),
+        signal: ctrl.signal,
       })
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
       const raw: Record<string, { rsi: number | null; price: number | null } | null> = await resp.json()
@@ -273,7 +279,9 @@ export function MarginDashboardPage() {
         out[ticker] = { price: val?.price ?? null, rsi: val?.rsi ?? null }
       }
       setMarketData(out)
-    } catch {
+    } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') return
+      console.error('Market data fetch failed:', err)
       setMarketError(true)
     } finally {
       setMarketLoading(false)
@@ -287,6 +295,7 @@ export function MarginDashboardPage() {
     }
     setFileName(file.name)
     setMarketData({})
+    setMarketLoading(false)
     setMarketError(false)
     const reader = new FileReader()
     reader.onload = (e) => {
@@ -395,7 +404,7 @@ export function MarginDashboardPage() {
           <p className="text-sm text-gray-400 mt-0.5">{fileName}</p>
         </div>
         <button
-          onClick={() => { setParsed(null); setFileName(''); setMarketData({}); setMarketError(false) }}
+          onClick={() => { setParsed(null); setFileName(''); setMarketData({}); setMarketLoading(false); setMarketError(false) }}
           className="px-3 py-1.5 text-sm text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
         >
           Upload New File
