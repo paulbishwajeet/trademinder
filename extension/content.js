@@ -674,7 +674,8 @@ async function fetchRsiForAll() {
 
     if (resp.ok) {
       const data = await resp.json();
-      Object.entries(data).forEach(([ticker, rsi]) => {
+      Object.entries(data).forEach(([ticker, val]) => {
+        const rsi = val && typeof val === 'object' ? val.rsi : null;
         rsiCache.set(ticker, typeof rsi === 'number' ? rsi : null);
       });
     }
