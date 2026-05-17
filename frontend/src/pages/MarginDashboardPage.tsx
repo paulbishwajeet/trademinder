@@ -593,8 +593,8 @@ export function MarginDashboardPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
-              {enrichedPuts.map((p, i) => (
-                <tr key={i} className="hover:bg-gray-50 transition-colors">
+              {enrichedPuts.map(p => (
+                <tr key={p.symbol} className="hover:bg-gray-50 transition-colors">
                   <td className="px-4 py-2.5">
                     <div className="font-medium text-gray-800">{p.ticker}</div>
                     <div className="text-xs text-gray-400 truncate max-w-[180px]" title={p.symbol}>
