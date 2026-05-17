@@ -478,6 +478,7 @@ export function MarginDashboardPage() {
                 <th className="px-4 py-2 text-center font-medium">Positions</th>
                 <th className="px-4 py-2 text-right font-medium">Obligation</th>
                 <th className="px-4 py-2 text-right font-medium">% of Total</th>
+                <th className="px-4 py-2 text-right font-medium">Wtd. Obligation</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
@@ -494,6 +495,9 @@ export function MarginDashboardPage() {
                   <td className="px-4 py-2.5 text-right text-gray-500">
                     {fmtPct(totalObligation > 0 ? (g.obligation / totalObligation) * 100 : 0)}
                   </td>
+                  <td className="px-4 py-2.5 text-right text-gray-600">
+                    {marketLoading ? '—' : fmt$(g.weightedObligation)}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -502,6 +506,9 @@ export function MarginDashboardPage() {
                 <td className="px-4 py-2.5 text-gray-700" colSpan={3}>Total</td>
                 <td className="px-4 py-2.5 text-right text-gray-900">{fmt$(totalObligation)}</td>
                 <td className="px-4 py-2.5 text-right text-gray-500">100%</td>
+                <td className="px-4 py-2.5 text-right text-gray-700">
+                  {marketLoading ? '—' : fmt$(totalWeightedObligation)}
+                </td>
               </tr>
             </tfoot>
           </table>
