@@ -455,7 +455,7 @@ export function MarginDashboardPage() {
         />
         <SummaryCard
           label="Confidence-Adjusted Obligation"
-          value={marketLoading ? '—' : fmt$(totalWeightedObligation)}
+          value={marketLoading || marketError ? '—' : fmt$(totalWeightedObligation)}
           sub={marketLoading
             ? 'Fetching market data…'
             : marketError
