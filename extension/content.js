@@ -23,7 +23,7 @@ const ETRADE = {
 // ============================================================
 // STATE
 // ============================================================
-let tmApiUrl = 'http://localhost:3001';
+let tmApiUrl = 'http://localhost:5431';
 let stageEnabled = { stage1: true, stage2: true, stage3: true, stage4: true };
 
 // rowId → cacheKey (ticker or fullSymbol): prevents re-processing unchanged rows
@@ -56,7 +56,7 @@ let columnIndexCache = null;
 // ============================================================
 chrome.runtime.sendMessage({ type: 'GET_SETTINGS' }, (resp) => {
   if (resp) {
-    tmApiUrl = resp.apiUrl || 'http://localhost:3001';
+    tmApiUrl = resp.apiUrl || 'http://localhost:5431';
     stageEnabled = resp.stages || stageEnabled;
   }
   if (stageEnabled.stage1) {

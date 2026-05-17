@@ -1,7 +1,7 @@
 // frontend/src/pages/MarginDashboardPage.tsx
 import { useState, useCallback, useMemo, useRef, type DragEvent, type ChangeEvent } from 'react'
 
-const API_URL = 'http://localhost:3001'
+const API_URL = 'http://localhost:5431'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 

@@ -3,7 +3,7 @@
 # 2. Create .env from .env.example and fill in real values.
 # 3. In Container Station → Create Application → paste the compose or point to this file.
 #
-# Access the app at http://<NAS_IP>:<FRONTEND_PORT>  (default port 3000)
+# Access the app at http://<NAS_IP>:<FRONTEND_PORT>  (default port 5430)
 
 services:
   db:
@@ -37,14 +37,14 @@ services:
         condition: service_healthy
     restart: unless-stopped
     # Run DB migrations before starting the server (idempotent — safe on every restart)
-    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 3001"
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 5431"
 
   frontend:
     build:
       context: ./frontend
       target: prod
     ports:
-      - "${FRONTEND_PORT:-3000}:80"
+      - "${FRONTEND_PORT:-5430}:80"
     depends_on:
       - backend
     restart: unless-stopped
