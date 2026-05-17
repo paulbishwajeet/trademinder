@@ -50,7 +50,7 @@
 - `docker-compose.yml` — local dev (postgres + backend)
 - `docker-compose.prod.yml` — production
 - Backend env: DATABASE_URL, ANTHROPIC_API_KEY (set in docker env or .env)
-- Extension connects to backend at `http://localhost:8000` (hardcoded in content.js for local dev)
+- Extension connects to backend at `http://localhost:5431` (configurable via popup; default in content.js, background.js)
 
 **Modules/Features List:**
 - Trade CRUD + alert engine (core)

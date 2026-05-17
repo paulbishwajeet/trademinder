@@ -123,7 +123,7 @@ let _hoverRow = null;
 
 ## Backend API — Extension Endpoints
 
-Base URL: `http://localhost:3001` (configurable via chrome.storage in popup)
+Base URL: `http://localhost:5431` (configurable via chrome.storage in popup)
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -162,4 +162,4 @@ d7444b7  feat: open commentary via hover trigger on document.body
 2. Enable Developer Mode
 3. "Load unpacked" → select `extension/` directory
 4. Navigate to E*TRADE portfolio page
-5. Requires local backend running on port 3001 (`docker-compose up` or `uvicorn` in `backend/`)
+5. Requires local backend running on port 5431 (`docker-compose up` or `uvicorn` in `backend/`)
