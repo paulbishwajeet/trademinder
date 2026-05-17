@@ -41,7 +41,7 @@ async def refresh_prices(db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/rsi")
-async def get_rsi_batch(payload: RsiRequest) -> dict[str, float | None]:
+async def get_rsi_batch(payload: RsiRequest) -> dict[str, dict | None]:
     tickers = [t.upper() for t in payload.tickers if t.strip()]
     if not tickers:
         return {}

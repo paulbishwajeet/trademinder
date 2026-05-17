@@ -79,7 +79,7 @@ def _compute_rsi_14(close: pd.Series) -> float | None:
     return round(100 - (100 / (1 + rs)), 2)
 
 
-def _fetch_one_rsi(ticker: str) -> tuple[str, float | None]:
+def _fetch_one_rsi(ticker: str) -> tuple[str, dict | None]:
     try:
         df = yf.download(ticker, period="45d", interval="1d", progress=False, auto_adjust=True)
         if df is None or df.empty:
@@ -87,18 +87,20 @@ def _fetch_one_rsi(ticker: str) -> tuple[str, float | None]:
         close = df["Close"]
         if isinstance(close, pd.DataFrame):
             close = close.iloc[:, 0]
-        return ticker, _compute_rsi_14(close)
+        price = round(float(close.iloc[-1]), 2)
+        rsi = _compute_rsi_14(close)
+        return ticker, {"rsi": rsi, "price": price}
     except Exception:
         return ticker, None
 
 
-def _fetch_rsi_from_yfinance(tickers: list[str]) -> dict[str, float | None]:
+def _fetch_rsi_from_yfinance(tickers: list[str]) -> dict[str, dict | None]:
     """Parallel RSI fetch — 5 workers keeps yfinance from throttling."""
     with ThreadPoolExecutor(max_workers=5) as ex:
         return dict(ex.map(_fetch_one_rsi, tickers))
 
 
-async def fetch_rsi_batch(tickers: list[str]) -> dict[str, float | None]:
+async def fetch_rsi_batch(tickers: list[str]) -> dict[str, dict | None]:
     """Async wrapper so the event loop is not blocked."""
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, _fetch_rsi_from_yfinance, tickers)

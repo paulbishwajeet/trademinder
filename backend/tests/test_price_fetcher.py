@@ -192,3 +192,47 @@ async def test_refresh_leaves_existing_price_unchanged_when_ticker_missing(clien
     # Existing price must be unchanged
     await db_session.refresh(t)
     assert float(t.current_price) == 188.0
+
+
+# --- _fetch_one_rsi returns {rsi, price} dict ---
+
+import pandas as _pd
+
+
+def _make_close_df(n: int = 30, start: float = 100.0) -> _pd.DataFrame:
+    """Minimal DataFrame mimicking yfinance single-ticker output (enough rows for RSI-14)."""
+    prices = [start + i * 0.5 for i in range(n)]
+    return _pd.DataFrame({"Close": prices, "Volume": [1_000_000] * n})
+
+
+def test_fetch_one_rsi_returns_dict_shape():
+    """Return must be (ticker, dict) with exactly {rsi, price}."""
+    from app.services.price_fetcher import _fetch_one_rsi
+    with patch("app.services.price_fetcher.yf.download", return_value=_make_close_df(30)):
+        ticker, result = _fetch_one_rsi("AAPL")
+    assert ticker == "AAPL"
+    assert isinstance(result, dict)
+    assert set(result.keys()) == {"rsi", "price"}
+
+
+def test_fetch_one_rsi_price_is_last_close():
+    from app.services.price_fetcher import _fetch_one_rsi
+    df = _make_close_df(30)
+    with patch("app.services.price_fetcher.yf.download", return_value=df):
+        _, result = _fetch_one_rsi("AAPL")
+    assert result["price"] == round(float(df["Close"].iloc[-1]), 2)
+
+
+def test_fetch_one_rsi_rsi_type():
+    from app.services.price_fetcher import _fetch_one_rsi
+    with patch("app.services.price_fetcher.yf.download", return_value=_make_close_df(30)):
+        _, result = _fetch_one_rsi("AAPL")
+    assert result["rsi"] is None or isinstance(result["rsi"], float)
+
+
+def test_fetch_one_rsi_empty_df_returns_none():
+    from app.services.price_fetcher import _fetch_one_rsi
+    with patch("app.services.price_fetcher.yf.download", return_value=_pd.DataFrame()):
+        ticker, result = _fetch_one_rsi("BADTICKER")
+    assert ticker == "BADTICKER"
+    assert result is None
