@@ -1,6 +1,12 @@
 // frontend/src/components/Trades/TradeForm.tsx
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import type { TradeCreate } from '../../types'
+
+interface Category {
+  id: string
+  name: string
+  color: string
+}
 
 interface Props {
   onSubmit: (payload: TradeCreate) => Promise<void>
@@ -8,21 +14,28 @@ interface Props {
 }
 
 const STRATEGIES = ['Stock', 'Put', 'Call', 'CoveredCall', 'PutCreditSpread', 'Leap']
-const CATEGORIES = ['Wheel', 'Speculative', 'Hedge']
 const TYPES = ['Buy', 'Sell', 'Assigned']
 
 export function TradeForm({ onSubmit, onCancel }: Props) {
   const today = new Date().toISOString().split('T')[0]
   const [form, setForm] = useState<TradeCreate>({
     type: 'Sell',
-    category: 'Wheel',
+    category: 'WHEEL',
     strategy: 'Put',
     ticker: '',
     open_date: today,
     quantity: 1,
   })
+  const [categories, setCategories] = useState<Category[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    fetch('/api/categories')
+      .then(r => r.json())
+      .then((data: Category[]) => setCategories(data))
+      .catch(() => {})
+  }, [])
 
   const set = (field: keyof TradeCreate, value: unknown) =>
     setForm(prev => ({ ...prev, [field]: value }))
@@ -73,7 +86,10 @@ export function TradeForm({ onSubmit, onCancel }: Props) {
         <div>
           <label className="block text-sm font-medium text-gray-700">Category *</label>
           <select value={form.category} onChange={e => set('category', e.target.value)} className="mt-1 block w-full border border-gray-300 rounded px-3 py-2 text-sm">
-            {CATEGORIES.map(c => <option key={c}>{c}</option>)}
+            {categories.length === 0
+              ? <option value="" disabled>Loading...</option>
+              : categories.map(c => <option key={c.id} value={c.name}>{c.name}</option>)
+            }
           </select>
         </div>
 
