@@ -10,6 +10,19 @@ interface Props {
   onDelete: (id: string) => void
 }
 
+const CATEGORY_COLORS: Record<string, string> = {
+  WHEEL:          '#3B82F6',
+  SWING:          '#06B6D4',
+  HOLD:           '#10B981',
+  LEAP:           '#8B5CF6',
+  PUT_SPREAD:     '#F59E0B',
+  CALL_SPREAD:    '#F97316',
+  IRON_CONDOR:    '#EF4444',
+  IRON_BUTTERFLY: '#EC4899',
+  SKIP:           '#6B7280',
+  HOPS:           '#84CC16',
+}
+
 export function TradeTable({ trades, onDelete }: Props) {
   if (trades.length === 0) {
     return <p className="text-gray-500 text-center py-8">No trades yet. Add your first trade.</p>
@@ -20,7 +33,7 @@ export function TradeTable({ trades, onDelete }: Props) {
       <table className="min-w-full divide-y divide-gray-200 text-sm">
         <thead className="bg-gray-50">
           <tr>
-            {['Ticker', 'Strategy', 'Type', 'Strike', 'Expiry', 'Qty', 'Premium', 'P&L', 'Status', 'Commentary', ''].map(h => (
+            {['Ticker', 'Category', 'Strategy', 'Type', 'Strike', 'Expiry', 'Qty', 'Premium', 'P&L', 'Status', 'Commentary', ''].map(h => (
               <th key={h} className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                 {h}
               </th>
@@ -28,44 +41,56 @@ export function TradeTable({ trades, onDelete }: Props) {
           </tr>
         </thead>
         <tbody className="bg-white divide-y divide-gray-200">
-          {trades.map(trade => (
-            <tr key={trade.id} className="hover:bg-gray-50">
-              <td className="px-4 py-3 font-semibold">
-                <Link to={`/trades/${trade.id}`} className="text-blue-600 hover:underline">
-                  {trade.ticker}
-                </Link>
-              </td>
-              <td className="px-4 py-3">{trade.strategy}</td>
-              <td className="px-4 py-3">{trade.type}</td>
-              <td className="px-4 py-3">{trade.strike_price ?? '—'}</td>
-              <td className="px-4 py-3">{trade.expiry_date ?? '—'}</td>
-              <td className="px-4 py-3">{trade.quantity}</td>
-              <td className="px-4 py-3">{trade.premium !== null ? `$${trade.premium}` : '—'}</td>
-              <td className="px-4 py-3"><PnLDisplay value={trade.unrealized_pnl} /></td>
-              <td className="px-4 py-3"><StatusBadge status={trade.status} /></td>
-              <td className="px-4 py-3">
-                <CommentaryCell tradeId={trade.id} ticker={trade.ticker} />
-              </td>
-              <td className="px-4 py-3">
-                <div className="flex items-center gap-3">
-                  {trade.strategy === 'Stock' && trade.status === 'open' && (
-                    <Link
-                      to={`/scanner?ticker=${trade.ticker}`}
-                      className="text-blue-500 hover:text-blue-700 text-xs"
+          {trades.map(trade => {
+            const color = CATEGORY_COLORS[trade.category]
+            const rowStyle = color
+              ? { borderLeft: `3px solid ${color}`, backgroundColor: `${color}14` }
+              : {}
+            return (
+              <tr key={trade.id} style={rowStyle} className="hover:brightness-95">
+                <td className="px-4 py-3 font-semibold">
+                  <Link to={`/trades/${trade.id}`} className="text-blue-600 hover:underline">
+                    {trade.ticker}
+                  </Link>
+                </td>
+                <td className="px-4 py-3">
+                  {color
+                    ? <span style={{ color, fontWeight: 600, fontSize: '0.75rem' }}>{trade.category}</span>
+                    : <span className="text-gray-500">{trade.category}</span>
+                  }
+                </td>
+                <td className="px-4 py-3">{trade.strategy}</td>
+                <td className="px-4 py-3">{trade.type}</td>
+                <td className="px-4 py-3">{trade.strike_price ?? '—'}</td>
+                <td className="px-4 py-3">{trade.expiry_date ?? '—'}</td>
+                <td className="px-4 py-3">{trade.quantity}</td>
+                <td className="px-4 py-3">{trade.premium !== null ? `$${trade.premium}` : '—'}</td>
+                <td className="px-4 py-3"><PnLDisplay value={trade.unrealized_pnl} /></td>
+                <td className="px-4 py-3"><StatusBadge status={trade.status} /></td>
+                <td className="px-4 py-3">
+                  <CommentaryCell tradeId={trade.id} ticker={trade.ticker} />
+                </td>
+                <td className="px-4 py-3">
+                  <div className="flex items-center gap-3">
+                    {trade.strategy === 'Stock' && trade.status === 'open' && (
+                      <Link
+                        to={`/scanner?ticker=${trade.ticker}`}
+                        className="text-blue-500 hover:text-blue-700 text-xs"
+                      >
+                        Scan →
+                      </Link>
+                    )}
+                    <button
+                      onClick={() => onDelete(trade.id)}
+                      className="text-red-500 hover:text-red-700 text-xs"
                     >
-                      Scan →
-                    </Link>
-                  )}
-                  <button
-                    onClick={() => onDelete(trade.id)}
-                    className="text-red-500 hover:text-red-700 text-xs"
-                  >
-                    Delete
-                  </button>
-                </div>
-              </td>
-            </tr>
-          ))}
+                      Delete
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            )
+          })}
         </tbody>
       </table>
     </div>
