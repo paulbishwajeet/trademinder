@@ -32,6 +32,8 @@ services:
       MARKET_HOURS_END: ${MARKET_HOURS_END:-16:00}
       PRICE_REFRESH_INTERVAL_MINUTES: ${PRICE_REFRESH_INTERVAL_MINUTES:-15}
       BRIEFING_GENERATE_TIME: ${BRIEFING_GENERATE_TIME:-08:00}
+    ports:
+      - "5431:5431"
     depends_on:
       db:
         condition: service_healthy
