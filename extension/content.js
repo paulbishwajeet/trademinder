@@ -805,6 +805,9 @@ chrome.runtime.onMessage.addListener((message) => {
   if (message.type === 'SHOW_ADD_MODAL') {
     showAddTradeModal(message.info || {});
   }
+  if (message.type === 'SHOW_EDIT_MODAL') {
+    showEditTradeModal(message.info || {});
+  }
 });
 
 // ============================================================
@@ -985,6 +988,178 @@ async function showAddTradeModal(info) {
       errorEl.classList.remove('tm-hidden');
       submitBtn.disabled = false;
       submitBtn.textContent = 'Add Trade';
+    }
+  });
+}
+
+// ============================================================
+// EDIT TRADE MODAL
+// ============================================================
+async function showEditTradeModal(info) {
+  if (document.getElementById('tm-modal-overlay')) return;
+
+  // 1. Look up the trade by etrade_symbol or ticker fallback
+  let tradeId;
+  let trade;
+  try {
+    const searchUrl = info.fullSymbol
+      ? `${tmApiUrl}/api/trades?etrade_symbol=${encodeURIComponent(info.fullSymbol)}`
+      : `${tmApiUrl}/api/trades?ticker=${encodeURIComponent(info.ticker || '')}&status=open`;
+    const searchResp = await fetch(searchUrl, { signal: AbortSignal.timeout(6000) });
+    if (!searchResp.ok) throw new Error(`HTTP ${searchResp.status}`);
+    const matches = await searchResp.json();
+    if (!matches.length) {
+      alert('Trade not found in TradeMinder. Add it first via "Add to TradeMinder".');
+      return;
+    }
+    tradeId = matches[0].id;
+  } catch (err) {
+    alert('Could not reach TradeMinder backend: ' + (err.message || 'unknown error'));
+    return;
+  }
+
+  // 2. Fetch full trade detail (includes rationale.notes)
+  try {
+    const detailResp = await fetch(`${tmApiUrl}/api/trades/${tradeId}`, { signal: AbortSignal.timeout(6000) });
+    if (!detailResp.ok) throw new Error(`HTTP ${detailResp.status}`);
+    trade = await detailResp.json();
+  } catch (err) {
+    alert('Failed to load trade details: ' + (err.message || 'unknown error'));
+    return;
+  }
+
+  // 3. Fetch categories for the dropdown
+  const categories = await fetchCategories();
+
+  // 4. Render modal
+  const overlay = document.createElement('div');
+  overlay.id = 'tm-modal-overlay';
+
+  overlay.innerHTML = `
+    <div id="tm-modal">
+      <div id="tm-modal-header">
+        <span id="tm-modal-title">✏️ Edit Trade — ${trade.ticker}</span>
+        <button id="tm-modal-close" title="Close">✕</button>
+      </div>
+      <form id="tm-modal-form" autocomplete="off">
+        <div class="tm-field-row">
+          <label>Type</label>
+          <select name="type">
+            <option value="Sell" ${trade.type === 'Sell' ? 'selected' : ''}>Sell</option>
+            <option value="Buy" ${trade.type === 'Buy' ? 'selected' : ''}>Buy</option>
+            <option value="Assigned" ${trade.type === 'Assigned' ? 'selected' : ''}>Assigned</option>
+          </select>
+        </div>
+        <div class="tm-field-row">
+          <label>Strategy</label>
+          <select name="strategy">
+            <option value="Sell Put" ${trade.strategy === 'Sell Put' ? 'selected' : ''}>Sell Put</option>
+            <option value="Sell Call" ${trade.strategy === 'Sell Call' ? 'selected' : ''}>Sell Call</option>
+            <option value="Buy Put" ${trade.strategy === 'Buy Put' ? 'selected' : ''}>Buy Put</option>
+            <option value="Buy Call" ${trade.strategy === 'Buy Call' ? 'selected' : ''}>Buy Call</option>
+            <option value="Put Credit Spread" ${trade.strategy === 'Put Credit Spread' ? 'selected' : ''}>Put Credit Spread</option>
+            <option value="Call Credit Spread" ${trade.strategy === 'Call Credit Spread' ? 'selected' : ''}>Call Credit Spread</option>
+            <option value="Covered Call" ${trade.strategy === 'Covered Call' ? 'selected' : ''}>Covered Call</option>
+            <option value="Stock" ${trade.strategy === 'Stock' ? 'selected' : ''}>Stock</option>
+          </select>
+        </div>
+        <div class="tm-field-row tm-field-full">
+          <label>Category <span class="tm-required">*</span></label>
+          <select name="category">
+            ${buildCategoryOptions(categories, trade.category || 'WHEEL')}
+          </select>
+        </div>
+        <div class="tm-field-row">
+          <label>Strike</label>
+          <input type="number" name="strike_price" step="0.01" value="${trade.strike_price != null ? trade.strike_price : ''}" placeholder="optional" />
+        </div>
+        <div class="tm-field-row">
+          <label>Expiry</label>
+          <input type="date" name="expiry_date" value="${trade.expiry_date || ''}" />
+        </div>
+        <div class="tm-field-row">
+          <label>Qty</label>
+          <input type="number" name="quantity" min="1" step="1" value="${trade.quantity}" required />
+        </div>
+        <div class="tm-field-row">
+          <label>Premium</label>
+          <input type="number" name="premium" step="0.01" min="0" value="${trade.premium != null ? trade.premium : ''}" placeholder="0.00" />
+        </div>
+        <div class="tm-field-row tm-field-full">
+          <label>Exit Strategy</label>
+          <input type="text" name="exit_strategy" value="${trade.exit_strategy ? trade.exit_strategy.replace(/"/g, '&quot;') : ''}" placeholder="e.g. Close at 50% profit" />
+        </div>
+        <div class="tm-field-row tm-field-full">
+          <label>Notes</label>
+          <textarea name="rationale_notes" rows="2">${trade.rationale?.notes || ''}</textarea>
+        </div>
+        <div id="tm-modal-error" class="tm-hidden"></div>
+        <div id="tm-modal-actions">
+          <button type="button" id="tm-modal-cancel">Cancel</button>
+          <button type="submit" id="tm-modal-submit">Save Changes</button>
+        </div>
+      </form>
+    </div>`;
+
+  document.body.appendChild(overlay);
+
+  const closeModal = () => overlay.remove();
+  overlay.querySelector('#tm-modal-close').addEventListener('click', closeModal);
+  overlay.querySelector('#tm-modal-cancel').addEventListener('click', closeModal);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) closeModal(); });
+
+  overlay.querySelector('#tm-modal-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const errorEl = overlay.querySelector('#tm-modal-error');
+    const submitBtn = overlay.querySelector('#tm-modal-submit');
+    errorEl.classList.add('tm-hidden');
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Saving…';
+
+    const fd = new FormData(e.target);
+    const strike_price = fd.get('strike_price') ? parseFloat(fd.get('strike_price')) : null;
+    const expiry_date = fd.get('expiry_date') || null;
+    const premium = fd.get('premium') ? parseFloat(fd.get('premium')) : null;
+    const payload = {
+      type: fd.get('type'),
+      strategy: fd.get('strategy'),
+      category: fd.get('category'),
+      quantity: parseInt(fd.get('quantity'), 10),
+      exit_strategy: fd.get('exit_strategy') || null,
+      rationale_notes: fd.get('rationale_notes')?.trim() || null,
+      ...(strike_price != null && { strike_price }),
+      ...(expiry_date && { expiry_date }),
+      ...(premium != null && { premium }),
+    };
+
+    try {
+      const resp = await fetch(`${tmApiUrl}/api/trades/${tradeId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(8000),
+      });
+
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error(err.detail || `HTTP ${resp.status}`);
+      }
+
+      // Invalidate cache so the row badge refreshes
+      const cacheKey = info.fullSymbol || info.ticker;
+      statusCache.delete(cacheKey);
+      if (info.ticker) statusCache.delete(info.ticker);
+      processedRows.forEach((val, key) => {
+        if (val === cacheKey || val === info.ticker) processedRows.delete(key);
+      });
+      processVisibleRows();
+      closeModal();
+
+    } catch (err) {
+      errorEl.textContent = err.message || 'Failed to save changes';
+      errorEl.classList.remove('tm-hidden');
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Save Changes';
     }
   });
 }
