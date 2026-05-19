@@ -14,7 +14,14 @@ depends_on = None
 
 def upgrade() -> None:
     # 1. Remove old system categories (NULL out FK first to avoid FK violation)
-    op.execute("UPDATE trades SET category_id = NULL WHERE category_id IS NOT NULL")
+    op.execute("""
+        UPDATE trades SET category_id = NULL
+        WHERE category_id IN (
+          SELECT id FROM categories
+          WHERE is_system = true
+          AND name IN ('Wheel', 'Speculative', 'Momentum', 'Short Term', 'Long Term', 'Coach Suggested')
+        )
+    """)
     op.execute("""
         DELETE FROM categories WHERE is_system = true
           AND name IN ('Wheel', 'Speculative', 'Momentum', 'Short Term', 'Long Term', 'Coach Suggested')
@@ -67,6 +74,7 @@ def downgrade() -> None:
           ('Short Term',      '#8B5CF6', '⚡', true, 4),
           ('Long Term',       '#10B981', '🌱', true, 5),
           ('Coach Suggested', '#EC4899', '🎓', true, 6)
+        ON CONFLICT (name) DO NOTHING
     """)
 
     # 2. Remap trades back (new-only categories fall back to Wheel)
@@ -86,19 +94,32 @@ def downgrade() -> None:
         END
     """)
 
-    # 3. Restore category_id FK (must run before deleting the new categories it references)
+    # 3. NULL-out category_id for trades still pointing at new system categories
     op.execute("""
-        UPDATE trades t
-        SET category_id = c.id
-        FROM categories c
-        WHERE c.name = t.category
+        UPDATE trades SET category_id = NULL
+        WHERE category_id IN (
+          SELECT id FROM categories
+          WHERE is_system = true
+          AND name IN (
+            'WHEEL','SWING','HOLD','LEAP','PUT_SPREAD','CALL_SPREAD',
+            'IRON_CONDOR','IRON_BUTTERFLY','SKIP','HOPS'
+          )
+        )
     """)
 
-    # 4. Remove new system categories (after FK is already pointing at restored old categories)
+    # 4. Remove new system categories (safe — no FK references remain)
     op.execute("""
         DELETE FROM categories WHERE is_system = true
           AND name IN (
             'WHEEL','SWING','HOLD','LEAP','PUT_SPREAD','CALL_SPREAD',
             'IRON_CONDOR','IRON_BUTTERFLY','SKIP','HOPS'
           )
+    """)
+
+    # 5. Restore category_id FK to point at the re-inserted old categories
+    op.execute("""
+        UPDATE trades t
+        SET category_id = c.id
+        FROM categories c
+        WHERE c.name = t.category
     """)
