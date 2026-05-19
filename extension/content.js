@@ -808,9 +808,32 @@ chrome.runtime.onMessage.addListener((message) => {
 });
 
 // ============================================================
+// CATEGORY HELPERS
+// ============================================================
+async function fetchCategories() {
+  try {
+    const resp = await fetch(`${tmApiUrl}/api/categories`, { signal: AbortSignal.timeout(5000) });
+    if (!resp.ok) return [];
+    return await resp.json();
+  } catch (_) {
+    return [];
+  }
+}
+
+function buildCategoryOptions(categories, selectedValue = 'WHEEL') {
+  if (categories.length === 0) {
+    return '<option value="" disabled selected>(categories unavailable)</option>';
+  }
+  return categories
+    .map(c => `<option value="${c.name}"${c.name === selectedValue ? ' selected' : ''}>${c.name}</option>`)
+    .join('');
+}
+
+// ============================================================
 // ADD TRADE MODAL
 // ============================================================
-function showAddTradeModal(info) {
+async function showAddTradeModal(info) {
+  const categories = await fetchCategories();
   if (document.getElementById('tm-modal-overlay')) return; // already open
 
   const overlay = document.createElement('div');
@@ -858,12 +881,7 @@ function showAddTradeModal(info) {
         <div class="tm-field-row tm-field-full">
           <label>Category <span class="tm-required">*</span></label>
           <select name="category">
-            <option value="Wheel">Wheel</option>
-            <option value="Speculative">Speculative</option>
-            <option value="Momentum">Momentum</option>
-            <option value="Short Term">Short Term</option>
-            <option value="Long Term">Long Term</option>
-            <option value="Coach Suggested">Coach Suggested</option>
+            ${buildCategoryOptions(categories, 'WHEEL')}
           </select>
         </div>
         <div class="tm-field-row">
