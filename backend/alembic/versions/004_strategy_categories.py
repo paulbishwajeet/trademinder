@@ -13,8 +13,12 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # 1. Remove old system categories
-    op.execute("DELETE FROM categories WHERE is_system = true")
+    # 1. Remove old system categories (NULL out FK first to avoid FK violation)
+    op.execute("UPDATE trades SET category_id = NULL WHERE category_id IS NOT NULL")
+    op.execute("""
+        DELETE FROM categories WHERE is_system = true
+          AND name IN ('Wheel', 'Speculative', 'Momentum', 'Short Term', 'Long Term', 'Coach Suggested')
+    """)
 
     # 2. Insert 10 new system categories
     op.execute("""
@@ -78,23 +82,23 @@ def downgrade() -> None:
           WHEN 'IRON_CONDOR'    THEN 'Speculative'
           WHEN 'IRON_BUTTERFLY' THEN 'Speculative'
           WHEN 'HOPS'           THEN 'Wheel'
-          ELSE 'Wheel'
+          ELSE category
         END
     """)
 
-    # 3. Remove new system categories
+    # 3. Restore category_id FK (must run before deleting the new categories it references)
+    op.execute("""
+        UPDATE trades t
+        SET category_id = c.id
+        FROM categories c
+        WHERE c.name = t.category
+    """)
+
+    # 4. Remove new system categories (after FK is already pointing at restored old categories)
     op.execute("""
         DELETE FROM categories WHERE is_system = true
           AND name IN (
             'WHEEL','SWING','HOLD','LEAP','PUT_SPREAD','CALL_SPREAD',
             'IRON_CONDOR','IRON_BUTTERFLY','SKIP','HOPS'
           )
-    """)
-
-    # 4. Restore category_id FK
-    op.execute("""
-        UPDATE trades t
-        SET category_id = c.id
-        FROM categories c
-        WHERE c.name = t.category
     """)
