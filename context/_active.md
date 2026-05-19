@@ -1,6 +1,6 @@
 # Active Feature
 
-**Feature:** Margin Assignment Confidence
-**Context File:** context/margin.md
-**Branch:** develop
-**Session Started:** 2026-05-17
+**Feature:** Strategy Labels (extension-strategy)
+**Context File:** context/extension.md
+**Branch:** extension-strategy
+**Session Started:** 2026-05-18

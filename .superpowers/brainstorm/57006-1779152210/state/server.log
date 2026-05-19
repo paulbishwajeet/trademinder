@@ -1,0 +1,11 @@
+{"type":"server-started","port":64288,"host":"127.0.0.1","url_host":"localhost","url":"http://localhost:64288","screen_dir":"/Users/bishwajeetpaul/workspace/github/TradeMinder/.superpowers/brainstorm/57006-1779152210/content","state_dir":"/Users/bishwajeetpaul/workspace/github/TradeMinder/.superpowers/brainstorm/57006-1779152210/state"}
+{"type":"screen-added","file":"/Users/bishwajeetpaul/workspace/github/TradeMinder/.superpowers/brainstorm/57006-1779152210/content/category-colors.html"}
+{"source":"user-event","type":"click","text":"LEAP\n      Long-dated options (1yr+)\n      #8B5CF6 — Violet\n      SPY  ·  LEAP  ·  Call Buy","choice":"leap","id":null,"timestamp":1779152292971}
+{"source":"user-event","type":"click","text":"CALL_SPREAD\n      Defined-risk call credit spread\n      #F97316 — Orange\n      QQQ  ·  CALL_SPREAD  ·  Sell","choice":"call_spread","id":null,"timestamp":1779152294254}
+{"source":"user-event","type":"click","text":"SKIP\n      Watching, not acting\n      #6B7280 — Gray\n      AMD  ·  SKIP  ·  —","choice":"skip","id":null,"timestamp":1779152305650}
+{"source":"user-event","type":"click","text":"SKIP\n      Watching, not acting\n      #6B7280 — Gray\n      AMD  ·  SKIP  ·  —","choice":"skip","id":null,"timestamp":1779152306504}
+{"source":"user-event","type":"click","text":"SKIP\n      Watching, not acting\n      #6B7280 — Gray\n      AMD  ·  SKIP  ·  —","choice":"skip","id":null,"timestamp":1779152306715}
+{"source":"user-event","type":"click","text":"SKIP\n      Watching, not acting\n      #6B7280 — Gray\n      AMD  ·  SKIP  ·  —","choice":"skip","id":null,"timestamp":1779152307388}
+{"type":"screen-added","file":"/Users/bishwajeetpaul/workspace/github/TradeMinder/.superpowers/brainstorm/57006-1779152210/content/waiting-1.html"}
+{"type":"screen-added","file":"/Users/bishwajeetpaul/workspace/github/TradeMinder/.superpowers/brainstorm/57006-1779152210/content/extension-design.html"}
+{"type":"server-stopped","reason":"idle timeout"}

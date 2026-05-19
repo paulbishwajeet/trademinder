@@ -1,7 +1,64 @@
 # Extension Context
 
-**Branch:** `develop` (all recent work merged here from `commentary-extension`)
+**Branch:** `extension-strategy` (strategy-labels feature; not yet merged to master)
 **Files:** `extension/content.js`, `extension/content.css`, `extension/manifest.json`, `extension/background.js`, `extension/popup/`
+
+---
+
+## Progress Log
+
+| Date | Summary |
+|------|---------|
+| 2026-05-18 | Implemented full strategy-labels feature: migration 004, backend etrade_symbol filter + PATCH FK sync, frontend TradeForm dynamic categories + TradeTable row highlighting + Category column, extension tm-view context menu + Edit modal + dynamic category fetch in both modals. Fixed README stale port references (3000→5430, 3001→5431). |
+
+---
+
+## Current State
+
+**All implementation tasks complete and committed on `extension-strategy` branch. Branch is not merged.**
+
+Migration `004_strategy_categories.py` exists but has **not been run yet** — the new category rows are not in the database. The extension Edit modal and frontend category dropdown will show empty/broken until the migration is applied.
+
+**Single next action:** Run `alembic upgrade head` from `backend/` with the venv active (or via `docker compose exec backend alembic upgrade head`) to seed the 10 new categories and remap existing trade rows.
+
+After migration: reload the Chrome extension at `chrome://extensions` (click the refresh icon) to pick up the updated `background.js` service worker, then test end-to-end on the E*TRADE portfolio page.
+
+---
+
+## Key Files / Modules Involved
+
+| File | Role |
+|------|------|
+| `extension/background.js` | Registers `tm-view` context menu; routes SHOW_EDIT_MODAL to content |
+| `extension/content.js` | Add modal (dynamic categories), Edit modal (pre-filled PATCH), escapeHtml, fetchCategories |
+| `backend/alembic/versions/004_strategy_categories.py` | Replaces 6 old system categories with 10 SNAKE_CASE labels; remaps existing trade rows |
+| `backend/app/routers/trades.py` | `etrade_symbol` query param on GET /api/trades; PATCH syncs category_id FK |
+| `backend/app/schemas/trade.py` | TradeUpdate extended with all editable fields incl. rationale_notes |
+| `backend/tests/test_trades.py` | 3 new tests: etrade_symbol filter, no-match filter, PATCH category+quantity |
+| `frontend/src/components/Trades/TradeForm.tsx` | Category dropdown fetched from /api/categories (no hardcoded values) |
+| `frontend/src/components/Trades/TradeTable.tsx` | Row highlighting (left border + 8% bg), new Category column, CATEGORY_COLORS constant |
+| `docs/superpowers/specs/2026-05-18-strategy-labels-design.md` | Approved design spec |
+| `docs/superpowers/plans/2026-05-18-strategy-labels.md` | Implementation plan (all tasks complete) |
+
+---
+
+## Decisions Made
+
+- **`category` not `strategy` for labels** — `strategy` field is used by the alert engine for trade mechanics (Put, Call, etc.) and must not be repurposed. `category` / `category_id` is the correct field for strategy labels.
+- **SNAKE_CASE stored verbatim** — category names stored as WHEEL, PUT_SPREAD, etc.; displayed as-is with no formatting transform.
+- **10 fixed system categories** — WHEEL, SWING, HOLD, LEAP, PUT_SPREAD, CALL_SPREAD, IRON_CONDOR, IRON_BUTTERFLY, SKIP, HOPS. Colors defined in both migration seed and frontend `CATEGORY_COLORS` constant (no extra API call needed for highlighting).
+- **Dynamic fetch in extension modals** — both Add and Edit modals call GET /api/categories on open; no hardcoded category values remain in content.js.
+- **Two-step trade lookup in Edit modal** — search by `etrade_symbol` to get trade ID, then fetch full detail (GET /api/trades/:id) to retrieve `rationale.notes` which is not on the list endpoint.
+- **Strategy fallback option in Edit modal** — if trade.strategy doesn't match the extension's known vocabulary (e.g., was entered via the web app as "Put" not "Sell Put"), a disabled fallback `<option>` is prepended to prevent silent overwrite on save.
+- **escapeHtml() in content.js** — applied to any user-provided text injected via innerHTML (rationale_notes textarea, exit_strategy input) to prevent XSS.
+- **PATCH syncs category_id FK** — when category string changes, the router looks up the Category row by name and sets trade.category_id atomically; no orphaned FKs.
+
+---
+
+## Open Questions
+
+- **Migration not run** — `004_strategy_categories.py` is committed but unapplied. Must run `alembic upgrade head` before any category features work end-to-end.
+- **Extension service worker reload** — `background.js` changes require manually reloading the extension at `chrome://extensions`; the content script auto-reloads on tab refresh, but the service worker does not.
 
 ---
 

@@ -1,0 +1,178 @@
+<h2>Category Color Palette</h2>
+<p class="subtitle">Proposed colors for your 10 trading strategy labels. Each row is highlighted in its color on the trades dashboard. Click any swatch to select it if you want to discuss a specific one.</p>
+
+<style>
+  .palette-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+    margin-top: 20px;
+  }
+  .swatch-card {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    background: #1e1e2e;
+    border: 1px solid #2a2a3e;
+    border-radius: 10px;
+    padding: 14px 16px;
+    cursor: pointer;
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+  .swatch-card:hover {
+    border-color: #4a4a6a;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.3);
+  }
+  .swatch-card.selected {
+    border-color: #7c6afa;
+    box-shadow: 0 0 0 2px #7c6afa55;
+  }
+  .swatch-dot {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+  }
+  .swatch-left-bar {
+    width: 5px;
+    height: 36px;
+    border-radius: 3px;
+    flex-shrink: 0;
+  }
+  .swatch-info { flex: 1; }
+  .swatch-name {
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    color: #e2e2f0;
+    font-family: monospace;
+  }
+  .swatch-desc {
+    font-size: 11px;
+    color: #888;
+    margin-top: 2px;
+  }
+  .swatch-hex {
+    font-size: 11px;
+    color: #666;
+    font-family: monospace;
+    margin-top: 4px;
+  }
+  .row-preview {
+    height: 28px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    padding: 0 10px;
+    font-size: 11px;
+    font-weight: 600;
+    margin-top: 8px;
+  }
+</style>
+
+<div class="palette-grid">
+
+  <div class="swatch-card" data-choice="wheel" onclick="toggleSelect(this)">
+    <div class="swatch-dot" style="background:#3B82F6"></div>
+    <div class="swatch-info">
+      <div class="swatch-name">WHEEL</div>
+      <div class="swatch-desc">Systematic premium income</div>
+      <div class="swatch-hex">#3B82F6 — Blue</div>
+      <div class="row-preview" style="background:#3B82F620;border-left:3px solid #3B82F6;color:#3B82F6">AAPL &nbsp;·&nbsp; WHEEL &nbsp;·&nbsp; Put Sell</div>
+    </div>
+  </div>
+
+  <div class="swatch-card" data-choice="swing" onclick="toggleSelect(this)">
+    <div class="swatch-dot" style="background:#06B6D4"></div>
+    <div class="swatch-info">
+      <div class="swatch-name">SWING</div>
+      <div class="swatch-desc">Directional / short-term momentum</div>
+      <div class="swatch-hex">#06B6D4 — Cyan</div>
+      <div class="row-preview" style="background:#06B6D420;border-left:3px solid #06B6D4;color:#06B6D4">TSLA &nbsp;·&nbsp; SWING &nbsp;·&nbsp; Stock Buy</div>
+    </div>
+  </div>
+
+  <div class="swatch-card" data-choice="hold" onclick="toggleSelect(this)">
+    <div class="swatch-dot" style="background:#10B981"></div>
+    <div class="swatch-info">
+      <div class="swatch-name">HOLD</div>
+      <div class="swatch-desc">Long-term, don't touch</div>
+      <div class="swatch-hex">#10B981 — Emerald</div>
+      <div class="row-preview" style="background:#10B98120;border-left:3px solid #10B981;color:#10B981">MSFT &nbsp;·&nbsp; HOLD &nbsp;·&nbsp; Stock Buy</div>
+    </div>
+  </div>
+
+  <div class="swatch-card" data-choice="leap" onclick="toggleSelect(this)">
+    <div class="swatch-dot" style="background:#8B5CF6"></div>
+    <div class="swatch-info">
+      <div class="swatch-name">LEAP</div>
+      <div class="swatch-desc">Long-dated options (1yr+)</div>
+      <div class="swatch-hex">#8B5CF6 — Violet</div>
+      <div class="row-preview" style="background:#8B5CF620;border-left:3px solid #8B5CF6;color:#8B5CF6">SPY &nbsp;·&nbsp; LEAP &nbsp;·&nbsp; Call Buy</div>
+    </div>
+  </div>
+
+  <div class="swatch-card" data-choice="put_spread" onclick="toggleSelect(this)">
+    <div class="swatch-dot" style="background:#F59E0B"></div>
+    <div class="swatch-info">
+      <div class="swatch-name">PUT_SPREAD</div>
+      <div class="swatch-desc">Defined-risk put credit spread</div>
+      <div class="swatch-hex">#F59E0B — Amber</div>
+      <div class="row-preview" style="background:#F59E0B20;border-left:3px solid #F59E0B;color:#F59E0B">NVDA &nbsp;·&nbsp; PUT_SPREAD &nbsp;·&nbsp; Sell</div>
+    </div>
+  </div>
+
+  <div class="swatch-card" data-choice="call_spread" onclick="toggleSelect(this)">
+    <div class="swatch-dot" style="background:#F97316"></div>
+    <div class="swatch-info">
+      <div class="swatch-name">CALL_SPREAD</div>
+      <div class="swatch-desc">Defined-risk call credit spread</div>
+      <div class="swatch-hex">#F97316 — Orange</div>
+      <div class="row-preview" style="background:#F9731620;border-left:3px solid #F97316;color:#F97316">QQQ &nbsp;·&nbsp; CALL_SPREAD &nbsp;·&nbsp; Sell</div>
+    </div>
+  </div>
+
+  <div class="swatch-card" data-choice="iron_condor" onclick="toggleSelect(this)">
+    <div class="swatch-dot" style="background:#EF4444"></div>
+    <div class="swatch-info">
+      <div class="swatch-name">IRON_CONDOR</div>
+      <div class="swatch-desc">Neutral, range-bound play</div>
+      <div class="swatch-hex">#EF4444 — Red</div>
+      <div class="row-preview" style="background:#EF444420;border-left:3px solid #EF4444;color:#EF4444">SPX &nbsp;·&nbsp; IRON_CONDOR &nbsp;·&nbsp; Sell</div>
+    </div>
+  </div>
+
+  <div class="swatch-card" data-choice="iron_butterfly" onclick="toggleSelect(this)">
+    <div class="swatch-dot" style="background:#EC4899"></div>
+    <div class="swatch-info">
+      <div class="swatch-name">IRON_BUTTERFLY</div>
+      <div class="swatch-desc">Tighter neutral, high premium</div>
+      <div class="swatch-hex">#EC4899 — Pink</div>
+      <div class="row-preview" style="background:#EC489920;border-left:3px solid #EC4899;color:#EC4899">SPX &nbsp;·&nbsp; IRON_BUTTERFLY &nbsp;·&nbsp; Sell</div>
+    </div>
+  </div>
+
+  <div class="swatch-card" data-choice="skip" onclick="toggleSelect(this)">
+    <div class="swatch-dot" style="background:#6B7280"></div>
+    <div class="swatch-info">
+      <div class="swatch-name">SKIP</div>
+      <div class="swatch-desc">Watching, not acting</div>
+      <div class="swatch-hex">#6B7280 — Gray</div>
+      <div class="row-preview" style="background:#6B728020;border-left:3px solid #6B7280;color:#6B7280">AMD &nbsp;·&nbsp; SKIP &nbsp;·&nbsp; —</div>
+    </div>
+  </div>
+
+  <div class="swatch-card" data-choice="hops" onclick="toggleSelect(this)">
+    <div class="swatch-dot" style="background:#84CC16"></div>
+    <div class="swatch-info">
+      <div class="swatch-name">HOPS</div>
+      <div class="swatch-desc">Custom / experimental</div>
+      <div class="swatch-hex">#84CC16 — Lime</div>
+      <div class="row-preview" style="background:#84CC1620;border-left:3px solid #84CC16;color:#84CC16">HOOD &nbsp;·&nbsp; HOPS &nbsp;·&nbsp; Stock Buy</div>
+    </div>
+  </div>
+
+</div>
+
+<p class="subtitle" style="margin-top:20px">Each row preview shows how a trade row would be highlighted in the dashboard. Click any swatch to flag it for discussion.</p>

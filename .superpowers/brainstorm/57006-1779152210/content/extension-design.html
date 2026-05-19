@@ -1,0 +1,242 @@
+<h2>Extension Design — Section 4</h2>
+<p class="subtitle">Two parts: updated right-click context menu + the new "View / Edit" modal</p>
+
+<style>
+  .split-section {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    margin-top: 16px;
+  }
+  .mockup-panel {
+    background: #1a1a2e;
+    border: 1px solid #2a2a3e;
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  .mockup-panel-title {
+    background: #12122a;
+    padding: 10px 14px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    color: #888;
+    text-transform: uppercase;
+    border-bottom: 1px solid #2a2a3e;
+  }
+  .mockup-panel-body { padding: 14px; }
+
+  /* Context menu mockup */
+  .ctx-menu {
+    background: #252535;
+    border: 1px solid #3a3a5a;
+    border-radius: 6px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+    padding: 4px 0;
+    width: 200px;
+    font-size: 13px;
+  }
+  .ctx-item {
+    padding: 8px 16px;
+    color: #d0d0e8;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .ctx-item.disabled { color: #555; cursor: default; }
+  .ctx-item.new-item { color: #a78bfa; font-weight: 600; }
+  .ctx-divider { border-top: 1px solid #2a2a3a; margin: 4px 0; }
+  .ctx-badge {
+    font-size: 9px;
+    background: #7c3aed;
+    color: white;
+    padding: 1px 5px;
+    border-radius: 8px;
+    margin-left: auto;
+  }
+
+  /* Edit modal mockup */
+  .ext-modal {
+    background: #1e1e32;
+    border: 1px solid #3a3a5a;
+    border-radius: 8px;
+    font-size: 12px;
+    overflow: hidden;
+  }
+  .ext-modal-header {
+    background: #12122a;
+    padding: 10px 14px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid #2a2a3e;
+  }
+  .ext-modal-title { font-weight: 700; color: #e2e2f0; font-size: 13px; }
+  .ext-modal-close { color: #666; cursor: pointer; }
+  .ext-modal-body { padding: 12px 14px; }
+  .ext-field { margin-bottom: 10px; }
+  .ext-label { font-size: 10px; color: #888; margin-bottom: 3px; text-transform: uppercase; letter-spacing: 0.06em; }
+  .ext-input {
+    width: 100%;
+    background: #12122a;
+    border: 1px solid #2a2a3e;
+    border-radius: 4px;
+    padding: 5px 8px;
+    color: #d0d0e8;
+    font-size: 12px;
+    box-sizing: border-box;
+  }
+  .ext-input.prefilled { border-color: #4a4a7a; color: #a0a0c8; }
+  .ext-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .ext-category-preview {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 700;
+    background: #3B82F620;
+    color: #3B82F6;
+    border: 1px solid #3B82F640;
+    margin-top: 3px;
+  }
+  .ext-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px solid #2a2a3e;
+  }
+  .ext-btn {
+    padding: 6px 14px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    border: none;
+  }
+  .ext-btn-primary { background: #3B82F6; color: white; }
+  .ext-btn-secondary { background: #2a2a3e; color: #a0a0c8; }
+  .ext-ticker-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid #2a2a3e;
+  }
+  .ext-ticker-sym { font-size: 16px; font-weight: 800; color: #e2e2f0; }
+  .ext-ticker-sub { font-size: 11px; color: #666; }
+  .ext-left-bar {
+    width: 4px;
+    height: 36px;
+    border-radius: 2px;
+    background: #3B82F6;
+    flex-shrink: 0;
+  }
+  .note-tag {
+    font-size: 10px;
+    background: #7c3aed22;
+    color: #a78bfa;
+    border: 1px solid #7c3aed44;
+    border-radius: 4px;
+    padding: 1px 6px;
+    margin-right: 4px;
+  }
+</style>
+
+<div class="split-section">
+
+  <!-- Left: Context menu -->
+  <div class="mockup-panel">
+    <div class="mockup-panel-title">Right-click context menu</div>
+    <div class="mockup-panel-body">
+      <p style="font-size:11px;color:#666;margin-bottom:12px">Right-clicking any E*TRADE row with a tracked position shows both items. Untracked rows only show "Add to TradeMinder".</p>
+      <div class="ctx-menu">
+        <div class="ctx-item">➕ Add to TradeMinder</div>
+        <div class="ctx-divider"></div>
+        <div class="ctx-item new-item">✏️ View / Edit Entry <span class="ctx-badge">new</span></div>
+      </div>
+      <p style="font-size:11px;color:#555;margin-top:12px">• "Add" is disabled when the row is already tracked<br>• "View / Edit" is disabled when the row is not yet tracked</p>
+    </div>
+  </div>
+
+  <!-- Right: Edit modal -->
+  <div class="mockup-panel">
+    <div class="mockup-panel-title">View / Edit modal (pre-filled)</div>
+    <div class="mockup-panel-body">
+      <div class="ext-modal">
+        <div class="ext-modal-header">
+          <span class="ext-modal-title">✏️ Edit Trade</span>
+          <span class="ext-modal-close">✕</span>
+        </div>
+        <div class="ext-modal-body">
+          <div class="ext-ticker-row">
+            <div class="ext-left-bar"></div>
+            <div>
+              <div class="ext-ticker-sym">AAPL</div>
+              <div class="ext-ticker-sub">AAPL--260508C00290000 · open</div>
+            </div>
+          </div>
+
+          <div class="ext-grid">
+            <div class="ext-field">
+              <div class="ext-label">Type</div>
+              <select class="ext-input prefilled"><option>Sell</option></select>
+            </div>
+            <div class="ext-field">
+              <div class="ext-label">Strategy</div>
+              <select class="ext-input prefilled"><option>Put</option></select>
+            </div>
+          </div>
+
+          <div class="ext-field">
+            <div class="ext-label">Category</div>
+            <select class="ext-input prefilled"><option>WHEEL</option><option>SWING</option><option>HOLD</option><option>LEAP</option><option>PUT_SPREAD</option></select>
+            <div class="ext-category-preview">WHEEL</div>
+          </div>
+
+          <div class="ext-grid">
+            <div class="ext-field">
+              <div class="ext-label">Strike</div>
+              <input class="ext-input prefilled" value="290.00" />
+            </div>
+            <div class="ext-field">
+              <div class="ext-label">Expiry</div>
+              <input class="ext-input prefilled" value="2026-05-08" />
+            </div>
+            <div class="ext-field">
+              <div class="ext-label">Qty</div>
+              <input class="ext-input prefilled" value="1" />
+            </div>
+            <div class="ext-field">
+              <div class="ext-label">Premium</div>
+              <input class="ext-input prefilled" value="3.45" />
+            </div>
+          </div>
+
+          <div class="ext-field">
+            <div class="ext-label">Exit Strategy</div>
+            <input class="ext-input prefilled" value="Close at 50% profit or 21 DTE" />
+          </div>
+
+          <div class="ext-field">
+            <div class="ext-label">Notes</div>
+            <textarea class="ext-input prefilled" rows="2">IV rank elevated, earnings in 6 weeks</textarea>
+          </div>
+
+          <div class="ext-actions">
+            <button class="ext-btn ext-btn-secondary">Cancel</button>
+            <button class="ext-btn ext-btn-primary">Save Changes</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<div style="margin-top:16px;background:#1a1a2e;border:1px solid #2a2a3e;border-radius:8px;padding:14px">
+  <div class="label" style="margin-bottom:8px">Category dropdown — fetched live from /api/categories</div>
+  <p style="font-size:12px;color:#888;margin:0">Both the "Add Trade" and "Edit Trade" modals in the extension call <code style="background:#12122a;padding:2px 5px;border-radius:3px;color:#a78bfa">/api/categories</code> once when the modal opens. The list is used to populate the dropdown. No hardcoded values in the extension — if you add a new category in the future, it appears automatically.</p>
+</div>
