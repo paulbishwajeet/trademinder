@@ -52,7 +52,17 @@ class TradeCreate(BaseModel):
 
 
 class TradeUpdate(BaseModel):
+    # Fields editable from the extension Edit modal
+    type: Optional[str] = None
+    category: Optional[str] = None
+    strategy: Optional[str] = None
+    strike_price: Optional[Decimal] = None
+    expiry_date: Optional[date] = None
+    quantity: Optional[int] = None
+    premium: Optional[Decimal] = None
+    collateral: Optional[Decimal] = None
     exit_strategy: Optional[str] = None
+    rationale_notes: Optional[str] = None  # maps to trade.rationale.notes
     signal_action: Optional[str] = None
     status: Optional[Literal["open", "closed", "expired", "assigned"]] = None
     current_price: Optional[Decimal] = None

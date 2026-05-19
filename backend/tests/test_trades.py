@@ -98,3 +98,34 @@ async def test_filter_trades_by_ticker(client: AsyncClient):
     response = await client.get("/api/trades?ticker=TSLA")
     assert response.status_code == 200
     assert response.json() == []
+
+
+async def test_filter_trades_by_etrade_symbol(client: AsyncClient):
+    payload = {**TRADE_PAYLOAD, "etrade_symbol": "AAPL--260508P00180000"}
+    await client.post("/api/trades", json=payload)
+    response = await client.get("/api/trades?etrade_symbol=AAPL--260508P00180000")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+    assert data[0]["ticker"] == "AAPL"
+
+
+async def test_filter_trades_by_etrade_symbol_no_match(client: AsyncClient):
+    await client.post("/api/trades", json=TRADE_PAYLOAD)
+    response = await client.get("/api/trades?etrade_symbol=NONEXISTENT")
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+async def test_patch_trade_category_and_quantity(client: AsyncClient):
+    create_resp = await client.post("/api/trades", json=TRADE_PAYLOAD)
+    trade_id = create_resp.json()["id"]
+    response = await client.patch(
+        f"/api/trades/{trade_id}",
+        json={"category": "SWING", "quantity": 3, "premium": "4.20"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["category"] == "SWING"
+    assert data["quantity"] == 3
+    assert float(data["premium"]) == 4.20

@@ -11,6 +11,7 @@ from sqlalchemy.orm import selectinload
 from app.database import get_db
 from app.models.trade import Trade
 from app.models.rationale import Rationale
+from app.models.category import Category
 from app.schemas.trade import TradeCreate, TradeUpdate, TradeListItem, TradeResponse
 
 router = APIRouter(prefix="/api/trades", tags=["trades"])
@@ -26,6 +27,7 @@ async def list_trades(
     ticker: Optional[str] = Query(None),
     strategy: Optional[str] = Query(None),
     wheel_id: Optional[uuid.UUID] = Query(None),
+    etrade_symbol: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
     stmt = select(Trade)
@@ -37,6 +39,8 @@ async def list_trades(
         stmt = stmt.where(Trade.strategy == strategy)
     if wheel_id:
         stmt = stmt.where(Trade.wheel_id == wheel_id)
+    if etrade_symbol:
+        stmt = stmt.where(Trade.etrade_symbol == etrade_symbol)
     stmt = stmt.order_by(Trade.created_at.desc())
     result = await db.execute(stmt)
     return result.scalars().all()
@@ -102,10 +106,25 @@ async def update_trade(trade_id: uuid.UUID, payload: TradeUpdate, db: AsyncSessi
     trade = result.scalar_one_or_none()
     if trade is None:
         raise HTTPException(status_code=404, detail="Trade not found")
-    for field, value in payload.model_dump(exclude_none=True).items():
+
+    data = payload.model_dump(exclude_none=True)
+
+    # Handle rationale_notes separately — stored in the related Rationale row
+    rationale_notes = data.pop('rationale_notes', None)
+
+    # When category string changes, sync category_id FK
+    if 'category' in data:
+        cat_result = await db.execute(select(Category).where(Category.name == data['category']))
+        cat = cat_result.scalar_one_or_none()
+        trade.category_id = cat.id if cat else None
+
+    for field, value in data.items():
         setattr(trade, field, value)
+
+    if rationale_notes is not None and trade.rationale:
+        trade.rationale.notes = rationale_notes
+
     await db.commit()
-    # Re-fetch with rationale after commit
     stmt2 = select(Trade).where(Trade.id == trade_id).options(selectinload(Trade.rationale))
     result2 = await db.execute(stmt2)
     trade = result2.scalar_one()
