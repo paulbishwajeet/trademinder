@@ -40,6 +40,7 @@ def upgrade() -> None:
           ('IRON_BUTTERFLY', '#EC4899', '🦋', true,  8),
           ('SKIP',           '#6B7280', '⏭',  true,  9),
           ('HOPS',           '#84CC16', '🌿', true, 10)
+        ON CONFLICT (name) DO NOTHING
     """)
 
     # 3. Remap category string on existing trades

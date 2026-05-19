@@ -6,7 +6,7 @@ from datetime import date
 
 TRADE_PAYLOAD = {
     "type": "Sell",
-    "category": "Wheel",
+    "category": "WHEEL",
     "strategy": "Put",
     "ticker": "AAPL",
     "open_date": str(date.today()),

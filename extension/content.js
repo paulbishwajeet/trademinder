@@ -480,13 +480,8 @@ async function fetchCommentaryCount(tradeId) {
   }
 }
 
-function escapeHtml(str) {
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
+function escapeHtml(s) {
+  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 function updateCommentaryBadge(tradeId, count) {
@@ -1053,6 +1048,9 @@ async function showEditTradeModal(info) {
         <div class="tm-field-row">
           <label>Strategy</label>
           <select name="strategy">
+            ${!['Sell Put','Sell Call','Buy Put','Buy Call','Put Credit Spread','Call Credit Spread','Covered Call','Stock'].includes(trade.strategy)
+              ? `<option value="${trade.strategy}" selected>${trade.strategy}</option>`
+              : ''}
             <option value="Sell Put" ${trade.strategy === 'Sell Put' ? 'selected' : ''}>Sell Put</option>
             <option value="Sell Call" ${trade.strategy === 'Sell Call' ? 'selected' : ''}>Sell Call</option>
             <option value="Buy Put" ${trade.strategy === 'Buy Put' ? 'selected' : ''}>Buy Put</option>
@@ -1087,11 +1085,11 @@ async function showEditTradeModal(info) {
         </div>
         <div class="tm-field-row tm-field-full">
           <label>Exit Strategy</label>
-          <input type="text" name="exit_strategy" value="${trade.exit_strategy ? trade.exit_strategy.replace(/"/g, '&quot;') : ''}" placeholder="e.g. Close at 50% profit" />
+          <input type="text" name="exit_strategy" value="${escapeHtml(trade.exit_strategy)}" placeholder="e.g. Close at 50% profit" />
         </div>
         <div class="tm-field-row tm-field-full">
           <label>Notes</label>
-          <textarea name="rationale_notes" rows="2">${trade.rationale?.notes || ''}</textarea>
+          <textarea name="rationale_notes" rows="2">${escapeHtml(trade.rationale?.notes)}</textarea>
         </div>
         <div id="tm-modal-error" class="tm-hidden"></div>
         <div id="tm-modal-actions">

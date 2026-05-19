@@ -47,7 +47,7 @@ export function TradeTable({ trades, onDelete }: Props) {
               ? { borderLeft: `3px solid ${color}`, backgroundColor: `${color}14` }
               : {}
             return (
-              <tr key={trade.id} style={rowStyle} className="hover:brightness-95">
+              <tr key={trade.id} style={rowStyle} className={`hover:brightness-95${!color ? ' hover:bg-gray-50' : ''}`}>
                 <td className="px-4 py-3 font-semibold">
                   <Link to={`/trades/${trade.id}`} className="text-blue-600 hover:underline">
                     {trade.ticker}
