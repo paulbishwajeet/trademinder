@@ -19,6 +19,13 @@ chrome.runtime.onInstalled.addListener(() => {
     contexts: ['page'],
     documentUrlPatterns: ['https://*.etrade.com/*'],
   });
+
+  chrome.contextMenus.create({
+    id: 'tm-view',
+    title: 'View / Edit Entry',
+    contexts: ['page'],
+    documentUrlPatterns: ['https://*.etrade.com/*'],
+  });
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -29,17 +36,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         stages: result.tmStages || { stage1: true, stage2: true, stage3: true, stage4: true },
       });
     });
-    return true; // async response
+    return true;
   }
 
   if (message.type === 'ROW_CONTEXT') {
-    // Update context menu title/state based on whether position is tracked
     const isTracked = message.isTracked;
     chrome.contextMenus.update('tm-add', {
       title: isTracked ? 'Already in TradeMinder' : 'Add to TradeMinder',
       enabled: !isTracked,
     });
-    // Store row info so we can use it when context menu is clicked
+    chrome.contextMenus.update('tm-view', {
+      title: isTracked ? 'View / Edit Entry' : 'Not in TradeMinder',
+      enabled: !!isTracked,
+    });
     chrome.storage.session
       ? chrome.storage.session.set({ tmPendingRow: message.info })
       : chrome.storage.local.set({ tmPendingRow: message.info });
@@ -49,7 +58,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 chrome.contextMenus.onClicked.addListener((info, tab) => {
-  if (info.menuItemId !== 'tm-add') return;
   if (!tab?.id) return;
 
   const fetchPending = (cb) => {
@@ -60,7 +68,15 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
     }
   };
 
-  fetchPending((rowInfo) => {
-    chrome.tabs.sendMessage(tab.id, { type: 'SHOW_ADD_MODAL', info: rowInfo });
-  });
+  if (info.menuItemId === 'tm-add') {
+    fetchPending((rowInfo) => {
+      chrome.tabs.sendMessage(tab.id, { type: 'SHOW_ADD_MODAL', info: rowInfo });
+    });
+  }
+
+  if (info.menuItemId === 'tm-view') {
+    fetchPending((rowInfo) => {
+      chrome.tabs.sendMessage(tab.id, { type: 'SHOW_EDIT_MODAL', info: rowInfo });
+    });
+  }
 });
