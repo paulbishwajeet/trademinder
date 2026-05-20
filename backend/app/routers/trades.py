@@ -12,7 +12,7 @@ from app.database import get_db
 from app.models.trade import Trade
 from app.models.rationale import Rationale
 from app.models.category import Category
-from app.schemas.trade import TradeCreate, TradeUpdate, TradeListItem, TradeResponse
+from app.schemas.trade import TradeCreate, TradeUpdate, TradeListItem, TradeResponse, RationaleCreate, RationaleResponse
 
 router = APIRouter(prefix="/api/trades", tags=["trades"])
 
@@ -97,6 +97,40 @@ async def get_trade(trade_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     if trade is None:
         raise HTTPException(status_code=404, detail="Trade not found")
     return trade
+
+
+@router.put("/{trade_id}/rationale", response_model=RationaleResponse)
+async def upsert_trade_rationale(
+    trade_id: uuid.UUID,
+    payload: RationaleCreate,
+    db: AsyncSession = Depends(get_db),
+):
+    # Verify trade exists
+    trade_stmt = select(Trade).where(Trade.id == trade_id)
+    trade_result = await db.execute(trade_stmt)
+    if trade_result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail="Trade not found")
+
+    # Find existing entry-time rationale (commentary_id IS NULL)
+    stmt = select(Rationale).where(
+        Rationale.trade_id == trade_id,
+        Rationale.commentary_id.is_(None),
+    )
+    result = await db.execute(stmt)
+    rationale = result.scalar_one_or_none()
+
+    if rationale is None:
+        rationale = Rationale(trade_id=trade_id, commentary_id=None)
+        db.add(rationale)
+
+    data = payload.model_dump(exclude_none=True)
+    data["fetch_status"] = "ok"
+    for field, value in data.items():
+        setattr(rationale, field, value)
+
+    await db.commit()
+    await db.refresh(rationale)
+    return rationale
 
 
 @router.patch("/{trade_id}", response_model=TradeResponse)
