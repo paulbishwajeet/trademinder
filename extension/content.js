@@ -650,7 +650,7 @@ function getOrCreatePanel() {
     </div>`;
   document.body.appendChild(panel);
 
-  let noteTechControl = null;
+  panel._techControl = null;
   const noteTechToggle = panel.querySelector('[data-note-tech-toggle]');
   const noteTechContainer = panel.querySelector('[data-note-tech-container]');
   if (noteTechToggle && noteTechContainer) {
@@ -660,9 +660,9 @@ function getOrCreatePanel() {
         noteTechContainer.classList.add('tm-hidden');
         noteTechToggle.textContent = '▼ Attach Technicals';
       } else {
-        if (!noteTechControl) {
+        if (!panel._techControl) {
           const ticker = panel.dataset.ticker || '';
-          noteTechControl = renderTechnicalsForm(noteTechContainer, ticker);
+          panel._techControl = renderTechnicalsForm(noteTechContainer, ticker);
         }
         noteTechContainer.classList.remove('tm-hidden');
         noteTechToggle.textContent = '▲ Hide Technicals';
@@ -684,7 +684,7 @@ function getOrCreatePanel() {
     submitBtn.disabled = true;
     submitBtn.textContent = 'Adding…';
     try {
-      const techSnapshot = noteTechControl ? noteTechControl.getValue() : null;
+      const techSnapshot = panel._techControl ? panel._techControl.getValue() : null;
       const bodyObj = { note, ...(tags.length > 0 && { tags }) };
       if (techSnapshot) bodyObj.rationale = techSnapshot;
       const resp = await fetch(`${tmApiUrl}/api/trades/${tradeId}/commentary`, {
@@ -696,7 +696,7 @@ function getOrCreatePanel() {
       if (resp.ok) {
         noteEl.value = '';
         tagsEl.value = '';
-        noteTechControl = null;
+        panel._techControl = null;
         noteTechContainer.innerHTML = '';
         noteTechContainer.classList.add('tm-hidden');
         noteTechToggle.textContent = '▼ Attach Technicals';
@@ -720,6 +720,16 @@ function openCommentaryPanel(tradeId, ticker, anchorRow) {
   panel.querySelector('.tm-cp-tags-input').value = '';
   panel.querySelector('.tm-cp-submit').disabled = false;
   panel.querySelector('.tm-cp-submit').textContent = 'Add Note';
+
+  // Reset technicals panel when switching trades
+  panel._techControl = null;
+  const noteTechContainer = panel.querySelector('[data-note-tech-container]');
+  const noteTechToggle = panel.querySelector('[data-note-tech-toggle]');
+  if (noteTechContainer && noteTechToggle) {
+    noteTechContainer.innerHTML = '';
+    noteTechContainer.classList.add('tm-hidden');
+    noteTechToggle.textContent = '▼ Attach Technicals';
+  }
 
   panel.style.display = 'flex';
 
