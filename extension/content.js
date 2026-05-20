@@ -642,9 +642,33 @@ function getOrCreatePanel() {
     <div class="tm-cp-form">
       <textarea class="tm-cp-note-input" rows="3" placeholder="What happened or what did you decide?"></textarea>
       <input class="tm-cp-tags-input" type="text" placeholder="Tags: rolled, exit-change (comma-separated)" />
+      <div class="tm-tech-section">
+        <button type="button" class="tm-tech-toggle" data-note-tech-toggle>▼ Attach Technicals</button>
+        <div data-note-tech-container class="tm-hidden"></div>
+      </div>
       <button class="tm-cp-submit" type="button">Add Note</button>
     </div>`;
   document.body.appendChild(panel);
+
+  let noteTechControl = null;
+  const noteTechToggle = panel.querySelector('[data-note-tech-toggle]');
+  const noteTechContainer = panel.querySelector('[data-note-tech-container]');
+  if (noteTechToggle && noteTechContainer) {
+    noteTechToggle.addEventListener('click', () => {
+      const isOpen = !noteTechContainer.classList.contains('tm-hidden');
+      if (isOpen) {
+        noteTechContainer.classList.add('tm-hidden');
+        noteTechToggle.textContent = '▼ Attach Technicals';
+      } else {
+        if (!noteTechControl) {
+          const ticker = panel.dataset.ticker || '';
+          noteTechControl = renderTechnicalsForm(noteTechContainer, ticker);
+        }
+        noteTechContainer.classList.remove('tm-hidden');
+        noteTechToggle.textContent = '▲ Hide Technicals';
+      }
+    });
+  }
 
   panel.querySelector('.tm-cp-close').addEventListener('click', closeCommentaryPanel);
 
@@ -660,15 +684,22 @@ function getOrCreatePanel() {
     submitBtn.disabled = true;
     submitBtn.textContent = 'Adding…';
     try {
+      const techSnapshot = noteTechControl ? noteTechControl.getValue() : null;
+      const bodyObj = { note, ...(tags.length > 0 && { tags }) };
+      if (techSnapshot) bodyObj.rationale = techSnapshot;
       const resp = await fetch(`${tmApiUrl}/api/trades/${tradeId}/commentary`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ note, ...(tags.length > 0 && { tags }) }),
+        body: JSON.stringify(bodyObj),
         signal: AbortSignal.timeout(8000),
       });
       if (resp.ok) {
         noteEl.value = '';
         tagsEl.value = '';
+        noteTechControl = null;
+        noteTechContainer.innerHTML = '';
+        noteTechContainer.classList.add('tm-hidden');
+        noteTechToggle.textContent = '▼ Attach Technicals';
         await renderCommentaryThread(tradeId, panel);
       }
     } catch (e) { /* silent */ } finally {
@@ -683,6 +714,7 @@ function getOrCreatePanel() {
 function openCommentaryPanel(tradeId, ticker, anchorRow) {
   const panel = getOrCreatePanel();
   panel.dataset.tradeId = tradeId;
+  panel.dataset.ticker = ticker;
   panel.querySelector('.tm-cp-title').textContent = `${ticker} · Commentary`;
   panel.querySelector('.tm-cp-note-input').value = '';
   panel.querySelector('.tm-cp-tags-input').value = '';
@@ -748,29 +780,87 @@ async function renderCommentaryThread(tradeId, panel) {
       return;
     }
 
-    threadEl.innerHTML = entries.map(entry => `
-      <div class="tm-cp-entry">
-        <div class="tm-cp-entry-header">
-          <span class="tm-cp-date">${escapeHtml(entry.entry_date)}</span>
-          <button class="tm-cp-delete" data-id="${escapeHtml(entry.id)}">×</button>
-        </div>
-        <p class="tm-cp-note-text">${escapeHtml(entry.note)}</p>
-        ${entry.tags && entry.tags.length > 0
-          ? `<div class="tm-cp-tags-row">${entry.tags.map(t => `<span class="tm-cp-tag">${escapeHtml(t)}</span>`).join('')}</div>`
-          : ''}
-      </div>`).join('');
+    threadEl.innerHTML = '';
+    entries.forEach(entry => {
+      const entryEl = document.createElement('div');
+      entryEl.className = 'tm-cp-entry';
 
-    threadEl.querySelectorAll('.tm-cp-delete').forEach(btn => {
-      btn.addEventListener('click', async () => {
-        const id = btn.dataset.id;
+      const headerEl = document.createElement('div');
+      headerEl.className = 'tm-cp-entry-header';
+      const dateSpan = document.createElement('span');
+      dateSpan.className = 'tm-cp-date';
+      dateSpan.textContent = entry.entry_date;
+      const deleteBtn = document.createElement('button');
+      deleteBtn.className = 'tm-cp-delete';
+      deleteBtn.textContent = '×';
+      deleteBtn.addEventListener('click', async () => {
         try {
-          const r = await fetch(`${tmApiUrl}/api/commentary/${id}`, {
+          const r = await fetch(`${tmApiUrl}/api/commentary/${entry.id}`, {
             method: 'DELETE',
             signal: AbortSignal.timeout(5000),
           });
           if (r.ok || r.status === 204) renderCommentaryThread(tradeId, panel);
         } catch (e) { /* silent */ }
       });
+      headerEl.appendChild(dateSpan);
+      headerEl.appendChild(deleteBtn);
+      entryEl.appendChild(headerEl);
+
+      const noteP = document.createElement('p');
+      noteP.className = 'tm-cp-note-text';
+      noteP.textContent = entry.note;
+      entryEl.appendChild(noteP);
+
+      if (entry.tags && entry.tags.length > 0) {
+        const tagsRow = document.createElement('div');
+        tagsRow.className = 'tm-cp-tags-row';
+        entry.tags.forEach(t => {
+          const tagSpan = document.createElement('span');
+          tagSpan.className = 'tm-cp-tag';
+          tagSpan.textContent = t;
+          tagsRow.appendChild(tagSpan);
+        });
+        entryEl.appendChild(tagsRow);
+      }
+
+      if (entry.rationale) {
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = 'tm-rationale-chip';
+        chip.textContent = '📊 Technicals';
+        let detailEl = null;
+        chip.addEventListener('click', () => {
+          if (detailEl) {
+            detailEl.remove();
+            detailEl = null;
+            return;
+          }
+          detailEl = document.createElement('div');
+          detailEl.className = 'tm-rationale-detail';
+          const r = entry.rationale;
+          const SHOW = [
+            ['RSI', r.rsi_14], ['MACD', r.macd_signal], ['Sentiment', r.sentiment],
+            ['BB Pos', r.bollinger_position], ['vs MA50', r.price_vs_ma50],
+            ['Price', r.price_action], ['Earnings', r.next_earnings_date],
+            ['Day', r.day_color], ['Notes', r.notes],
+          ].filter(([, v]) => v != null && v !== '');
+          SHOW.forEach(([label, value]) => {
+            const row = document.createElement('div');
+            row.className = 'tm-rationale-row';
+            const labelSpan = document.createElement('span');
+            labelSpan.textContent = `${label}: `;
+            const valueSpan = document.createElement('span');
+            valueSpan.textContent = String(value);
+            row.appendChild(labelSpan);
+            row.appendChild(valueSpan);
+            detailEl.appendChild(row);
+          });
+          chip.insertAdjacentElement('afterend', detailEl);
+        });
+        entryEl.appendChild(chip);
+      }
+
+      threadEl.appendChild(entryEl);
     });
 
   } catch (e) {
