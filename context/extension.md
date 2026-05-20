@@ -1,6 +1,6 @@
 # Extension Context
 
-**Branch:** `extension-strategy` (strategy-labels feature; not yet merged to master)
+**Branch:** `master` (strategy-labels feature merged and deployed to QNAP production)
 **Files:** `extension/content.js`, `extension/content.css`, `extension/manifest.json`, `extension/background.js`, `extension/popup/`
 
 ---
@@ -10,18 +10,17 @@
 | Date | Summary |
 |------|---------|
 | 2026-05-18 | Implemented full strategy-labels feature: migration 004, backend etrade_symbol filter + PATCH FK sync, frontend TradeForm dynamic categories + TradeTable row highlighting + Category column, extension tm-view context menu + Edit modal + dynamic category fetch in both modals. Fixed README stale port references (3000→5430, 3001→5431). |
+| 2026-05-19 | Production deployment to QNAP: fixed .env setup, exposed backend on port 5431, rebuilt frontend with prod nginx target (was running Vite dev), ran migration 004 via git pull + image rebuild on QNAP. Wrote production deploy runbook. All features confirmed working end-to-end in prod. |
 
 ---
 
 ## Current State
 
-**All implementation tasks complete and committed on `extension-strategy` branch. Branch is not merged.**
+**Strategy-labels feature is fully shipped and running in production on QNAP.**
 
-Migration `004_strategy_categories.py` exists but has **not been run yet** — the new category rows are not in the database. The extension Edit modal and frontend category dropdown will show empty/broken until the migration is applied.
+All code is on `master`. Migration 004 has been applied to the production DB. The QNAP runs three containers: `db` (postgres, internal only), `backend` (port 5431, exposed), `frontend` (port 5430, nginx prod build). The Chrome extension on the user's Mac points to `http://<qnap-ip>:5431`.
 
-**Single next action:** Run `alembic upgrade head` from `backend/` with the venv active (or via `docker compose exec backend alembic upgrade head`) to seed the 10 new categories and remap existing trade rows.
-
-After migration: reload the Chrome extension at `chrome://extensions` (click the refresh icon) to pick up the updated `background.js` service worker, then test end-to-end on the E*TRADE portfolio page.
+**Single next action:** Point the Chrome extension popup API URL to the QNAP backend (`http://<qnap-ip>:5431`) if not already done, and verify the Edit modal and category dropdowns work against the production data.
 
 ---
 
@@ -39,6 +38,8 @@ After migration: reload the Chrome extension at `chrome://extensions` (click the
 | `frontend/src/components/Trades/TradeTable.tsx` | Row highlighting (left border + 8% bg), new Category column, CATEGORY_COLORS constant |
 | `docs/superpowers/specs/2026-05-18-strategy-labels-design.md` | Approved design spec |
 | `docs/superpowers/plans/2026-05-18-strategy-labels.md` | Implementation plan (all tasks complete) |
+| `docker-compose.prod.yml` | Added `ports: 5431:5431` to backend service |
+| `.env.example` | Fixed stale FRONTEND_PORT default (3000→5430) |
 
 ---
 
@@ -52,13 +53,17 @@ After migration: reload the Chrome extension at `chrome://extensions` (click the
 - **Strategy fallback option in Edit modal** — if trade.strategy doesn't match the extension's known vocabulary (e.g., was entered via the web app as "Put" not "Sell Put"), a disabled fallback `<option>` is prepended to prevent silent overwrite on save.
 - **escapeHtml() in content.js** — applied to any user-provided text injected via innerHTML (rationale_notes textarea, exit_strategy input) to prevent XSS.
 - **PATCH syncs category_id FK** — when category string changes, the router looks up the Category row by name and sets trade.category_id atomically; no orphaned FKs.
+- **Backend port must be published in prod compose** — the Chrome extension calls the backend directly from the user's browser; `ports: 5431:5431` is required in `docker-compose.prod.yml` (not just the frontend).
+- **QNAP deployment uses source builds, not Docker Hub** — `docker-compose.prod.yml` uses `build:` directives; QNAP builds images from source on `git pull` + `docker compose build`. Always `git pull` on the NAS before rebuilding.
+- **Frontend prod target is nginx, not Vite** — the Dockerfile has three stages (`dev`, `builder`, `prod`). The `prod` stage serves via nginx on port 80. If the container log shows Vite, a cached dev-stage image is being used; fix with `build --no-cache`.
+- **Postgres password is fixed at volume init** — `POSTGRES_PASSWORD` is only read on first DB init. Changing `DB_PASSWORD` in `.env` after the volume exists has no effect; requires `down -v` + re-init (data loss) or `ALTER USER` inside the running DB.
 
 ---
 
 ## Open Questions
 
-- **Migration not run** — `004_strategy_categories.py` is committed but unapplied. Must run `alembic upgrade head` before any category features work end-to-end.
 - **Extension service worker reload** — `background.js` changes require manually reloading the extension at `chrome://extensions`; the content script auto-reloads on tab refresh, but the service worker does not.
+- **Extension API URL** — the popup API URL must be set to `http://<qnap-ip>:5431` for production use. Default is `http://localhost:5431` (local dev). No mechanism to auto-detect environment.
 
 ---
 
