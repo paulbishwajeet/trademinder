@@ -640,13 +640,17 @@ function getOrCreatePanel() {
     </div>
     <div class="tm-cp-thread"></div>
     <div class="tm-cp-form">
-      <textarea class="tm-cp-note-input" rows="3" placeholder="What happened or what did you decide?"></textarea>
-      <input class="tm-cp-tags-input" type="text" placeholder="Tags: rolled, exit-change (comma-separated)" />
-      <div class="tm-tech-section">
-        <button type="button" class="tm-tech-toggle" data-note-tech-toggle>▼ Attach Technicals</button>
-        <div data-note-tech-container class="tm-hidden"></div>
+      <div class="tm-cp-form-fields">
+        <textarea class="tm-cp-note-input" rows="3" placeholder="What happened or what did you decide?"></textarea>
+        <input class="tm-cp-tags-input" type="text" placeholder="Tags: rolled, exit-change (comma-separated)" />
+        <div class="tm-tech-section">
+          <button type="button" class="tm-tech-toggle" data-note-tech-toggle>▼ Attach Technicals</button>
+          <div data-note-tech-container class="tm-hidden"></div>
+        </div>
       </div>
-      <button class="tm-cp-submit" type="button">Add Note</button>
+      <div class="tm-cp-form-footer">
+        <button class="tm-cp-submit" type="button">Add Note</button>
+      </div>
     </div>`;
   document.body.appendChild(panel);
 
@@ -735,15 +739,24 @@ function openCommentaryPanel(tradeId, ticker, anchorRow) {
 
   const rect = anchorRow.getBoundingClientRect();
   const margin = 8;
-  panel.style.left = `${Math.max(margin, window.innerWidth - 320 - margin)}px`;
+  const panelW = 380;
 
-  const openUpward = rect.bottom > window.innerHeight * 0.6;
-  if (openUpward) {
-    panel.style.top = '';
-    panel.style.bottom = `${window.innerHeight - rect.top + 4}px`;
-  } else {
-    panel.style.bottom = '';
+  // Horizontal: align panel's right edge with the row's right edge, clamped to viewport
+  const rightEdge = Math.min(rect.right, window.innerWidth - margin);
+  panel.style.left = `${Math.max(margin, rightEdge - panelW)}px`;
+
+  // Vertical: open whichever direction has more room; cap maxHeight to available space
+  const spaceBelow = window.innerHeight - rect.bottom - margin;
+  const spaceAbove = rect.top - margin;
+
+  if (spaceBelow >= spaceAbove || spaceBelow >= 200) {
     panel.style.top = `${rect.bottom + 4}px`;
+    panel.style.bottom = '';
+    panel.style.maxHeight = `${Math.min(520, spaceBelow)}px`;
+  } else {
+    panel.style.bottom = `${window.innerHeight - rect.top + 4}px`;
+    panel.style.top = '';
+    panel.style.maxHeight = `${Math.min(520, spaceAbove)}px`;
   }
 
   renderCommentaryThread(tradeId, panel);

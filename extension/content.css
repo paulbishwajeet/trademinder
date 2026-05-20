@@ -367,8 +367,8 @@
 /* ── Floating commentary panel ── */
 #tm-commentary-panel {
   position: fixed;
-  width: 320px;
-  max-height: 480px;
+  width: 380px;
+  max-height: 520px;
   background: #fff;
   border-radius: 8px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
@@ -378,6 +378,7 @@
   flex-direction: column;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   font-size: 12px;
+  overflow: hidden;
 }
 .tm-cp-header {
   display: flex;
@@ -472,11 +473,24 @@
 }
 .tm-cp-form {
   border-top: 1px solid #e5e7eb;
-  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  min-height: 0;
+}
+.tm-cp-form-fields {
+  padding: 8px 8px 4px;
   display: flex;
   flex-direction: column;
   gap: 5px;
-  flex-shrink: 0;
+  overflow-y: auto;
+  max-height: 260px;
+}
+.tm-cp-form-footer {
+  padding: 4px 8px 8px;
+  border-top: 1px solid #f3f4f6;
+  display: flex;
+  justify-content: flex-end;
 }
 .tm-cp-note-input {
   width: 100%;
