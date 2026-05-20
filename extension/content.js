@@ -268,13 +268,26 @@ function getRowInfo(row) {
   let fullSymbol = null;
   let optionDetails = null;
 
+  // Extract fullSymbol from the Trade button href (Symbol= param) for all row types
+  const tradeBtn = row.querySelector('a.split-button-button[href*="Symbol="]');
+  if (tradeBtn?.href) {
+    const match = tradeBtn.href.match(/[?&]Symbol=([^&]+)/i);
+    if (match) fullSymbol = decodeURIComponent(match[1]);
+  }
+
   if (isOption) {
-    const link = row.querySelector(ETRADE.symbolLink);
-    if (link?.href) {
-      const match = link.href.match(/[?&]symbol=([^&]+)/);
-      if (match) {
-        fullSymbol = decodeURIComponent(match[1]);
-        optionDetails = parseOptionSymbol(fullSymbol);
+    if (fullSymbol) {
+      optionDetails = parseOptionSymbol(fullSymbol);
+    }
+    // Fallback: try the symbol cell link if Trade button didn't yield a parseable option symbol
+    if (!optionDetails) {
+      const link = row.querySelector(ETRADE.symbolLink);
+      if (link?.href) {
+        const match = link.href.match(/[?&]symbol=([^&]+)/i);
+        if (match) {
+          fullSymbol = decodeURIComponent(match[1]);
+          optionDetails = parseOptionSymbol(fullSymbol);
+        }
       }
     }
     if (!optionDetails) {
