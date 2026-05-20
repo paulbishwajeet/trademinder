@@ -5,6 +5,7 @@ import type { TechnicalsData } from '../../types'
 
 interface Props {
   ticker: string
+  initialData?: TechnicalsData | null
   onChange: (data: TechnicalsData | null) => void
 }
 
@@ -34,11 +35,16 @@ const FIELD_ORDER = [
   'bollinger_lower', 'bollinger_position', 'sentiment', 'next_earnings_date', 'notes',
 ]
 
-export function TechnicalsPanel({ ticker, onChange }: Props) {
-  const [open, setOpen] = useState(false)
+const NUMERIC_FIELDS = new Set([
+  'rsi_14', 'ma_200d', 'ma_50d',
+  'bollinger_upper', 'bollinger_mid', 'bollinger_lower',
+])
+
+export function TechnicalsPanel({ ticker, initialData, onChange }: Props) {
+  const [open, setOpen] = useState(!!initialData)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [data, setData] = useState<TechnicalsData | null>(null)
+  const [data, setData] = useState<TechnicalsData | null>(initialData ?? null)
 
   const handleFetch = async () => {
     if (!ticker.trim()) { setError('Enter a ticker first'); return }
@@ -133,7 +139,8 @@ export function TechnicalsPanel({ ticker, onChange }: Props) {
                   </select>
                 ) : (
                   <input
-                    type="text"
+                    type={NUMERIC_FIELDS.has(field) ? 'number' : 'text'}
+                    step={NUMERIC_FIELDS.has(field) ? '0.01' : undefined}
                     value={strValue}
                     onChange={e => handleChange(field, e.target.value)}
                     className="mt-0.5 block w-full border border-gray-300 rounded px-2 py-1 text-xs"
