@@ -51,6 +51,134 @@ let _hoverRow = null;
 // column name → cell index, built once from the header row
 let columnIndexCache = null;
 
+// ── Technicals helpers ──────────────────────────────────────────────────────
+
+const TECH_SELECT_FIELDS = {
+  macd_signal: ['bullish', 'bearish', 'neutral'],
+  rsi_result: ['rsi_oversold', 'rsi_overbought'],
+  price_vs_ma200: ['above', 'below'],
+  price_vs_ma50: ['above', 'below'],
+  bollinger_position: ['above_upper', 'near_upper', 'mid', 'near_lower', 'below_lower'],
+  day_color: ['green', 'red'],
+  sentiment: ['bullish', 'bearish', 'neutral'],
+};
+
+const TECH_FIELD_ORDER = [
+  ['price_action', 'Price'], ['day_color', 'Day Color'],
+  ['rsi_14', 'RSI-14'], ['rsi_result', 'RSI Result'],
+  ['macd_signal', 'MACD Signal'], ['macd_notes', 'MACD Notes'],
+  ['ma_200d', 'MA 200D'], ['ma_50d', 'MA 50D'],
+  ['price_vs_ma200', 'vs MA200'], ['price_vs_ma50', 'vs MA50'],
+  ['bollinger_upper', 'BB Upper'], ['bollinger_mid', 'BB Mid'],
+  ['bollinger_lower', 'BB Lower'], ['bollinger_position', 'BB Pos'],
+  ['sentiment', 'Sentiment'], ['next_earnings_date', 'Earnings'],
+  ['notes', 'Notes'],
+];
+
+/**
+ * Injects a self-contained technicals fetch+edit panel into `container`.
+ * Returns { getValue() } — call getValue() to get the current snapshot object or null.
+ */
+function renderTechnicalsForm(container, ticker) {
+  container.innerHTML = `
+    <div class="tm-tech-panel">
+      <button type="button" class="tm-tech-fetch-btn">📊 Fetch Technicals</button>
+      <button type="button" class="tm-tech-clear-btn tm-hidden">Clear</button>
+      <div class="tm-tech-status"></div>
+      <div class="tm-tech-fields tm-hidden">
+        <div class="tm-tech-grid"></div>
+      </div>
+    </div>
+  `;
+
+  let techData = null;
+  const fetchBtn = container.querySelector('.tm-tech-fetch-btn');
+  const clearBtn = container.querySelector('.tm-tech-clear-btn');
+  const statusEl = container.querySelector('.tm-tech-status');
+  const fieldsEl = container.querySelector('.tm-tech-fields');
+  const gridEl = container.querySelector('.tm-tech-grid');
+
+  function renderFields(data) {
+    gridEl.innerHTML = '';
+    TECH_FIELD_ORDER.forEach(([key, label]) => {
+      const isNotes = key === 'notes';
+      const div = document.createElement('div');
+      div.className = `tm-tech-field${isNotes ? ' full-width' : ''}`;
+      const lbl = document.createElement('label');
+      lbl.textContent = label;
+      div.appendChild(lbl);
+
+      if (key in TECH_SELECT_FIELDS) {
+        const sel = document.createElement('select');
+        sel.dataset.techField = key;
+        const emptyOpt = document.createElement('option');
+        emptyOpt.value = ''; emptyOpt.textContent = '—';
+        sel.appendChild(emptyOpt);
+        TECH_SELECT_FIELDS[key].forEach(opt => {
+          const o = document.createElement('option');
+          o.value = opt; o.textContent = opt;
+          if (data[key] === opt) o.selected = true;
+          sel.appendChild(o);
+        });
+        div.appendChild(sel);
+      } else if (isNotes) {
+        const ta = document.createElement('textarea');
+        ta.dataset.techField = key;
+        ta.rows = 2;
+        ta.value = data[key] ?? '';
+        div.appendChild(ta);
+      } else {
+        const inp = document.createElement('input');
+        inp.dataset.techField = key;
+        inp.value = data[key] != null ? String(data[key]) : '';
+        div.appendChild(inp);
+      }
+      gridEl.appendChild(div);
+    });
+  }
+
+  fetchBtn.addEventListener('click', async () => {
+    fetchBtn.disabled = true;
+    statusEl.textContent = 'Fetching…';
+    try {
+      const resp = await fetch(`${tmApiUrl}/api/market/technicals/${ticker.toUpperCase()}`, {
+        signal: AbortSignal.timeout(20000),
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      if (data.fetch_status === 'error') throw new Error(data.fetch_error ?? 'Fetch failed');
+      techData = data;
+      renderFields(data);
+      fieldsEl.classList.remove('tm-hidden');
+      clearBtn.classList.remove('tm-hidden');
+      statusEl.textContent = '';
+    } catch (e) {
+      statusEl.textContent = `Error: ${e.message}`;
+    } finally {
+      fetchBtn.disabled = false;
+    }
+  });
+
+  clearBtn.addEventListener('click', () => {
+    techData = null;
+    fieldsEl.classList.add('tm-hidden');
+    clearBtn.classList.add('tm-hidden');
+    statusEl.textContent = '';
+    gridEl.innerHTML = '';
+  });
+
+  return {
+    getValue() {
+      if (!techData) return null;
+      const snapshot = { ...techData };
+      container.querySelectorAll('[data-tech-field]').forEach(el => {
+        snapshot[el.dataset.techField] = el.value || null;
+      });
+      return snapshot;
+    },
+  };
+}
+
 // ============================================================
 // INIT
 // ============================================================
