@@ -2,14 +2,15 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional, TYPE_CHECKING
-from sqlalchemy import String, Numeric, Date, Text, DateTime, ForeignKey, UniqueConstraint
+from sqlalchemy import String, Numeric, Date, Text, DateTime, ForeignKey, Index
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.sql import func
+from sqlalchemy.sql import func, text
 from app.database import Base
 
 if TYPE_CHECKING:
     from app.models.trade import Trade
+    from app.models.commentary import Commentary
 
 
 class Rationale(Base):
@@ -17,6 +18,7 @@ class Rationale(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     trade_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("trades.id", ondelete="CASCADE"), nullable=False)
+    commentary_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("commentary.id", ondelete="CASCADE"), nullable=True)
 
     macd_signal: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
     macd_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -39,8 +41,21 @@ class Rationale(Base):
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
-    trade: Mapped["Trade"] = relationship(back_populates="rationale")
+    trade: Mapped["Trade"] = relationship(
+        back_populates="rationale",
+        foreign_keys="[Rationale.trade_id]",
+    )
+    commentary: Mapped[Optional["Commentary"]] = relationship(
+        back_populates="rationale",
+        foreign_keys="[Rationale.commentary_id]",
+    )
 
     __table_args__ = (
-        UniqueConstraint("trade_id", name="idx_rationale_trade"),
+        Index(
+            "idx_rationale_trade_entry",
+            "trade_id",
+            unique=True,
+            postgresql_where=text("commentary_id IS NULL"),
+        ),
+        Index("idx_rationale_commentary", "commentary_id"),
     )

@@ -43,7 +43,14 @@ class Trade(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
-    rationale: Mapped[Optional["Rationale"]] = relationship(back_populates="trade", cascade="all, delete-orphan", uselist=False)
+    rationale: Mapped[Optional["Rationale"]] = relationship(
+        "Rationale",
+        primaryjoin="and_(Trade.id == foreign(Rationale.trade_id), Rationale.commentary_id == None)",
+        back_populates="trade",
+        cascade="all, delete-orphan",
+        uselist=False,
+        overlaps="commentary",
+    )
     commentary: Mapped[list["Commentary"]] = relationship(back_populates="trade", cascade="all, delete-orphan")
     alerts: Mapped[list["Alert"]] = relationship(back_populates="trade", cascade="all, delete-orphan")
     category_obj: Mapped[Optional["Category"]] = relationship(back_populates="trades")
