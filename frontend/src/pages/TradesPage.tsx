@@ -1,7 +1,8 @@
 // frontend/src/pages/TradesPage.tsx
 import { useState, useEffect } from 'react'
 import { tradesApi } from '../api/trades'
-import type { Trade } from '../types'
+import { technicalsApi } from '../api/technicals'
+import type { Trade, TechnicalsData } from '../types'
 import { TradeTable } from '../components/Trades/TradeTable'
 import { TradeForm } from '../components/Trades/TradeForm'
 import type { TradeCreate } from '../types'
@@ -18,8 +19,11 @@ export function TradesPage() {
 
   useEffect(() => { load() }, [statusFilter])
 
-  const handleCreate = async (payload: TradeCreate) => {
-    await tradesApi.create(payload)
+  const handleCreate = async (payload: TradeCreate, technicals: TechnicalsData | null) => {
+    const trade = await tradesApi.create(payload)
+    if (technicals) {
+      await technicalsApi.saveTradeRationale(trade.id, technicals)
+    }
     setShowForm(false)
     load()
   }
