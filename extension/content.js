@@ -1038,6 +1038,10 @@ async function showAddTradeModal(info) {
           <label>Notes</label>
           <textarea name="rationale_notes" rows="2" placeholder="Why are you entering this trade?"></textarea>
         </div>
+        <div class="tm-tech-section">
+          <button type="button" class="tm-tech-toggle" id="tm-modal-tech-toggle">▼ Attach Technicals (optional)</button>
+          <div id="tm-modal-tech-container" class="tm-hidden"></div>
+        </div>
         <div id="tm-modal-error" class="tm-hidden"></div>
         <div id="tm-modal-actions">
           <button type="button" id="tm-modal-cancel">Cancel</button>
@@ -1052,6 +1056,26 @@ async function showAddTradeModal(info) {
   overlay.querySelector('#tm-modal-close').addEventListener('click', closeModal);
   overlay.querySelector('#tm-modal-cancel').addEventListener('click', closeModal);
   overlay.addEventListener('click', (e) => { if (e.target === overlay) closeModal(); });
+
+  // Wire technicals toggle for add-trade modal
+  let techFormControl = null;
+  const techToggle = overlay.querySelector('#tm-modal-tech-toggle');
+  const techContainer = overlay.querySelector('#tm-modal-tech-container');
+  if (techToggle && techContainer) {
+    techToggle.addEventListener('click', () => {
+      const isOpen = !techContainer.classList.contains('tm-hidden');
+      if (isOpen) {
+        techContainer.classList.add('tm-hidden');
+        techToggle.textContent = '▼ Attach Technicals (optional)';
+      } else {
+        if (!techFormControl) {
+          techFormControl = renderTechnicalsForm(techContainer, info.ticker);
+        }
+        techContainer.classList.remove('tm-hidden');
+        techToggle.textContent = '▲ Hide Technicals';
+      }
+    });
+  }
 
   overlay.querySelector('#tm-modal-form').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -1095,6 +1119,22 @@ async function showAddTradeModal(info) {
       }
 
       const trade = await resp.json();
+
+      // Save technicals snapshot if user fetched them
+      const techSnapshot = techFormControl ? techFormControl.getValue() : null;
+      if (techSnapshot) {
+        try {
+          await fetch(`${tmApiUrl}/api/trades/${trade.id}/rationale`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(techSnapshot),
+            signal: AbortSignal.timeout(10000),
+          });
+        } catch (e) {
+          console.debug('[TM] technicals save failed:', e.message);
+          // Non-fatal — trade was already created
+        }
+      }
 
       // Invalidate cache so the row refreshes
       const cacheKey = info.fullSymbol || info.ticker;
