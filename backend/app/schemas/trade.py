@@ -6,11 +6,33 @@ from typing import Annotated, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 
+class RationaleCreate(BaseModel):
+    macd_signal: Optional[str] = None
+    macd_notes: Optional[str] = None
+    rsi_14: Optional[Decimal] = None
+    rsi_result: Optional[str] = None
+    ma_200d: Optional[Decimal] = None
+    ma_50d: Optional[Decimal] = None
+    price_vs_ma200: Optional[str] = None
+    price_vs_ma50: Optional[str] = None
+    bollinger_upper: Optional[Decimal] = None
+    bollinger_mid: Optional[Decimal] = None
+    bollinger_lower: Optional[Decimal] = None
+    bollinger_position: Optional[str] = None
+    day_color: Optional[str] = None
+    price_action: Optional[str] = None
+    sentiment: Optional[str] = None
+    next_earnings_date: Optional[date] = None
+    fetch_error: Optional[str] = None
+    notes: Optional[str] = None
+
+
 class RationaleResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
     trade_id: uuid.UUID
+    commentary_id: Optional[uuid.UUID] = None
     macd_signal: Optional[str] = None
     macd_notes: Optional[str] = None
     rsi_14: Optional[Decimal] = None
