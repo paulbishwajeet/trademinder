@@ -103,7 +103,7 @@ export function TradeDetailPage() {
         </div>
       )}
 
-      <CommentaryThread tradeId={trade.id} entries={commentary} onRefresh={loadCommentary} />
+      <CommentaryThread tradeId={trade.id} ticker={trade.ticker} entries={commentary} onRefresh={loadCommentary} />
     </div>
   )
 }

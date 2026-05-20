@@ -68,6 +68,7 @@ export function CommentaryCell({ tradeId, ticker }: Props) {
           <div className="overflow-y-auto flex-1 px-5 py-4">
             <CommentaryThread
               tradeId={tradeId}
+              ticker={ticker}
               entries={entries}
               onRefresh={fetchEntries}
             />
