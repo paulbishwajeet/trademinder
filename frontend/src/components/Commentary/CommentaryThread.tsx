@@ -44,24 +44,37 @@ function RationaleChip({ rationale }: { rationale: Rationale }) {
 }
 
 export function CommentaryThread({ tradeId, ticker, entries, onRefresh }: Props) {
+  const [error, setError] = useState<string | null>(null)
+
   const handleAdd = async (note: string, tags: string[], rationale: TechnicalsData | null) => {
-    await commentaryApi.add(tradeId, {
-      note,
-      tags: tags.length > 0 ? tags : undefined,
-      rationale: rationale ?? undefined,
-    })
-    onRefresh()
+    setError(null)
+    try {
+      await commentaryApi.add(tradeId, {
+        note,
+        tags: tags.length > 0 ? tags : undefined,
+        rationale: rationale ?? undefined,
+      })
+      onRefresh()
+    } catch {
+      setError('Failed to add note. Please try again.')
+    }
   }
 
   const handleDelete = async (id: string) => {
     if (!confirm('Delete this note?')) return
-    await commentaryApi.delete(id)
-    onRefresh()
+    setError(null)
+    try {
+      await commentaryApi.delete(id)
+      onRefresh()
+    } catch {
+      setError('Failed to delete note. Please try again.')
+    }
   }
 
   return (
     <div className="space-y-4">
       <h3 className="text-sm font-semibold text-gray-700">Journal</h3>
+      {error && <p className="text-red-500 text-xs">{error}</p>}
       <CommentaryForm ticker={ticker} onSubmit={handleAdd} />
       <div className="space-y-3 mt-4">
         {entries.length === 0 && <p className="text-gray-400 text-sm">No notes yet.</p>}

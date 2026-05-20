@@ -18,13 +18,16 @@ export function CommentaryForm({ ticker, onSubmit }: Props) {
     e.preventDefault()
     if (!note.trim()) return
     setLoading(true)
-    const tags = tagsInput.split(',').map(t => t.trim()).filter(Boolean)
-    await onSubmit(note.trim(), tags, technicals)
-    setNote('')
-    setTagsInput('')
-    setTechnicals(null)
-    setTechOpen(false)
-    setLoading(false)
+    try {
+      const tags = tagsInput.split(',').map(t => t.trim()).filter(Boolean)
+      await onSubmit(note.trim(), tags, technicals)
+      setNote('')
+      setTagsInput('')
+      setTechnicals(null)
+      setTechOpen(false)
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
