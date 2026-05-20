@@ -111,7 +111,7 @@ def fetch_technicals(ticker: str) -> dict:
         b_mid = round(float(rolling_mean.iloc[-1]), 2) if len(close_d) >= 20 else None
         b_upper = round(float((rolling_mean + rolling_std * 2).iloc[-1]), 2) if len(close_d) >= 20 else None
         b_lower = round(float((rolling_mean - rolling_std * 2).iloc[-1]), 2) if len(close_d) >= 20 else None
-        b_pos = _bollinger_position(price, b_upper, b_mid, b_lower) if (b_upper and b_mid and b_lower) else None
+        b_pos = _bollinger_position(price, b_upper, b_mid, b_lower) if (b_upper is not None and b_mid is not None and b_lower is not None) else None
 
         macd = _compute_macd_weekly(close_w)
         sentiment = _infer_sentiment(macd["macd_signal"], price, ma_50d, rsi_14)
@@ -134,6 +134,7 @@ def fetch_technicals(ticker: str) -> dict:
             "price_action": str(price),
             "sentiment": sentiment,
             "next_earnings_date": next_earnings,
+            "notes": None,
             "fetch_status": "ok",
             "fetch_error": None,
         }
