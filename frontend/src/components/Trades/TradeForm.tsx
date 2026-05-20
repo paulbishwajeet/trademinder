@@ -1,4 +1,3 @@
-// frontend/src/components/Trades/TradeForm.tsx
 import { useState, useEffect } from 'react'
 import type { TradeCreate, TechnicalsData } from '../../types'
 import { TechnicalsPanel } from '../shared/TechnicalsPanel'

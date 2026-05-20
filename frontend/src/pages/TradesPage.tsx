@@ -1,11 +1,9 @@
-// frontend/src/pages/TradesPage.tsx
 import { useState, useEffect } from 'react'
 import { tradesApi } from '../api/trades'
 import { technicalsApi } from '../api/technicals'
-import type { Trade, TechnicalsData } from '../types'
+import type { Trade, TechnicalsData, TradeCreate } from '../types'
 import { TradeTable } from '../components/Trades/TradeTable'
 import { TradeForm } from '../components/Trades/TradeForm'
-import type { TradeCreate } from '../types'
 
 export function TradesPage() {
   const [trades, setTrades] = useState<Trade[]>([])
@@ -22,7 +20,11 @@ export function TradesPage() {
   const handleCreate = async (payload: TradeCreate, technicals: TechnicalsData | null) => {
     const trade = await tradesApi.create(payload)
     if (technicals) {
-      await technicalsApi.saveTradeRationale(trade.id, technicals)
+      try {
+        await technicalsApi.saveTradeRationale(trade.id, technicals)
+      } catch {
+        console.warn('Technicals save failed — trade was created successfully')
+      }
     }
     setShowForm(false)
     load()
