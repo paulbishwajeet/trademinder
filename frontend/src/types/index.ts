@@ -24,6 +24,28 @@ export interface Rationale {
   created_at: string
 }
 
+export interface TechnicalsData {
+  macd_signal: string | null
+  macd_notes: string | null
+  rsi_14: number | null
+  rsi_result: string | null
+  ma_200d: number | null
+  ma_50d: number | null
+  price_vs_ma200: string | null
+  price_vs_ma50: string | null
+  bollinger_upper: number | null
+  bollinger_mid: number | null
+  bollinger_lower: number | null
+  bollinger_position: string | null
+  day_color: string | null
+  price_action: string | null
+  sentiment: string | null
+  next_earnings_date: string | null
+  fetch_status: string
+  fetch_error: string | null
+  notes: string | null
+}
+
 export interface Trade {
   id: string
   wheel_id: string | null
@@ -73,6 +95,7 @@ export interface Commentary {
   note: string
   tags: string[] | null
   created_at: string
+  rationale: Rationale | null
 }
 
 export interface Alert {

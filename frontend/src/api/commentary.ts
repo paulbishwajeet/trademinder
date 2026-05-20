@@ -1,12 +1,12 @@
 // frontend/src/api/commentary.ts
 import { apiFetch } from './client'
-import type { Commentary } from '../types'
+import type { Commentary, TechnicalsData } from '../types'
 
 export const commentaryApi = {
   list: (tradeId: string) =>
     apiFetch<Commentary[]>(`/trades/${tradeId}/commentary`),
 
-  add: (tradeId: string, payload: { note: string; tags?: string[] }) =>
+  add: (tradeId: string, payload: { note: string; tags?: string[]; rationale?: TechnicalsData | null }) =>
     apiFetch<Commentary>(`/trades/${tradeId}/commentary`, {
       method: 'POST',
       body: JSON.stringify(payload),
