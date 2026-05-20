@@ -4,10 +4,12 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from anthropic import AsyncAnthropic
 
 from app.database import get_db
 from app.models.commentary import Commentary
+from app.models.rationale import Rationale
 from app.schemas.commentary import CommentaryCreate, CommentaryResponse
 
 router = APIRouter(tags=["commentary"])
@@ -18,6 +20,7 @@ async def list_commentary(trade_id: uuid.UUID, db: AsyncSession = Depends(get_db
     stmt = (
         select(Commentary)
         .where(Commentary.trade_id == trade_id)
+        .options(selectinload(Commentary.rationale))
         .order_by(Commentary.created_at.desc())
     )
     result = await db.execute(stmt)
@@ -32,9 +35,27 @@ async def add_commentary(trade_id: uuid.UUID, payload: CommentaryCreate, db: Asy
         tags=payload.tags,
     )
     db.add(comment)
+    await db.flush()  # get comment.id before creating rationale
+
+    if payload.rationale is not None:
+        rat_data = payload.rationale.model_dump(exclude_none=True)
+        rat_data["fetch_status"] = "ok"
+        rationale = Rationale(
+            trade_id=trade_id,
+            commentary_id=comment.id,
+            **rat_data,
+        )
+        db.add(rationale)
+
     await db.commit()
-    await db.refresh(comment)
-    return comment
+
+    stmt = (
+        select(Commentary)
+        .where(Commentary.id == comment.id)
+        .options(selectinload(Commentary.rationale))
+    )
+    result = await db.execute(stmt)
+    return result.scalar_one()
 
 
 @router.delete("/api/commentary/{comment_id}", status_code=204)
