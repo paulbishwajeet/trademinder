@@ -11,16 +11,20 @@
 |------|---------|
 | 2026-05-18 | Implemented full strategy-labels feature: migration 004, backend etrade_symbol filter + PATCH FK sync, frontend TradeForm dynamic categories + TradeTable row highlighting + Category column, extension tm-view context menu + Edit modal + dynamic category fetch in both modals. Fixed README stale port references (3000→5430, 3001→5431). |
 | 2026-05-19 | Production deployment to QNAP: fixed .env setup, exposed backend on port 5431, rebuilt frontend with prod nginx target (was running Vite dev), ran migration 004 via git pull + image rebuild on QNAP. Wrote production deploy runbook. All features confirmed working end-to-end in prod. |
+| 2026-05-19 | Implemented full Technicals Capture feature end-to-end: yfinance fetcher service (19 fields, daily+weekly history), `GET /api/market/technicals/{ticker}` endpoint, `PUT /api/trades/{id}/rationale` upsert, commentary POST accepts embedded rationale, rationale DB migration (commentary_id FK, partial unique index). Frontend: TechnicalsPanel component, TradeForm collapsible section, CommentaryForm attach technicals, CommentaryThread rationale chip. Extension: `renderTechnicalsForm()` helper, technicals section in add-trade modal (fetch + second PUT), technicals toggle in commentary panel (embedded in POST body), rationale chip in thread. Bug fixes: add-trade modal widened to 520px for technicals layout, commentary panel repositioned relative to row (not window edge), submit button pinned above scrolling technicals, `etrade_symbol` now extracted for stocks (not just options), status badge cross-contamination fixed via strategy-type validation. |
+| 2026-05-20 | Fixed 4 more extension bugs: (1) Commentary panel now opens aligned to badge pill position rather than row's right edge — stores `_hoverPill` ref on hover and uses its `getBoundingClientRect()` for horizontal anchor. (2) Textarea/tags no longer shrink when technicals expand — split form into `.tm-cp-form-static` (fixed) and `.tm-cp-form-tech` (scrollable, max-height 220px). (3) Commentary thread now fetches entry-time rationale via `GET /api/trades/{id}` in parallel and displays it as the oldest entry with a purple left border and 📊 chip (only when `fetch_status=ok`). (4) Price paid in add-trade modal rounded to 2dp (`Math.round(v * 100) / 100`) before populating the input. Panel widened to 400px, max-height raised to 600px. |
 
 ---
 
 ## Current State
 
-**Strategy-labels feature is fully shipped and running in production on QNAP.**
+**Technicals Capture feature is fully implemented and all known extension bugs are fixed. Code is on `master`.**
 
-All code is on `master`. Migration 004 has been applied to the production DB. The QNAP runs three containers: `db` (postgres, internal only), `backend` (port 5431, exposed), `frontend` (port 5430, nginx prod build). The Chrome extension on the user's Mac points to `http://<qnap-ip>:5431`.
+The full technicals pipeline is live: yfinance fetcher → `GET /api/market/technicals/{ticker}` → frontend TechnicalsPanel / extension `renderTechnicalsForm()` → `PUT /api/trades/{id}/rationale` (entry-time) or embedded in `POST /api/trades/{id}/commentary` (per-note). The commentary panel shows entry-time rationale as the oldest thread item alongside per-note snapshots.
 
-**Single next action:** Point the Chrome extension popup API URL to the QNAP backend (`http://<qnap-ip>:5431`) if not already done, and verify the Edit modal and category dropdowns work against the production data.
+**Migration 005** (rationale table: `commentary_id` FK + partial unique index + `commentary_id` index) must be applied to the production DB on QNAP before the technicals endpoints will work in prod.
+
+**Immediate next step:** Pull latest on the QNAP, rebuild images, and run `alembic upgrade head` to apply migration 005. Then reload the Chrome extension and verify technicals fetch works against a live ticker.
 
 ---
 
