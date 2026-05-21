@@ -408,7 +408,19 @@ async function processVisibleRows() {
     const statusMap = await response.json();
 
     needsFetch.forEach(item => {
-      const status = statusMap[item.cacheKey] || statusMap[item.info.ticker] || null;
+      let status = statusMap[item.cacheKey] || statusMap[item.info.ticker] || null;
+
+      // Validate type match: reject a status whose trade strategy conflicts with the row type.
+      // Prevents a stock row from inheriting an option trade (or vice versa) when _pick_best_trade
+      // falls back to the only available trade regardless of type.
+      if (status && status.strategy) {
+        const strat = status.strategy.toLowerCase();
+        const isOptionStrat = strat.includes('put') || strat.includes('call') ||
+                              strat.includes('leap') || strat.includes('spread');
+        if (item.info.isOption && !isOptionStrat) status = null;
+        else if (!item.info.isOption && isOptionStrat) status = null;
+      }
+
       statusCache.set(item.cacheKey, status);
       applyTMToRow(item.row, status, item.info);
       applyFilter(item.row, status);
