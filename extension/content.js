@@ -47,6 +47,7 @@ let _hoverHideTimer = null;
 let _hoverTradeId = null;
 let _hoverTicker = null;
 let _hoverRow = null;
+let _hoverPill = null;
 
 // column name → cell index, built once from the header row
 let columnIndexCache = null;
@@ -600,6 +601,7 @@ function showCommentaryTrigger(tradeId, ticker, row, pillEl) {
   _hoverTradeId = tradeId;
   _hoverTicker = ticker;
   _hoverRow = row;
+  _hoverPill = pillEl;
 
   const trigger = getOrCreateTrigger();
   const rect = pillEl.getBoundingClientRect();
@@ -665,9 +667,11 @@ function getOrCreatePanel() {
     </div>
     <div class="tm-cp-thread"></div>
     <div class="tm-cp-form">
-      <div class="tm-cp-form-fields">
+      <div class="tm-cp-form-static">
         <textarea class="tm-cp-note-input" rows="3" placeholder="What happened or what did you decide?"></textarea>
         <input class="tm-cp-tags-input" type="text" placeholder="Tags: rolled, exit-change (comma-separated)" />
+      </div>
+      <div class="tm-cp-form-tech">
         <div class="tm-tech-section">
           <button type="button" class="tm-tech-toggle" data-note-tech-toggle>▼ Attach Technicals</button>
           <div data-note-tech-container class="tm-hidden"></div>
@@ -764,11 +768,12 @@ function openCommentaryPanel(tradeId, ticker, anchorRow) {
 
   const rect = anchorRow.getBoundingClientRect();
   const margin = 8;
-  const panelW = 380;
+  const panelW = 400;
 
-  // Horizontal: align panel's right edge with the row's right edge, clamped to viewport
-  const rightEdge = Math.min(rect.right, window.innerWidth - margin);
-  panel.style.left = `${Math.max(margin, rightEdge - panelW)}px`;
+  // Horizontal: align panel's left edge with the badge pill, clamped to viewport
+  const pillRect = _hoverPill ? _hoverPill.getBoundingClientRect() : rect;
+  const panelLeft = Math.max(margin, Math.min(pillRect.left, window.innerWidth - panelW - margin));
+  panel.style.left = `${panelLeft}px`;
 
   // Vertical: open whichever direction has more room; cap maxHeight to available space
   const spaceBelow = window.innerHeight - rect.bottom - margin;
@@ -777,11 +782,11 @@ function openCommentaryPanel(tradeId, ticker, anchorRow) {
   if (spaceBelow >= spaceAbove || spaceBelow >= 200) {
     panel.style.top = `${rect.bottom + 4}px`;
     panel.style.bottom = '';
-    panel.style.maxHeight = `${Math.min(520, spaceBelow)}px`;
+    panel.style.maxHeight = `${Math.min(600, spaceBelow)}px`;
   } else {
     panel.style.bottom = `${window.innerHeight - rect.top + 4}px`;
     panel.style.top = '';
-    panel.style.maxHeight = `${Math.min(520, spaceAbove)}px`;
+    panel.style.maxHeight = `${Math.min(600, spaceAbove)}px`;
   }
 
   renderCommentaryThread(tradeId, panel);
@@ -808,6 +813,39 @@ function closeCommentaryPanel() {
   }
 }
 
+function buildRationaleChip(rationale) {
+  const chip = document.createElement('button');
+  chip.type = 'button';
+  chip.className = 'tm-rationale-chip';
+  chip.textContent = '📊 Technicals';
+  let detailEl = null;
+  chip.addEventListener('click', () => {
+    if (detailEl) { detailEl.remove(); detailEl = null; return; }
+    detailEl = document.createElement('div');
+    detailEl.className = 'tm-rationale-detail';
+    const r = rationale;
+    const SHOW = [
+      ['RSI', r.rsi_14], ['MACD', r.macd_signal], ['Sentiment', r.sentiment],
+      ['BB Pos', r.bollinger_position], ['vs MA50', r.price_vs_ma50],
+      ['Price', r.price_action], ['Earnings', r.next_earnings_date],
+      ['Day', r.day_color], ['Notes', r.notes],
+    ].filter(([, v]) => v != null && v !== '');
+    SHOW.forEach(([label, value]) => {
+      const rowEl = document.createElement('div');
+      rowEl.className = 'tm-rationale-row';
+      const labelSpan = document.createElement('span');
+      labelSpan.textContent = `${label}: `;
+      const valueSpan = document.createElement('span');
+      valueSpan.textContent = String(value);
+      rowEl.appendChild(labelSpan);
+      rowEl.appendChild(valueSpan);
+      detailEl.appendChild(rowEl);
+    });
+    chip.insertAdjacentElement('afterend', detailEl);
+  });
+  return chip;
+}
+
 async function renderCommentaryThread(tradeId, panel) {
   if (_threadAbortCtrl) _threadAbortCtrl.abort();
   _threadAbortCtrl = new AbortController();
@@ -817,18 +855,48 @@ async function renderCommentaryThread(tradeId, panel) {
   threadEl.innerHTML = '<p class="tm-cp-loading">Loading…</p>';
 
   try {
-    const resp = await fetch(`${tmApiUrl}/api/trades/${tradeId}/commentary`, { signal });
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    const entries = await resp.json();
+    const [commResp, tradeResp] = await Promise.all([
+      fetch(`${tmApiUrl}/api/trades/${tradeId}/commentary`, { signal }),
+      fetch(`${tmApiUrl}/api/trades/${tradeId}`, { signal }),
+    ]);
+    if (!commResp.ok) throw new Error(`HTTP ${commResp.status}`);
+    const entries = await commResp.json();
+
+    let entryRationale = null;
+    let tradeOpenDate = null;
+    if (tradeResp.ok) {
+      const trade = await tradeResp.json();
+      tradeOpenDate = trade.open_date || null;
+      if (trade.rationale && trade.rationale.fetch_status === 'ok') {
+        entryRationale = trade.rationale;
+      }
+    }
 
     updateCommentaryBadge(tradeId, entries.length);
 
-    if (entries.length === 0) {
+    if (entries.length === 0 && !entryRationale) {
       threadEl.innerHTML = '<p class="tm-cp-empty">No notes yet.</p>';
       return;
     }
 
     threadEl.innerHTML = '';
+
+    // Entry-time rationale displayed as the oldest item
+    if (entryRationale) {
+      const snapEl = document.createElement('div');
+      snapEl.className = 'tm-cp-entry tm-cp-entry-snapshot';
+
+      const headerEl = document.createElement('div');
+      headerEl.className = 'tm-cp-entry-header';
+      const dateSpan = document.createElement('span');
+      dateSpan.className = 'tm-cp-date';
+      dateSpan.textContent = tradeOpenDate ? `${tradeOpenDate} · Entry` : 'Entry Snapshot';
+      headerEl.appendChild(dateSpan);
+      snapEl.appendChild(headerEl);
+      snapEl.appendChild(buildRationaleChip(entryRationale));
+      threadEl.appendChild(snapEl);
+    }
+
     entries.forEach(entry => {
       const entryEl = document.createElement('div');
       entryEl.className = 'tm-cp-entry';
@@ -872,40 +940,7 @@ async function renderCommentaryThread(tradeId, panel) {
       }
 
       if (entry.rationale) {
-        const chip = document.createElement('button');
-        chip.type = 'button';
-        chip.className = 'tm-rationale-chip';
-        chip.textContent = '📊 Technicals';
-        let detailEl = null;
-        chip.addEventListener('click', () => {
-          if (detailEl) {
-            detailEl.remove();
-            detailEl = null;
-            return;
-          }
-          detailEl = document.createElement('div');
-          detailEl.className = 'tm-rationale-detail';
-          const r = entry.rationale;
-          const SHOW = [
-            ['RSI', r.rsi_14], ['MACD', r.macd_signal], ['Sentiment', r.sentiment],
-            ['BB Pos', r.bollinger_position], ['vs MA50', r.price_vs_ma50],
-            ['Price', r.price_action], ['Earnings', r.next_earnings_date],
-            ['Day', r.day_color], ['Notes', r.notes],
-          ].filter(([, v]) => v != null && v !== '');
-          SHOW.forEach(([label, value]) => {
-            const row = document.createElement('div');
-            row.className = 'tm-rationale-row';
-            const labelSpan = document.createElement('span');
-            labelSpan.textContent = `${label}: `;
-            const valueSpan = document.createElement('span');
-            valueSpan.textContent = String(value);
-            row.appendChild(labelSpan);
-            row.appendChild(valueSpan);
-            detailEl.appendChild(row);
-          });
-          chip.insertAdjacentElement('afterend', detailEl);
-        });
-        entryEl.appendChild(chip);
+        entryEl.appendChild(buildRationaleChip(entry.rationale));
       }
 
       threadEl.appendChild(entryEl);
@@ -1162,7 +1197,7 @@ async function showAddTradeModal(info) {
         </div>
         <div class="tm-field-row">
           <label>Premium <span class="tm-required">*</span></label>
-          <input type="number" name="premium" step="0.01" min="0" value="${info.pricePaid != null ? info.pricePaid : ''}" placeholder="0.00" required />
+          <input type="number" name="premium" step="0.01" min="0" value="${info.pricePaid != null ? Math.round(info.pricePaid * 100) / 100 : ''}" placeholder="0.00" required />
         </div>
         <div class="tm-field-row">
           <label>Open Date</label>

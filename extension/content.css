@@ -402,8 +402,8 @@
 /* ── Floating commentary panel ── */
 #tm-commentary-panel {
   position: fixed;
-  width: 380px;
-  max-height: 520px;
+  width: 400px;
+  max-height: 600px;
   background: #fff;
   border-radius: 8px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
@@ -536,13 +536,19 @@
   min-height: 0;
 }
 
-.tm-cp-form-fields {
+.tm-cp-form-static {
   padding: 8px 8px 4px;
   display: flex;
   flex-direction: column;
   gap: 5px;
+  flex-shrink: 0;
+}
+
+.tm-cp-form-tech {
+  padding: 0 8px 4px;
   overflow-y: auto;
-  max-height: 260px;
+  max-height: 220px;
+  flex-shrink: 0;
 }
 
 .tm-cp-form-footer {
@@ -733,4 +739,8 @@
 
 .tm-rationale-row span:first-child {
   color: #9ca3af;
+}
+
+.tm-cp-entry-snapshot {
+  border-left: 2px solid #6366f1;
 }
