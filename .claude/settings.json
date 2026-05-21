@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git -C * rev-parse *)",
+      "Bash(git -C * log *)"
+    ]
+  }
+}
