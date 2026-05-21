@@ -7,17 +7,17 @@
 // ETRADE SELECTOR CONSTANTS — confirmed from live DOM
 // ============================================================
 const ETRADE = {
-  gridRoot:       '#rdt_3',
-  contentArea:    '.Content---root---D2Ylg',
-  positionRows:   '[role="row"][level="0"]:not(.Row---placeholderRow---2t5Gs)',
+  gridRoot: '#rdt_3',
+  contentArea: '.Content---root---D2Ylg',
+  positionRows: '[role="row"][level="0"]:not(.Row---placeholderRow---2t5Gs)',
   placeholderRow: '.Row---placeholderRow---2t5Gs',
-  footerRow:      '.Footer---row---g5JDN',
-  symbolContent:  '.SymbolCellRenderer---content---mcwCT',
-  symbolLink:     'a.SymbolCellRenderer---symbol---_S70m',
-  optionClass:    'SymbolCellRenderer---option---qIlje',
-  itmClass:       'SymbolCellRenderer---in-the-money---AQRUo',
-  optionDesc:     'span.SymbolCellRenderer---description---KHPND',
-  headerRow:      '[data-header="true"] [role="row"]',
+  footerRow: '.Footer---row---g5JDN',
+  symbolContent: '.SymbolCellRenderer---content---mcwCT',
+  symbolLink: 'a.SymbolCellRenderer---symbol---_S70m',
+  optionClass: 'SymbolCellRenderer---option---qIlje',
+  itmClass: 'SymbolCellRenderer---in-the-money---AQRUo',
+  optionDesc: 'span.SymbolCellRenderer---description---KHPND',
+  headerRow: '[data-header="true"] [role="row"]',
 };
 
 // ============================================================
@@ -260,7 +260,7 @@ function getTickerFromRow(row) {
 function getRowInfo(row) {
   const symbolRoot = row.querySelector('[class*="SymbolCellRenderer---root"]');
   const isOption = symbolRoot ? symbolRoot.classList.contains(ETRADE.optionClass) : false;
-  const isITM    = symbolRoot ? symbolRoot.classList.contains(ETRADE.itmClass)    : false;
+  const isITM = symbolRoot ? symbolRoot.classList.contains(ETRADE.itmClass) : false;
 
   const ticker = getTickerFromRow(row);
   if (!ticker) return null;
@@ -299,10 +299,10 @@ function getRowInfo(row) {
   // Extract Qty and Price Paid from grid cells using header column map
   const colMap = buildColumnMap();
   // Header text after &nbsp; normalization: "qty #" and "price paid $"
-  const qtyCol       = colMap['qty #']       ?? colMap['qty'] ?? null;
+  const qtyCol = colMap['qty #'] ?? colMap['qty'] ?? null;
   const pricePaidCol = colMap['price paid $'] ?? colMap['price paid'] ?? null;
 
-  let quantity  = null;
+  let quantity = null;
   let pricePaid = null;
 
   if (qtyCol != null) {
@@ -320,9 +320,9 @@ function parseOptionSymbol(fullSymbol) {
   const match = fullSymbol.match(/^([A-Z]+)-{1,4}(\d{6})([CP])(\d{8})$/);
   if (!match) return null;
   const [, , dateStr, optType, strikeRaw] = match;
-  const year  = 2000 + parseInt(dateStr.slice(0, 2));
+  const year = 2000 + parseInt(dateStr.slice(0, 2));
   const month = parseInt(dateStr.slice(2, 4)) - 1;
-  const day   = parseInt(dateStr.slice(4, 6));
+  const day = parseInt(dateStr.slice(4, 6));
   const expiry = new Date(year, month, day).toISOString().split('T')[0];
   const strike = parseInt(strikeRaw) / 1000;
   return {
@@ -336,7 +336,7 @@ function parseOptionSymbol(fullSymbol) {
 function parseOptionDescription(desc) {
   const match = desc.match(/^(\w{3})\s+(\d{1,2})\s+'(\d{2})\s+\$(\d+(?:\.\d+)?)\s+(Call|Put)$/);
   if (!match) return null;
-  const months = { Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11 };
+  const months = { Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5, Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11 };
   const [, mon, day, yr, strike, type] = match;
   const expiry = new Date(2000 + parseInt(yr), months[mon], parseInt(day)).toISOString().split('T')[0];
   return { expiry, type, strike: parseFloat(strike), dte: Math.round((new Date(expiry) - new Date()) / 86400000) };
@@ -416,7 +416,7 @@ async function processVisibleRows() {
       if (status && status.strategy) {
         const strat = status.strategy.toLowerCase();
         const isOptionStrat = strat.includes('put') || strat.includes('call') ||
-                              strat.includes('leap') || strat.includes('spread');
+          strat.includes('leap') || strat.includes('spread');
         if (item.info.isOption && !isOptionStrat) status = null;
         else if (!item.info.isOption && isOptionStrat) status = null;
       }
@@ -458,10 +458,10 @@ function applyRowColor(row, status) {
     return;
   }
   const colors = {
-    urgent:  'rgba(239,68,68,0.18)',
+    urgent: 'rgba(239,68,68,0.18)',
     warning: 'rgba(245,158,11,0.15)',
-    info:    'rgba(139,92,246,0.12)',
-    ok:      'rgba(34,197,94,0.08)',
+    info: 'rgba(139,92,246,0.12)',
+    ok: 'rgba(34,197,94,0.08)',
   };
   const borders = {
     urgent: '#ef4444', warning: '#f59e0b', info: '#8b5cf6', ok: '#22c55e',
@@ -475,9 +475,9 @@ function applyRowColor(row, status) {
 }
 
 function hexToRgba(hex, alpha) {
-  const r = parseInt(hex.slice(1,3), 16);
-  const g = parseInt(hex.slice(3,5), 16);
-  const b = parseInt(hex.slice(5,7), 16);
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
   return `rgba(${r},${g},${b},${alpha})`;
 }
 
@@ -503,7 +503,7 @@ function injectBadge(row, status, info) {
   }
 
   if (!status) {
-    badge.innerHTML = `<span class="tm-tag tm-untracked">⊘ Not tracked</span>`;
+    badge.innerHTML = `<span class="tm-tag tm-untracked">⊘</span>`;
     return;
   }
 
@@ -1354,9 +1354,9 @@ async function showEditTradeModal(info) {
         <div class="tm-field-row">
           <label>Strategy</label>
           <select name="strategy">
-            ${!['Sell Put','Sell Call','Buy Put','Buy Call','Put Credit Spread','Call Credit Spread','Covered Call','Stock'].includes(trade.strategy)
-              ? `<option value="${trade.strategy}" selected>${trade.strategy}</option>`
-              : ''}
+            ${!['Sell Put', 'Sell Call', 'Buy Put', 'Buy Call', 'Put Credit Spread', 'Call Credit Spread', 'Covered Call', 'Stock'].includes(trade.strategy)
+      ? `<option value="${trade.strategy}" selected>${trade.strategy}</option>`
+      : ''}
             <option value="Sell Put" ${trade.strategy === 'Sell Put' ? 'selected' : ''}>Sell Put</option>
             <option value="Sell Call" ${trade.strategy === 'Sell Call' ? 'selected' : ''}>Sell Call</option>
             <option value="Buy Put" ${trade.strategy === 'Buy Put' ? 'selected' : ''}>Buy Put</option>
