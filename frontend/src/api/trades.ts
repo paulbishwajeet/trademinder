@@ -1,6 +1,6 @@
 // frontend/src/api/trades.ts
 import { apiFetch } from './client'
-import type { Trade, TradeCreate } from '../types'
+import type { Trade, TradeCreate, TradeUpdate } from '../types'
 
 export const tradesApi = {
   list: (params?: { status?: string; ticker?: string }) => {
@@ -13,7 +13,7 @@ export const tradesApi = {
   create: (payload: TradeCreate) =>
     apiFetch<Trade>('/trades', { method: 'POST', body: JSON.stringify(payload) }),
 
-  update: (id: string, payload: Partial<Pick<Trade, 'exit_strategy' | 'signal_action' | 'status'>>) =>
+  update: (id: string, payload: TradeUpdate) =>
     apiFetch<Trade>(`/trades/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
 
   close: (id: string) =>

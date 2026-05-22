@@ -88,6 +88,22 @@ export interface TradeCreate {
   rationale_notes?: string | null
 }
 
+export interface TradeUpdate {
+  type?: string
+  category?: string
+  strategy?: string
+  strike_price?: number | null
+  expiry_date?: string | null
+  quantity?: number
+  premium?: number | null
+  collateral?: number | null
+  status?: 'open' | 'closed' | 'expired' | 'assigned'
+  closed_date?: string | null
+  exit_strategy?: string | null
+  rationale_notes?: string | null
+  signal_action?: string | null
+}
+
 export interface Commentary {
   id: string
   trade_id: string
