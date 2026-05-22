@@ -129,3 +129,16 @@ async def test_patch_trade_category_and_quantity(client: AsyncClient):
     assert data["category"] == "SWING"
     assert data["quantity"] == 3
     assert float(data["premium"]) == 4.20
+
+
+async def test_patch_trade_sets_closed_date(client: AsyncClient):
+    create_resp = await client.post("/api/trades", json=TRADE_PAYLOAD)
+    trade_id = create_resp.json()["id"]
+    response = await client.patch(
+        f"/api/trades/{trade_id}",
+        json={"status": "closed", "closed_date": "2026-05-22"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "closed"
+    assert data["closed_date"] == "2026-05-22"

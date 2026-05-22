@@ -87,6 +87,7 @@ class TradeUpdate(BaseModel):
     rationale_notes: Optional[str] = None  # maps to trade.rationale.notes
     signal_action: Optional[str] = None
     status: Optional[Literal["open", "closed", "expired", "assigned"]] = None
+    closed_date: Optional[date] = None
     current_price: Optional[Decimal] = None
     unrealized_pnl: Optional[Decimal] = None
 
