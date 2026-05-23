@@ -29,6 +29,7 @@ interface ParsedData {
   shortPuts: ShortPut[]
   liquidBuffer: number
   totalEquity: number
+  parseError: string | null
 }
 
 interface ExpiryGroup {
@@ -136,14 +137,39 @@ function rsiPillClass(rsi: number): string {
 
 // ─── CSV Parser ───────────────────────────────────────────────────────────────
 
+function parseCSVLine(line: string): string[] {
+  const fields: string[] = []
+  let current = ''
+  let inQuotes = false
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i]
+    if (ch === '"') {
+      if (inQuotes && line[i + 1] === '"') { current += '"'; i++ }
+      else inQuotes = !inQuotes
+    } else if (ch === ',' && !inQuotes) {
+      fields.push(current)
+      current = ''
+    } else {
+      current += ch
+    }
+  }
+  fields.push(current)
+  return fields
+}
+
+const MIN_COLS = 14  // cols 0–13 are required; col 14 (IV) is optional
+
 function parsePortfolioCSV(text: string): ParsedData {
   const lines = text.trim().split('\n').filter(l => l.trim())
   let liquidBuffer = 0
   let totalEquity = 0
   const shortPuts: ShortPut[] = []
+  let dataRowsFound = 0  // rows with enough columns to be real position data
 
-  for (let i = 1; i < lines.length; i++) {
-    const cols = lines[i].split(',')
+  for (let i = 0; i < lines.length; i++) {
+    const cols = parseCSVLine(lines[i])
+    if (cols.length < MIN_COLS) continue  // skip header/summary rows (top 7 rows etc.)
+    dataRowsFound++
     const symbol = cols[0]?.trim() ?? ''
     const qty = parseNum(cols[1])
     const pricePaid = parseNum(cols[7])
@@ -203,7 +229,19 @@ function parsePortfolioCSV(text: string): ParsedData {
   }
 
   shortPuts.sort((a, b) => a.dte - b.dte)
-  return { shortPuts, liquidBuffer, totalEquity }
+
+  let parseError: string | null = null
+  if (dataRowsFound === 0) {
+    parseError = `No data rows with ${MIN_COLS}+ columns were found. ` +
+      `This doesn't look like an E*TRADE portfolio export — please use Portfolio → Download → "Complete View".`
+  } else if (shortPuts.length === 0 && totalEquity === 0) {
+    parseError = `Found ${dataRowsFound} data row${dataRowsFound !== 1 ? 's' : ''} but no recognizable positions. ` +
+      `Column indices may not match — make sure to download the "Complete View" export.`
+  } else if (shortPuts.length === 0) {
+    parseError = 'No short put positions found (only equity holdings were detected in this file).'
+  }
+
+  return { shortPuts, liquidBuffer, totalEquity, parseError }
 }
 
 function groupByExpiry(positions: ShortPut[]): ExpiryGroup[] {
@@ -408,6 +446,14 @@ export function MarginDashboardPage() {
           Upload New File
         </button>
       </div>
+
+      {/* CSV parse error banner */}
+      {parsed.parseError && (
+        <div className="flex items-start gap-3 px-4 py-3 rounded-lg text-sm mb-4 bg-red-50 border border-red-200 text-red-700">
+          <span className="mt-0.5 shrink-0">⚠️</span>
+          <span>{parsed.parseError}</span>
+        </div>
+      )}
 
       {/* Market data status banner */}
       {(marketLoading || marketError) && (
