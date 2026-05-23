@@ -196,6 +196,9 @@ export function TradeDetailPage() {
               <select value={editForm.type ?? ''}
                 onChange={e => set('type', e.target.value)}
                 className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm">
+                {editForm.type && !TYPES.includes(editForm.type) && (
+                  <option value={editForm.type} disabled>{editForm.type} (unknown)</option>
+                )}
                 {TYPES.map(t => <option key={t}>{t}</option>)}
               </select>
             </div>
@@ -206,6 +209,9 @@ export function TradeDetailPage() {
               <select value={editForm.strategy ?? ''}
                 onChange={e => set('strategy', e.target.value)}
                 className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm">
+                {editForm.strategy && !STRATEGIES.includes(editForm.strategy) && (
+                  <option value={editForm.strategy} disabled>{editForm.strategy} (unknown)</option>
+                )}
                 {STRATEGIES.map(s => <option key={s}>{s}</option>)}
               </select>
             </div>
@@ -247,7 +253,7 @@ export function TradeDetailPage() {
             <div>
               <label className="block text-xs text-gray-500 mb-1">Quantity</label>
               <input type="number" min="1" value={editForm.quantity ?? ''}
-                onChange={e => set('quantity', Number(e.target.value))}
+                onChange={e => set('quantity', e.target.value !== '' ? Number(e.target.value) : undefined)}
                 className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm" />
             </div>
 
