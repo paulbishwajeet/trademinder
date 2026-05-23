@@ -1,7 +1,7 @@
 # Active Feature
 
-**Feature:** Technicals Capture — shipped
-**Context File:** context/extension.md
-**Branch:** master
-**Session Started:** 2026-05-19
-**Shipped:** 2026-05-20
+**Feature:** Edit Trade
+**Context File:** context/feature-edit-trade.md
+**Branch:** frontend-edittrade
+**Session Started:** 2026-05-22
+**Status:** Implementation complete, not yet merged
