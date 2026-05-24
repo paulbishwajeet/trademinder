@@ -91,8 +91,10 @@ export function GroupedTradeTable({ trades, onDelete, statusFilter }: Props) {
     setDragOver({ category, position })
   }
 
-  function handleDragLeave() {
-    setDragOver(null)
+  function handleDragLeave(e: React.DragEvent) {
+    if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node)) {
+      setDragOver(null)
+    }
   }
 
   function handleDrop(e: React.DragEvent, targetCategory: string) {
