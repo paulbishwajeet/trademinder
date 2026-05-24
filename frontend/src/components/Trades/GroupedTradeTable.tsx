@@ -43,6 +43,11 @@ function applySort(trades: Trade[], sortKey: SortKey | null, sortDir: 1 | -1): T
   })
 }
 
+function SortIcon({ k, sortKey, sortDir }: { k: SortKey; sortKey: SortKey | null; sortDir: 1 | -1 }) {
+  if (sortKey !== k) return <span className="ml-0.5 text-gray-300">↕</span>
+  return <span className="ml-0.5 text-blue-500">{sortDir === 1 ? '↑' : '↓'}</span>
+}
+
 const LS_KEY = 'trademinder_group_order'
 
 function loadGroupOrder(): string[] {
@@ -125,11 +130,6 @@ export function GroupedTradeTable({ trades, onDelete, statusFilter }: Props) {
     else { setSortKey(key); setSortDir(1) }
   }
 
-  function SortIcon({ k }: { k: SortKey }) {
-    if (sortKey !== k) return <span className="ml-0.5 text-gray-300">↕</span>
-    return <span className="ml-0.5 text-blue-500">{sortDir === 1 ? '↑' : '↓'}</span>
-  }
-
   const grouped = groupTrades(trades)
   const categories = [...groupOrder]
   if (grouped.has('Other') && !categories.includes('Other')) categories.push('Other')
@@ -149,7 +149,7 @@ export function GroupedTradeTable({ trades, onDelete, statusFilter }: Props) {
                 onClick={() => handleSort('ticker')}
                 className="flex items-center text-xs font-medium text-gray-500 uppercase tracking-wider hover:text-gray-700"
               >
-                Ticker<SortIcon k="ticker" />
+                Ticker<SortIcon k="ticker" sortKey={sortKey} sortDir={sortDir} />
               </button>
             </th>
             {['Strategy', 'Type', 'Strike'].map(h => (
@@ -160,7 +160,7 @@ export function GroupedTradeTable({ trades, onDelete, statusFilter }: Props) {
                 onClick={() => handleSort('expiry')}
                 className="flex items-center text-xs font-medium text-gray-500 uppercase tracking-wider hover:text-gray-700"
               >
-                Expiry<SortIcon k="expiry" />
+                Expiry<SortIcon k="expiry" sortKey={sortKey} sortDir={sortDir} />
               </button>
             </th>
             {['Qty', 'Premium', 'P&L', 'Status', 'Commentary', ''].map(h => (
@@ -183,12 +183,12 @@ export function GroupedTradeTable({ trades, onDelete, statusFilter }: Props) {
               key={category}
               draggable
               onDragStart={e => handleDragStart(e, category)}
-              onDragOver={e => handleDragOver(e, category)}
               onDragLeave={handleDragLeave}
               onDrop={e => handleDrop(e, category)}
               onDragEnd={handleDragEnd}
             >
               <tr
+                onDragOver={e => handleDragOver(e, category)}
                 style={{
                   borderTop: dragOver?.category === category && dragOver.position === 'above' ? '2px solid #2563eb' : undefined,
                   borderBottom: dragOver?.category === category && dragOver.position === 'below' ? '2px solid #2563eb' : undefined,
