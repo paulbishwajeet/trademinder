@@ -4,4 +4,4 @@
 **Context File:** context/feature-tradegrouping.md
 **Branch:** feature/trade-grouping
 **Session Started:** 2026-05-23
-**Status:** Not Started — spec approved, ready for implementation plan
+**Status:** Implementation Complete — branch `frontend-groupby` ready to push; next action is PR to master
