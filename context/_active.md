@@ -1,7 +1,7 @@
 # Active Feature
 
-**Feature:** Edit Trade
-**Context File:** context/feature-edit-trade.md
-**Branch:** frontend-edittrade
-**Session Started:** 2026-05-22
-**Status:** Implementation complete, not yet merged
+**Feature:** Trade Grouping
+**Context File:** context/feature-tradegrouping.md
+**Branch:** feature/trade-grouping
+**Session Started:** 2026-05-23
+**Status:** Implementation Complete — branch `frontend-groupby` ready to push; next action is PR to master

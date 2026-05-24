@@ -2,20 +2,20 @@ import { useState, useEffect } from 'react'
 import { tradesApi } from '../api/trades'
 import { technicalsApi } from '../api/technicals'
 import type { Trade, TechnicalsData, TradeCreate } from '../types'
-import { TradeTable } from '../components/Trades/TradeTable'
+import { GroupedTradeTable } from '../components/Trades/GroupedTradeTable'
 import { TradeForm } from '../components/Trades/TradeForm'
 
 export function TradesPage() {
   const [trades, setTrades] = useState<Trade[]>([])
   const [showForm, setShowForm] = useState(false)
-  const [statusFilter, setStatusFilter] = useState<string>('')
+  const [statusFilter, setStatusFilter] = useState<string>('open')
 
   const load = async () => {
-    const data = await tradesApi.list(statusFilter ? { status: statusFilter } : undefined)
+    const data = await tradesApi.list()
     setTrades(data)
   }
 
-  useEffect(() => { load() }, [statusFilter])
+  useEffect(() => { load() }, [])
 
   const handleCreate = async (payload: TradeCreate, technicals: TechnicalsData | null) => {
     const trade = await tradesApi.create(payload)
@@ -46,7 +46,7 @@ export function TradesPage() {
       </div>
 
       <div className="mb-4 flex gap-2">
-        {['', 'open', 'closed', 'expired', 'assigned'].map(s => (
+        {(['', 'open', 'closed', 'expired', 'assigned'] as const).map(s => (
           <button
             key={s}
             onClick={() => setStatusFilter(s)}
@@ -65,7 +65,7 @@ export function TradesPage() {
       )}
 
       <div className="bg-white rounded-lg border border-gray-200">
-        <TradeTable trades={trades} onDelete={handleDelete} />
+        <GroupedTradeTable trades={trades} onDelete={handleDelete} statusFilter={statusFilter} />
       </div>
     </div>
   )
