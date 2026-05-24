@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import type { Trade } from '../../types'
 import { StatusBadge } from '../shared/StatusBadge'
@@ -43,6 +43,24 @@ function applySort(trades: Trade[], sortKey: SortKey | null, sortDir: 1 | -1): T
   })
 }
 
+const LS_KEY = 'trademinder_group_order'
+
+function loadGroupOrder(): string[] {
+  try {
+    const raw = localStorage.getItem(LS_KEY)
+    if (raw) {
+      const saved: string[] = JSON.parse(raw)
+      const extras = CATEGORY_ORDER.filter(c => !saved.includes(c))
+      return [...saved, ...extras]
+    }
+  } catch {}
+  return [...CATEGORY_ORDER]
+}
+
+function saveGroupOrder(order: string[]): void {
+  try { localStorage.setItem(LS_KEY, JSON.stringify(order)) } catch {}
+}
+
 export function GroupedTradeTable({ trades, onDelete, statusFilter }: Props) {
   const [sortKey, setSortKey] = useState<SortKey | null>(null)
   const [sortDir, setSortDir] = useState<1 | -1>(1)
@@ -56,6 +74,50 @@ export function GroupedTradeTable({ trades, onDelete, statusFilter }: Props) {
     })
   }
 
+  const [groupOrder, setGroupOrder] = useState<string[]>(loadGroupOrder)
+  const dragSrcRef = useRef<string | null>(null)
+  const [dragOver, setDragOver] = useState<{ category: string; position: 'above' | 'below' } | null>(null)
+
+  function handleDragStart(e: React.DragEvent, category: string) {
+    dragSrcRef.current = category
+    e.dataTransfer.effectAllowed = 'move'
+  }
+
+  function handleDragOver(e: React.DragEvent, category: string) {
+    e.preventDefault()
+    if (dragSrcRef.current === category) return
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    const position: 'above' | 'below' = e.clientY < rect.top + rect.height / 2 ? 'above' : 'below'
+    setDragOver({ category, position })
+  }
+
+  function handleDragLeave() {
+    setDragOver(null)
+  }
+
+  function handleDrop(e: React.DragEvent, targetCategory: string) {
+    e.preventDefault()
+    const src = dragSrcRef.current
+    const position = dragOver?.position ?? 'below'
+    if (!src || src === targetCategory) { setDragOver(null); return }
+    const next = [...groupOrder]
+    const srcIdx = next.indexOf(src)
+    if (srcIdx === -1) { setDragOver(null); return }
+    next.splice(srcIdx, 1)
+    const tgtIdx = next.indexOf(targetCategory)
+    if (tgtIdx === -1) { setDragOver(null); return }
+    next.splice(position === 'above' ? tgtIdx : tgtIdx + 1, 0, src)
+    dragSrcRef.current = null
+    setDragOver(null)
+    setGroupOrder(next)
+    saveGroupOrder(next)
+  }
+
+  function handleDragEnd() {
+    dragSrcRef.current = null
+    setDragOver(null)
+  }
+
   function handleSort(key: SortKey) {
     if (sortKey === key) setSortDir(d => (d === 1 ? -1 : 1))
     else { setSortKey(key); setSortDir(1) }
@@ -67,8 +129,8 @@ export function GroupedTradeTable({ trades, onDelete, statusFilter }: Props) {
   }
 
   const grouped = groupTrades(trades)
-  const categories = [...CATEGORY_ORDER]
-  if (grouped.has('Other')) categories.push('Other')
+  const categories = [...groupOrder]
+  if (grouped.has('Other') && !categories.includes('Other')) categories.push('Other')
 
   if (trades.length === 0 && !statusFilter) {
     return <p className="text-gray-500 text-center py-8">No trades yet. Add your first trade.</p>
@@ -115,14 +177,31 @@ export function GroupedTradeTable({ trades, onDelete, statusFilter }: Props) {
             : `No trades in ${category}`
 
           return (
-            <tbody key={category}>
-              <tr>
-                <td className="w-8 px-2 py-2 border-t border-gray-200"
+            <tbody
+              key={category}
+              draggable
+              onDragStart={e => handleDragStart(e, category)}
+              onDragOver={e => handleDragOver(e, category)}
+              onDragLeave={handleDragLeave}
+              onDrop={e => handleDrop(e, category)}
+              onDragEnd={handleDragEnd}
+            >
+              <tr
+                style={{
+                  borderTop: dragOver?.category === category && dragOver.position === 'above' ? '2px solid #2563eb' : undefined,
+                  borderBottom: dragOver?.category === category && dragOver.position === 'below' ? '2px solid #2563eb' : undefined,
+                }}
+              >
+                <td
+                  className="w-8 px-2 py-2 border-t border-gray-200 text-gray-300 text-base cursor-grab select-none"
+                  title="Drag to reorder"
                   style={{
                     background: color ? `linear-gradient(90deg, ${color}1A 0%, transparent 70%)` : '#f9fafb',
                     borderLeft: `3px solid ${color ?? '#e5e7eb'}`,
                   }}
-                />
+                >
+                  ⠿
+                </td>
                 <td
                   colSpan={COL_COUNT - 1}
                   className="py-2 border-t border-gray-200 cursor-pointer select-none"
