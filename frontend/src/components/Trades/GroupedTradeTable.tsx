@@ -46,6 +46,15 @@ function applySort(trades: Trade[], sortKey: SortKey | null, sortDir: 1 | -1): T
 export function GroupedTradeTable({ trades, onDelete, statusFilter }: Props) {
   const [sortKey, setSortKey] = useState<SortKey | null>(null)
   const [sortDir, setSortDir] = useState<1 | -1>(1)
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
+
+  function toggleCollapse(category: string) {
+    setCollapsed(prev => {
+      const next = new Set(prev)
+      next.has(category) ? next.delete(category) : next.add(category)
+      return next
+    })
+  }
 
   function handleSort(key: SortKey) {
     if (sortKey === key) setSortDir(d => (d === 1 ? -1 : 1))
@@ -116,50 +125,59 @@ export function GroupedTradeTable({ trades, onDelete, statusFilter }: Props) {
                 />
                 <td
                   colSpan={COL_COUNT - 1}
-                  className="py-2 border-t border-gray-200"
+                  className="py-2 border-t border-gray-200 cursor-pointer select-none"
+                  onClick={() => toggleCollapse(category)}
                   style={{ background: color ? `linear-gradient(90deg, ${color}1A 0%, transparent 70%)` : '#f9fafb' }}
                 >
                   <div className="flex items-center justify-between pr-4">
                     <span className="font-bold text-sm flex items-center gap-1.5" style={{ color: color ?? '#6b7280' }}>
-                      ▼ {category}
+                      <span
+                        className="inline-block transition-transform duration-150"
+                        style={{ transform: collapsed.has(category) ? 'rotate(-90deg)' : 'rotate(0deg)' }}
+                      >
+                        ▼
+                      </span>
+                      {category}
                     </span>
                     <span className="text-xs text-gray-500">{statusBreakdown(allTrades)}</span>
                   </div>
                 </td>
               </tr>
 
-              {visible.length === 0 ? (
-                <tr>
-                  <td colSpan={COL_COUNT} className="px-4 py-3 text-center text-xs text-gray-400 italic">
-                    {emptyMsg}
-                  </td>
-                </tr>
-              ) : (
-                visible.map(trade => (
-                  <tr key={trade.id} className="hover:bg-gray-50 border-b border-gray-100 last:border-0">
-                    <td className="w-8 px-2 py-3" />
-                    <td className="px-4 py-3 font-semibold">
-                      <Link to={`/trades/${trade.id}`} className="text-blue-600 hover:underline">{trade.ticker}</Link>
-                    </td>
-                    <td className="px-4 py-3">{trade.strategy}</td>
-                    <td className="px-4 py-3">{trade.type}</td>
-                    <td className="px-4 py-3">{trade.strike_price ?? '—'}</td>
-                    <td className="px-4 py-3">{trade.expiry_date ?? '—'}</td>
-                    <td className="px-4 py-3">{trade.quantity}</td>
-                    <td className="px-4 py-3">{trade.premium !== null ? `$${trade.premium}` : '—'}</td>
-                    <td className="px-4 py-3"><PnLDisplay value={trade.unrealized_pnl} /></td>
-                    <td className="px-4 py-3"><StatusBadge status={trade.status} /></td>
-                    <td className="px-4 py-3"><CommentaryCell tradeId={trade.id} ticker={trade.ticker} /></td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-3">
-                        {trade.strategy === 'Stock' && trade.status === 'open' && (
-                          <Link to={`/scanner?ticker=${trade.ticker}`} className="text-blue-500 hover:text-blue-700 text-xs">Scan →</Link>
-                        )}
-                        <button onClick={() => onDelete(trade.id)} className="text-red-500 hover:text-red-700 text-xs">Delete</button>
-                      </div>
+              {!collapsed.has(category) && (
+                visible.length === 0 ? (
+                  <tr>
+                    <td colSpan={COL_COUNT} className="px-4 py-3 text-center text-xs text-gray-400 italic">
+                      {emptyMsg}
                     </td>
                   </tr>
-                ))
+                ) : (
+                  visible.map(trade => (
+                    <tr key={trade.id} className="hover:bg-gray-50 border-b border-gray-100 last:border-0">
+                      <td className="w-8 px-2 py-3" />
+                      <td className="px-4 py-3 font-semibold">
+                        <Link to={`/trades/${trade.id}`} className="text-blue-600 hover:underline">{trade.ticker}</Link>
+                      </td>
+                      <td className="px-4 py-3">{trade.strategy}</td>
+                      <td className="px-4 py-3">{trade.type}</td>
+                      <td className="px-4 py-3">{trade.strike_price ?? '—'}</td>
+                      <td className="px-4 py-3">{trade.expiry_date ?? '—'}</td>
+                      <td className="px-4 py-3">{trade.quantity}</td>
+                      <td className="px-4 py-3">{trade.premium !== null ? `$${trade.premium}` : '—'}</td>
+                      <td className="px-4 py-3"><PnLDisplay value={trade.unrealized_pnl} /></td>
+                      <td className="px-4 py-3"><StatusBadge status={trade.status} /></td>
+                      <td className="px-4 py-3"><CommentaryCell tradeId={trade.id} ticker={trade.ticker} /></td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-3">
+                          {trade.strategy === 'Stock' && trade.status === 'open' && (
+                            <Link to={`/scanner?ticker=${trade.ticker}`} className="text-blue-500 hover:text-blue-700 text-xs">Scan →</Link>
+                          )}
+                          <button onClick={() => onDelete(trade.id)} className="text-red-500 hover:text-red-700 text-xs">Delete</button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )
               )}
             </tbody>
           )
