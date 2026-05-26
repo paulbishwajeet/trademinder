@@ -1,0 +1,40 @@
+<h2>What should the group header show?</h2>
+<p class="subtitle">Besides the category name, choose what summary info appears on the right side of each group header.</p>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <div style="background:linear-gradient(90deg,#3B82F620 0%,transparent 100%);border-left:3px solid #3B82F6;padding:8px 14px;border-radius:0 4px 4px 0;display:flex;align-items:center;justify-content:space-between;font-family:monospace;font-size:12px">
+        <span style="font-weight:700;color:#3B82F6">▼ WHEEL</span>
+        <span style="color:#64748b">6 trades</span>
+      </div>
+      <h3>Trade count only</h3>
+      <p>Simple. Just shows how many trades are in the group (or how many match the current filter).</p>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <div style="background:linear-gradient(90deg,#3B82F620 0%,transparent 100%);border-left:3px solid #3B82F6;padding:8px 14px;border-radius:0 4px 4px 0;display:flex;align-items:center;justify-content:space-between;font-family:monospace;font-size:12px">
+        <span style="font-weight:700;color:#3B82F6">▼ WHEEL</span>
+        <span style="color:#64748b">4 open · 2 closed</span>
+      </div>
+      <h3>Status breakdown</h3>
+      <p>Shows count per status (open, closed, expired, assigned) — only non-zero counts shown. Helps you see at a glance how active each category is.</p>
+    </div>
+  </div>
+
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <div style="background:linear-gradient(90deg,#3B82F620 0%,transparent 100%);border-left:3px solid #3B82F6;padding:8px 14px;border-radius:0 4px 4px 0;display:flex;align-items:center;justify-content:space-between;font-family:monospace;font-size:12px">
+        <span style="font-weight:700;color:#3B82F6">▼ WHEEL</span>
+        <span style="color:#64748b">4 open · 2 closed &nbsp;|&nbsp; P&L: <span style="color:#16a34a">+$312</span></span>
+      </div>
+      <h3>Status breakdown + total P&L</h3>
+      <p>Status counts plus the sum of unrealized P&L across all trades in the group. More data density at a glance.</p>
+    </div>
+  </div>
+</div>

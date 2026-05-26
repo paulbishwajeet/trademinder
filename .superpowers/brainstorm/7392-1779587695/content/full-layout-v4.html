@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Trade Grouping Mockup</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f1f5f9; color: #1e293b; padding: 24px; }
+  h2 { font-size: 20px; font-weight: 700; margin-bottom: 6px; color: #0f172a; }
+  .subtitle { font-size: 13px; color: #64748b; margin-bottom: 20px; }
+  .page { background: white; border-radius: 10px; border: 1px solid #e2e8f0; overflow: hidden; max-width: 1000px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
+  .page-header { display: flex; justify-content: space-between; align-items: center; padding: 16px 20px 12px; border-bottom: 1px solid #e2e8f0; }
+  .page-title { font-size: 20px; font-weight: 700; color: #0f172a; }
+  .btn-add { background: #2563eb; color: white; border: none; border-radius: 5px; padding: 6px 14px; font-size: 12px; font-weight: 500; cursor: pointer; }
+  .filter-bar { display: flex; gap: 8px; padding: 10px 20px; border-bottom: 1px solid #e2e8f0; background: #fafafa; }
+  .filter-btn { padding: 4px 12px; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 11px; color: #475569; background: white; cursor: pointer; }
+  .filter-btn.active { background: #2563eb; color: white; border-color: #2563eb; font-weight: 600; }
+  .cols { grid-template-columns: 75px 80px 55px 55px 85px 38px 60px 68px 80px 90px 1fr; }
+  .col-header { display: grid; padding: 8px 20px; background: #f8fafc; border-bottom: 1px solid #e2e8f0; font-size: 10px; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; }
+  .group-header { display: flex; align-items: center; justify-content: space-between; padding: 9px 20px; cursor: pointer; border-top: 1px solid #e2e8f0; user-select: none; }
+  .group-header:hover { filter: brightness(0.97); }
+  .group-name { font-weight: 700; font-size: 13px; display: flex; align-items: center; gap: 6px; }
+  .chevron { display: inline-block; transition: transform 0.18s ease; font-style: normal; }
+  .group-header.collapsed .chevron { transform: rotate(-90deg); }
+  .group-meta { font-size: 11px; color: #64748b; }
+  .group-rows { padding: 0 20px; }
+  .group-rows.collapsed { display: none; }
+  .trade-row { display: grid; padding: 7px 0; font-size: 12px; color: #374151; border-bottom: 1px solid #f1f5f9; align-items: center; }
+  .trade-row:last-child { border-bottom: none; }
+  .ticker { font-weight: 600; color: #2563eb; }
+  .pnl-pos { color: #16a34a; font-weight: 500; }
+  .pnl-neg { color: #dc2626; font-weight: 500; }
+  .badge { padding: 2px 7px; border-radius: 4px; font-size: 10px; font-weight: 500; }
+  .badge-open { background: #dcfce7; color: #166534; }
+  .badge-closed { background: #fee2e2; color: #991b1b; }
+  .commentary-chip { display: inline-flex; align-items: center; gap: 3px; padding: 2px 7px; border-radius: 4px; font-size: 10px; background: #f1f5f9; color: #475569; border: 1px solid #e2e8f0; }
+  .del { font-size: 10px; color: #94a3b8; cursor: pointer; }
+  .empty-state { padding: 14px 0; text-align: center; color: #94a3b8; font-size: 12px; font-style: italic; }
+  .note { margin-top: 18px; max-width: 1000px; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 6px; padding: 12px 16px; font-size: 12px; color: #1e40af; }
+</style>
+</head>
+<body>
+
+<h2>Trade Grouping — Layout Mockup</h2>
+<p class="subtitle">Click any group header to collapse/expand. Commentary column included.</p>
+
+<div class="page">
+  <div class="page-header">
+    <span class="page-title">Trades</span>
+    <button class="btn-add">+ Add Trade</button>
+  </div>
+
+  <div class="filter-bar">
+    <button class="filter-btn active">All</button>
+    <button class="filter-btn">open</button>
+    <button class="filter-btn">closed</button>
+    <button class="filter-btn">expired</button>
+    <button class="filter-btn">assigned</button>
+  </div>
+
+  <div class="col-header cols">
+    <span>Ticker</span><span>Strategy</span><span>Type</span><span>Strike</span><span>Expiry</span><span>Qty</span><span>Premium</span><span>P&amp;L</span><span>Status</span><span>Commentary</span><span>Actions</span>
+  </div>
+
+  <!-- WHEEL -->
+  <div class="group-header" style="background:linear-gradient(90deg,#3B82F610 0%,transparent 70%);border-left:3px solid #3B82F6" onclick="toggle(this)">
+    <span class="group-name" style="color:#3B82F6"><i class="chevron">▼</i> WHEEL</span>
+    <span class="group-meta">3 open · 1 closed</span>
+  </div>
+  <div class="group-rows">
+    <div class="trade-row cols">
+      <span class="ticker">AAPL</span><span>Put</span><span>Sell</span><span>$185</span><span>2026-07-18</span><span>2</span><span>$3.40</span><span class="pnl-pos">+$120</span><span><span class="badge badge-open">open</span></span><span><span class="commentary-chip">💬 3</span></span><span class="del">Delete</span>
+    </div>
+    <div class="trade-row cols">
+      <span class="ticker">TSLA</span><span>CovCall</span><span>Sell</span><span>$250</span><span>2026-06-20</span><span>1</span><span>$5.80</span><span class="pnl-neg">-$45</span><span><span class="badge badge-open">open</span></span><span><span class="commentary-chip">💬 1</span></span><span class="del">Delete</span>
+    </div>
+    <div class="trade-row cols">
+      <span class="ticker">MSFT</span><span>Put</span><span>Sell</span><span>$400</span><span>2026-07-18</span><span>1</span><span>$4.20</span><span class="pnl-pos">+$80</span><span><span class="badge badge-closed">closed</span></span><span><span style="color:#cbd5e1;font-size:11px">—</span></span><span class="del">Delete</span>
+    </div>
+  </div>
+
+  <!-- LEAP -->
+  <div class="group-header" style="background:linear-gradient(90deg,#8B5CF610 0%,transparent 70%);border-left:3px solid #8B5CF6" onclick="toggle(this)">
+    <span class="group-name" style="color:#8B5CF6"><i class="chevron">▼</i> LEAP</span>
+    <span class="group-meta">2 open</span>
+  </div>
+  <div class="group-rows">
+    <div class="trade-row cols">
+      <span class="ticker">SPY</span><span>Call</span><span>Buy</span><span>$440</span><span>2027-01-15</span><span>1</span><span>$18.50</span><span class="pnl-pos">+$380</span><span><span class="badge badge-open">open</span></span><span><span class="commentary-chip">💬 5</span></span><span class="del">Delete</span>
+    </div>
+    <div class="trade-row cols">
+      <span class="ticker">QQQ</span><span>Call</span><span>Buy</span><span>$380</span><span>2027-01-15</span><span>2</span><span>$14.00</span><span class="pnl-neg">-$60</span><span><span class="badge badge-open">open</span></span><span><span style="color:#cbd5e1;font-size:11px">—</span></span><span class="del">Delete</span>
+    </div>
+  </div>
+
+  <!-- HOLD -->
+  <div class="group-header" style="background:linear-gradient(90deg,#10B98110 0%,transparent 70%);border-left:3px solid #10B981" onclick="toggle(this)">
+    <span class="group-name" style="color:#10B981"><i class="chevron">▼</i> HOLD</span>
+    <span class="group-meta">1 open · 2 assigned</span>
+  </div>
+  <div class="group-rows">
+    <div class="trade-row cols">
+      <span class="ticker">NVDA</span><span>Stock</span><span>Buy</span><span>—</span><span>—</span><span>50</span><span>—</span><span class="pnl-pos">+$2,100</span><span><span class="badge badge-open">open</span></span><span><span class="commentary-chip">💬 2</span></span><span class="del">Delete</span>
+    </div>
+  </div>
+
+  <!-- IRON_CONDOR — empty state -->
+  <div class="group-header" style="background:linear-gradient(90deg,#EF444410 0%,transparent 70%);border-left:3px solid #EF4444" onclick="toggle(this)">
+    <span class="group-name" style="color:#EF4444"><i class="chevron">▼</i> IRON_CONDOR</span>
+    <span class="group-meta">0 open</span>
+  </div>
+  <div class="group-rows">
+    <div class="empty-state">No open trades in IRON_CONDOR</div>
+  </div>
+</div>
+
+<div class="note">
+  <strong>Columns:</strong> Ticker · Strategy · Type · Strike · Expiry · Qty · Premium · P&amp;L · Status · Commentary · Actions — same as before, with Category removed (the group header provides that context).
+</div>
+
+<script>
+function toggle(header) {
+  const rows = header.nextElementSibling;
+  const isCollapsed = rows.classList.toggle('collapsed');
+  header.classList.toggle('collapsed', isCollapsed);
+}
+</script>
+
+</body>
+</html>

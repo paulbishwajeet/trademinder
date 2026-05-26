@@ -1,0 +1,8 @@
+{"type":"server-started","port":55446,"host":"127.0.0.1","url_host":"localhost","url":"http://localhost:55446","screen_dir":"/Users/bishwajeetpaul/workspace/github/TradeMinder/.superpowers/brainstorm/7392-1779587695/content","state_dir":"/Users/bishwajeetpaul/workspace/github/TradeMinder/.superpowers/brainstorm/7392-1779587695/state"}
+{"type":"screen-added","file":"/Users/bishwajeetpaul/workspace/github/TradeMinder/.superpowers/brainstorm/7392-1779587695/content/full-layout-v4.html"}
+{"type":"screen-added","file":"/Users/bishwajeetpaul/workspace/github/TradeMinder/.superpowers/brainstorm/7392-1779587695/content/full-layout-v5.html"}
+{"type":"screen-added","file":"/Users/bishwajeetpaul/workspace/github/TradeMinder/.superpowers/brainstorm/7392-1779587695/content/full-layout-v6.html"}
+{"type":"screen-added","file":"/Users/bishwajeetpaul/workspace/github/TradeMinder/.superpowers/brainstorm/7392-1779587695/content/full-layout-v7.html"}
+{"type":"screen-added","file":"/Users/bishwajeetpaul/workspace/github/TradeMinder/.superpowers/brainstorm/7392-1779587695/content/full-layout-v8.html"}
+{"type":"screen-added","file":"/Users/bishwajeetpaul/workspace/github/TradeMinder/.superpowers/brainstorm/7392-1779587695/content/waiting-done.html"}
+{"type":"server-stopped","reason":"idle timeout"}

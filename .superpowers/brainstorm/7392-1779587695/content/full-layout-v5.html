@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Trade Grouping Mockup</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f1f5f9; color: #1e293b; padding: 24px; }
+  h2 { font-size: 20px; font-weight: 700; margin-bottom: 6px; color: #0f172a; }
+  .subtitle { font-size: 13px; color: #64748b; margin-bottom: 20px; }
+  .page { background: white; border-radius: 10px; border: 1px solid #e2e8f0; overflow: hidden; max-width: 1000px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
+  .page-header { display: flex; justify-content: space-between; align-items: center; padding: 16px 20px 12px; border-bottom: 1px solid #e2e8f0; }
+  .page-title { font-size: 20px; font-weight: 700; color: #0f172a; }
+  .btn-add { background: #2563eb; color: white; border: none; border-radius: 5px; padding: 6px 14px; font-size: 12px; font-weight: 500; cursor: pointer; }
+  .filter-bar { display: flex; gap: 8px; padding: 10px 20px; border-bottom: 1px solid #e2e8f0; background: #fafafa; }
+  .filter-btn { padding: 4px 12px; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 11px; color: #475569; background: white; cursor: pointer; }
+  .filter-btn.active { background: #2563eb; color: white; border-color: #2563eb; font-weight: 600; }
+  .col-header { display: grid; grid-template-columns: 75px 80px 55px 55px 90px 38px 60px 68px 80px 90px 1fr; padding: 8px 20px; background: #f8fafc; border-bottom: 1px solid #e2e8f0; font-size: 10px; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; }
+  .col-header span { display: flex; align-items: center; gap: 3px; }
+  .sortable { cursor: pointer; user-select: none; }
+  .sortable:hover { color: #475569; }
+  .sortable.active { color: #2563eb; }
+  .sort-icon { font-size: 9px; opacity: 0.5; }
+  .sortable.active .sort-icon { opacity: 1; color: #2563eb; }
+  .group-header { display: flex; align-items: center; justify-content: space-between; padding: 9px 20px; cursor: pointer; border-top: 1px solid #e2e8f0; user-select: none; }
+  .group-header:hover { filter: brightness(0.97); }
+  .group-name { font-weight: 700; font-size: 13px; display: flex; align-items: center; gap: 6px; }
+  .chevron { display: inline-block; transition: transform 0.18s ease; font-style: normal; }
+  .group-header.collapsed .chevron { transform: rotate(-90deg); }
+  .group-meta { font-size: 11px; color: #64748b; }
+  .group-rows { padding: 0 20px; }
+  .group-rows.collapsed { display: none; }
+  .trade-row { display: grid; grid-template-columns: 75px 80px 55px 55px 90px 38px 60px 68px 80px 90px 1fr; padding: 7px 0; font-size: 12px; color: #374151; border-bottom: 1px solid #f1f5f9; align-items: center; }
+  .trade-row:last-child { border-bottom: none; }
+  .ticker { font-weight: 600; color: #2563eb; }
+  .pnl-pos { color: #16a34a; font-weight: 500; }
+  .pnl-neg { color: #dc2626; font-weight: 500; }
+  .badge { padding: 2px 7px; border-radius: 4px; font-size: 10px; font-weight: 500; }
+  .badge-open { background: #dcfce7; color: #166534; }
+  .badge-closed { background: #fee2e2; color: #991b1b; }
+  .commentary-chip { display: inline-flex; align-items: center; gap: 3px; padding: 2px 7px; border-radius: 4px; font-size: 10px; background: #f1f5f9; color: #475569; border: 1px solid #e2e8f0; }
+  .del { font-size: 10px; color: #94a3b8; cursor: pointer; }
+  .empty-state { padding: 14px 0; text-align: center; color: #94a3b8; font-size: 12px; font-style: italic; }
+  .note { margin-top: 18px; max-width: 1000px; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 6px; padding: 12px 16px; font-size: 12px; color: #1e40af; }
+</style>
+</head>
+<body>
+
+<h2>Trade Grouping — Sortable Mockup</h2>
+<p class="subtitle">Click <strong>Ticker</strong> or <strong>Expiry</strong> column headers to sort within each group. Click again to reverse. Click a group header to collapse/expand.</p>
+
+<div class="page">
+  <div class="page-header">
+    <span class="page-title">Trades</span>
+    <button class="btn-add">+ Add Trade</button>
+  </div>
+
+  <div class="filter-bar">
+    <button class="filter-btn active">All</button>
+    <button class="filter-btn">open</button>
+    <button class="filter-btn">closed</button>
+    <button class="filter-btn">expired</button>
+    <button class="filter-btn">assigned</button>
+  </div>
+
+  <div class="col-header">
+    <span class="sortable" id="sort-ticker" onclick="setSort('ticker')">Ticker <span class="sort-icon" id="icon-ticker">↕</span></span>
+    <span>Strategy</span>
+    <span>Type</span>
+    <span>Strike</span>
+    <span class="sortable" id="sort-expiry" onclick="setSort('expiry')">Expiry <span class="sort-icon" id="icon-expiry">↕</span></span>
+    <span>Qty</span>
+    <span>Premium</span>
+    <span>P&amp;L</span>
+    <span>Status</span>
+    <span>Commentary</span>
+    <span>Actions</span>
+  </div>
+
+  <!-- Groups rendered by JS -->
+  <div id="groups"></div>
+</div>
+
+<div class="note">
+  <strong>Sorting:</strong> Clicking Ticker or Expiry sorts all groups simultaneously. Click again to reverse order. Trades with no expiry date sort to the bottom when sorting by expiry.
+</div>
+
+<script>
+const GROUPS = [
+  {
+    name: 'WHEEL', color: '#3B82F6',
+    meta: '3 open · 1 closed',
+    trades: [
+      { ticker:'AAPL', strategy:'Put',    type:'Sell', strike:'$185', expiry:'2026-07-18', qty:2,  premium:'$3.40',  pnl:'+$120', pnlPos:true,  status:'open',   comments:3 },
+      { ticker:'TSLA', strategy:'CovCall',type:'Sell', strike:'$250', expiry:'2026-06-20', qty:1,  premium:'$5.80',  pnl:'-$45',  pnlPos:false, status:'open',   comments:1 },
+      { ticker:'MSFT', strategy:'Put',    type:'Sell', strike:'$400', expiry:'2026-07-18', qty:1,  premium:'$4.20',  pnl:'+$80',  pnlPos:true,  status:'closed', comments:0 },
+    ]
+  },
+  {
+    name: 'LEAP', color: '#8B5CF6',
+    meta: '2 open',
+    trades: [
+      { ticker:'SPY',  strategy:'Call', type:'Buy', strike:'$440', expiry:'2027-01-15', qty:1, premium:'$18.50', pnl:'+$380', pnlPos:true,  status:'open', comments:5 },
+      { ticker:'QQQ',  strategy:'Call', type:'Buy', strike:'$380', expiry:'2027-01-15', qty:2, premium:'$14.00', pnl:'-$60',  pnlPos:false, status:'open', comments:0 },
+    ]
+  },
+  {
+    name: 'HOLD', color: '#10B981',
+    meta: '1 open · 2 assigned',
+    trades: [
+      { ticker:'NVDA', strategy:'Stock', type:'Buy', strike:'—', expiry:null, qty:50, premium:'—', pnl:'+$2,100', pnlPos:true, status:'open', comments:2 },
+    ]
+  },
+  {
+    name: 'IRON_CONDOR', color: '#EF4444',
+    meta: '0 open',
+    trades: []
+  }
+];
+
+let sortKey = null;   // 'ticker' | 'expiry'
+let sortDir = 1;      // 1 = asc, -1 = desc
+const collapsed = {};
+
+function setSort(key) {
+  if (sortKey === key) {
+    sortDir = -sortDir;
+  } else {
+    sortKey = key;
+    sortDir = 1;
+  }
+  updateSortIcons();
+  render();
+}
+
+function updateSortIcons() {
+  ['ticker','expiry'].forEach(k => {
+    const btn = document.getElementById('sort-' + k);
+    const icon = document.getElementById('icon-' + k);
+    if (sortKey === k) {
+      btn.classList.add('active');
+      icon.textContent = sortDir === 1 ? '↑' : '↓';
+    } else {
+      btn.classList.remove('active');
+      icon.textContent = '↕';
+    }
+  });
+}
+
+function sortTrades(trades) {
+  if (!sortKey) return trades;
+  return [...trades].sort((a, b) => {
+    let va = sortKey === 'ticker' ? a.ticker : (a.expiry || 'ZZZZ');
+    let vb = sortKey === 'ticker' ? b.ticker : (b.expiry || 'ZZZZ');
+    return va < vb ? -sortDir : va > vb ? sortDir : 0;
+  });
+}
+
+function statusBadge(s) {
+  const colors = { open:'badge-open', closed:'badge-closed', expired:'badge-expired', assigned:'badge-assigned' };
+  return `<span class="badge ${colors[s]||''}">${s}</span>`;
+}
+
+function render() {
+  const container = document.getElementById('groups');
+  container.innerHTML = GROUPS.map(g => {
+    const sorted = sortTrades(g.trades);
+    const isCollapsed = collapsed[g.name];
+    const rows = sorted.length === 0
+      ? `<div class="empty-state">No trades in ${g.name}</div>`
+      : sorted.map(t => `
+        <div class="trade-row">
+          <span class="ticker">${t.ticker}</span>
+          <span>${t.strategy}</span>
+          <span>${t.type}</span>
+          <span>${t.strike}</span>
+          <span>${t.expiry || '—'}</span>
+          <span>${t.qty}</span>
+          <span>${t.premium}</span>
+          <span class="${t.pnlPos ? 'pnl-pos' : 'pnl-neg'}">${t.pnl}</span>
+          <span>${statusBadge(t.status)}</span>
+          <span>${t.comments ? `<span class="commentary-chip">💬 ${t.comments}</span>` : '<span style="color:#cbd5e1;font-size:11px">—</span>'}</span>
+          <span class="del">Delete</span>
+        </div>`).join('');
+
+    return `
+      <div class="group-header ${isCollapsed ? 'collapsed' : ''}"
+           style="background:linear-gradient(90deg,${g.color}10 0%,transparent 70%);border-left:3px solid ${g.color}"
+           onclick="toggleGroup('${g.name}', this)">
+        <span class="group-name" style="color:${g.color}"><i class="chevron">▼</i> ${g.name}</span>
+        <span class="group-meta">${g.meta}</span>
+      </div>
+      <div class="group-rows ${isCollapsed ? 'collapsed' : ''}">
+        ${rows}
+      </div>`;
+  }).join('');
+}
+
+function toggleGroup(name, header) {
+  collapsed[name] = !collapsed[name];
+  render();
+}
+
+render();
+</script>
+
+</body>
+</html>
