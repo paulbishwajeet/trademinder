@@ -10,6 +10,7 @@ SESSION_PAYLOAD = {
     "opened_at": str(date.today()),
 }
 
+# Used in Task 3 tests (test_create_trade_with_session_id etc.)
 TRADE_PAYLOAD = {
     "type": "Sell",
     "category": "WHEEL",
@@ -31,6 +32,14 @@ async def test_create_session(client: AsyncClient):
     assert data["status"] == "put_open"
     assert data["rotation_number"] == 1
     assert data["parent_session_id"] is None
+
+
+async def test_create_session_invalid_parent(client: AsyncClient):
+    response = await client.post("/api/sessions", json={
+        **SESSION_PAYLOAD,
+        "parent_session_id": "00000000-0000-0000-0000-000000000000",
+    })
+    assert response.status_code == 404
 
 
 async def test_list_sessions_empty(client: AsyncClient):
