@@ -37,7 +37,8 @@ function activeLegSummary(legs: SessionLeg[]): string {
   const openLegs = legs.filter(l => l.status === 'open')
   const leg = openLegs.length > 0 ? openLegs[openLegs.length - 1] : legs[legs.length - 1]
   if (!leg) return '—'
-  const parts: string[] = [leg.strategy]
+  const parts: string[] = []
+  if (leg.strategy) parts.push(leg.strategy)
   if (leg.strike_price != null) parts.push(`$${leg.strike_price}`)
   if (leg.expiry_date) parts.push(`exp ${leg.expiry_date}`)
   if (leg.premium != null) parts.push(`$${leg.premium} prem`)
@@ -48,6 +49,7 @@ export function WheelSessionCard({ session, onStatusUpdate }: Props) {
   const [expanded, setExpanded] = useState(false)
   const [showStatusEdit, setShowStatusEdit] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
 
   const color = STATUS_COLORS[session.status] ?? '#6B7280'
   const label = STATUS_LABELS[session.status] ?? session.status
@@ -59,10 +61,13 @@ export function WheelSessionCard({ session, onStatusUpdate }: Props) {
 
   async function handleStatusChange(newStatus: string) {
     setSaving(true)
+    setSaveError(null)
     try {
       await sessionsApi.update(session.id, { status: newStatus as 'put_open' | 'shares_sitting' | 'cc_open' | 'called_away' | 'completed' })
       onStatusUpdate(session.id, newStatus)
       setShowStatusEdit(false)
+    } catch {
+      setSaveError('Failed to update status')
     } finally {
       setSaving(false)
     }
@@ -73,7 +78,13 @@ export function WheelSessionCard({ session, onStatusUpdate }: Props) {
       {/* Collapsed header */}
       <div
         className="flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-gray-50 select-none"
-        onClick={() => setExpanded(e => !e)}
+        onClick={() => {
+          if (expanded) {
+            setShowStatusEdit(false)
+            setSaveError(null)
+          }
+          setExpanded(e => !e)
+        }}
       >
         <div className="flex items-center gap-3">
           <span
@@ -118,22 +129,25 @@ export function WheelSessionCard({ session, onStatusUpdate }: Props) {
               </button>
             )}
             {showStatusEdit && (
-              <div className="flex items-center gap-1">
-                <select
-                  className="text-xs border border-gray-300 rounded px-1 py-0.5"
-                  defaultValue=""
-                  onChange={e => e.target.value && handleStatusChange(e.target.value)}
-                  disabled={saving}
-                >
-                  <option value="" disabled>Move to…</option>
-                  {nextStatuses.map(s => (
-                    <option key={s} value={s}>{STATUS_LABELS[s] ?? s}</option>
-                  ))}
-                </select>
-                <button
-                  onClick={() => setShowStatusEdit(false)}
-                  className="text-xs text-gray-400 hover:text-gray-600"
-                >✕</button>
+              <div className="flex flex-col gap-1 items-start">
+                <div className="flex items-center gap-1">
+                  <select
+                    className="text-xs border border-gray-300 rounded px-1 py-0.5"
+                    defaultValue=""
+                    onChange={e => e.target.value && handleStatusChange(e.target.value)}
+                    disabled={saving}
+                  >
+                    <option value="" disabled>Move to…</option>
+                    {nextStatuses.map(s => (
+                      <option key={s} value={s}>{STATUS_LABELS[s] ?? s}</option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={() => setShowStatusEdit(false)}
+                    className="text-xs text-gray-400 hover:text-gray-600"
+                  >✕</button>
+                </div>
+                {saveError && <span className="text-xs text-red-500">{saveError}</span>}
               </div>
             )}
           </div>
