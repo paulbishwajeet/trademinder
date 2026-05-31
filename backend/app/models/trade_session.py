@@ -18,7 +18,7 @@ class TradeSession(Base):
     ticker: Mapped[str] = mapped_column(String(10), nullable=False)
     strategy: Mapped[str] = mapped_column(String(30), nullable=False)
     status: Mapped[str] = mapped_column(String(30), nullable=False)
-    rotation_number: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    rotation_number: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default=text("1"))
     parent_session_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("trade_sessions.id", ondelete="SET NULL"),
@@ -34,6 +34,17 @@ class TradeSession(Base):
         "Trade",
         back_populates="session",
         foreign_keys="Trade.session_id",
+    )
+    parent: Mapped[Optional["TradeSession"]] = relationship(
+        "TradeSession",
+        back_populates="children",
+        remote_side="TradeSession.id",
+        foreign_keys=[parent_session_id],
+    )
+    children: Mapped[list["TradeSession"]] = relationship(
+        "TradeSession",
+        back_populates="parent",
+        foreign_keys="[TradeSession.parent_session_id]",
     )
 
     __table_args__ = (

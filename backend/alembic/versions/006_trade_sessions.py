@@ -36,9 +36,9 @@ def upgrade() -> None:
     )
     op.create_index("idx_trade_sessions_ticker_strategy", "trade_sessions", ["ticker", "strategy"])
     op.create_index("idx_trade_sessions_status", "trade_sessions", ["status"])
-    op.execute(
-        "CREATE INDEX idx_trade_sessions_parent ON trade_sessions (parent_session_id) "
-        "WHERE parent_session_id IS NOT NULL"
+    op.create_index(
+        "idx_trade_sessions_parent", "trade_sessions", ["parent_session_id"],
+        postgresql_where=sa.text("parent_session_id IS NOT NULL"),
     )
 
     op.add_column(
@@ -61,7 +61,7 @@ def downgrade() -> None:
     op.drop_index("idx_trades_session_id", "trades")
     op.drop_constraint("fk_trades_session_id", "trades", type_="foreignkey")
     op.drop_column("trades", "session_id")
-    op.execute("DROP INDEX IF EXISTS idx_trade_sessions_parent")
+    op.drop_index("idx_trade_sessions_parent", "trade_sessions")
     op.drop_index("idx_trade_sessions_status", "trade_sessions")
     op.drop_index("idx_trade_sessions_ticker_strategy", "trade_sessions")
     op.drop_table("trade_sessions")
