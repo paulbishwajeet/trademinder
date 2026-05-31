@@ -376,14 +376,9 @@ async function processVisibleRows() {
 
     if (toProcess.length === 0) return;
 
-    // Fire-and-forget: prefetch WHEEL sessions for visible tickers (fills sessionCache async)
-    const visibleTickersThisTick = [];
-    rows.forEach(row => {
-      const info = getRowInfo(row);
-      if (info?.ticker) visibleTickersThisTick.push(info.ticker);
-    });
-    if (visibleTickersThisTick.length > 0) {
-      fetchWheelSessionsForTickers(visibleTickersThisTick); // fire-and-forget
+    // Fire-and-forget: prefetch wheel sessions for all visible tickers (fills sessionCache async)
+    if (seenTickers.size > 0) {
+      fetchWheelSessionsForTickers([...seenTickers]);
     }
 
     // Apply cached status immediately; collect what needs a fetch
@@ -1056,7 +1051,7 @@ async function fetchWheelSessionsForTickers(tickers) {
       });
       if (!res.ok) { sessionCache.set(ticker, null); return; }
       const data = await res.json();
-      sessionCache.set(ticker, data.has_existing ? data.sessions[0] : null);
+      sessionCache.set(ticker, data.has_existing && data.sessions?.length ? data.sessions[0] : null);
     } catch {
       sessionCache.set(ticker, null);
     }
