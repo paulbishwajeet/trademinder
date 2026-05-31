@@ -42,8 +42,13 @@ export function NewWheelModal({ onClose, onCreated }: Props) {
         opened_at: openedAt,
       })
       setCreatedSession(session)
-      const all = await tradesApi.list({ ticker: ticker.trim().toUpperCase() })
-      setAvailableTrades(all.filter(t => !t.session_id))
+      // Fetch trades for linking — failure is non-fatal; advance to step 2 regardless
+      try {
+        const all = await tradesApi.list({ ticker: ticker.trim().toUpperCase() })
+        setAvailableTrades(all.filter(t => !t.session_id))
+      } catch {
+        // Trade fetch failed — proceed to step 2 with empty list
+      }
       setStep(2)
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to create session')
@@ -148,6 +153,12 @@ export function NewWheelModal({ onClose, onCreated }: Props) {
               </div>
             )}
             <div className="flex gap-2 justify-end">
+              <button
+                onClick={onClose}
+                className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700"
+              >
+                Close
+              </button>
               <button
                 onClick={() => createdSession && onCreated(createdSession)}
                 className="px-4 py-2 text-sm border border-gray-300 rounded hover:bg-gray-50"
