@@ -34,6 +34,8 @@ const statusCache = new Map();
 const rsiCache = new Map();
 // trade_id → commentary count (populated on first badge render)
 const commentaryCountCache = new Map();
+// ticker (uppercase) → { status: string } | null (WHEEL session status)
+const sessionCache = new Map();
 // all base tickers seen while processing rows (for batch RSI fetch)
 const seenTickers = new Set();
 let isProcessing = false;
@@ -374,6 +376,16 @@ async function processVisibleRows() {
 
     if (toProcess.length === 0) return;
 
+    // Fire-and-forget: prefetch WHEEL sessions for visible tickers (fills sessionCache async)
+    const visibleTickersThisTick = [];
+    rows.forEach(row => {
+      const info = getRowInfo(row);
+      if (info?.ticker) visibleTickersThisTick.push(info.ticker);
+    });
+    if (visibleTickersThisTick.length > 0) {
+      fetchWheelSessionsForTickers(visibleTickersThisTick); // fire-and-forget
+    }
+
     // Apply cached status immediately; collect what needs a fetch
     const needsFetch = [];
     toProcess.forEach(item => {
@@ -381,6 +393,7 @@ async function processVisibleRows() {
         applyTMToRow(item.row, statusCache.get(item.cacheKey), item.info);
         applyFilter(item.row, statusCache.get(item.cacheKey));
         applyRsiToRow(item.row, item.info.ticker);
+        applyWheelPillToRow(item.row, item.info.ticker);
       } else {
         needsFetch.push(item);
       }
@@ -426,6 +439,7 @@ async function processVisibleRows() {
       applyTMToRow(item.row, status, item.info);
       applyFilter(item.row, status);
       applyRsiToRow(item.row, item.info.ticker);
+      applyWheelPillToRow(item.row, item.info.ticker);
     });
 
   } catch (err) {
@@ -572,6 +586,50 @@ function applyRsiToRow(row, ticker) {
 
   pill.className = `tm-rsi-pill ${getRsiClass(rsi)}`;
   pill.textContent = `RSI ${rsi.toFixed(1)}`;
+}
+
+function renderWheelPill(session) {
+  if (!session) return null;
+  const labels = {
+    put_open: 'WHEEL: Put Open',
+    shares_sitting: 'WHEEL: Shares Sitting',
+    cc_open: 'WHEEL: CC Open',
+    called_away: 'WHEEL: ⚠ Action Needed',
+  };
+  const label = labels[session.status];
+  if (!label) return null; // don't show pill for 'completed'
+
+  const needsAction = session.status === 'called_away' || session.status === 'shares_sitting';
+  const pill = document.createElement('span');
+  pill.className = 'tm-wheel-pill';
+  pill.textContent = label;
+  pill.style.cssText = [
+    'display:inline-flex',
+    'align-items:center',
+    'font-size:10px',
+    'padding:1px 5px',
+    'border-radius:3px',
+    'margin-left:4px',
+    'white-space:nowrap',
+    `background:${needsAction ? '#FEF3C7' : '#DBEAFE'}`,
+    `color:${needsAction ? '#92400E' : '#1E40AF'}`,
+    `border:1px solid ${needsAction ? '#FCD34D' : '#93C5FD'}`,
+  ].join(';');
+  return pill;
+}
+
+function applyWheelPillToRow(row, ticker) {
+  const badge = row.querySelector('.tm-badge');
+  if (!badge) return;
+
+  // Remove existing WHEEL pill before re-rendering
+  badge.querySelector('.tm-wheel-pill')?.remove();
+
+  if (!sessionCache.has(ticker)) return; // not yet fetched
+
+  const session = sessionCache.get(ticker);
+  const pill = renderWheelPill(session);
+  if (pill) badge.appendChild(pill);
 }
 
 // ============================================================
@@ -986,6 +1044,23 @@ async function fetchRsiForAll() {
   });
 
   if (btn) { btn.disabled = false; btn.textContent = '🔄 Refresh RSI'; }
+}
+
+async function fetchWheelSessionsForTickers(tickers) {
+  const unique = [...new Set(tickers.map(t => t.toUpperCase()))];
+  await Promise.all(unique.map(async ticker => {
+    if (sessionCache.has(ticker)) return; // already fetched this page load
+    try {
+      const res = await fetch(`${tmApiUrl}/api/sessions/lookup?ticker=${encodeURIComponent(ticker)}&strategy=WHEEL`, {
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!res.ok) { sessionCache.set(ticker, null); return; }
+      const data = await res.json();
+      sessionCache.set(ticker, data.has_existing ? data.sessions[0] : null);
+    } catch {
+      sessionCache.set(ticker, null);
+    }
+  }));
 }
 
 // ============================================================
