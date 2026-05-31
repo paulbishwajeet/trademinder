@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from app.models.alert import Alert
     from app.models.category import Category
     from app.models.signal import TechnicalSignal
+    from app.models.trade_session import TradeSession
 
 
 class Trade(Base):
@@ -21,6 +22,11 @@ class Trade(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     wheel_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
+    session_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("trade_sessions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     type: Mapped[str] = mapped_column(String(10), nullable=False)
     category: Mapped[str] = mapped_column(String(20), nullable=False)
     category_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("categories.id"), nullable=True)
@@ -55,10 +61,16 @@ class Trade(Base):
     alerts: Mapped[list["Alert"]] = relationship(back_populates="trade", cascade="all, delete-orphan")
     category_obj: Mapped[Optional["Category"]] = relationship(back_populates="trades")
     signals: Mapped[list["TechnicalSignal"]] = relationship(back_populates="trade", cascade="all, delete-orphan")
+    session: Mapped[Optional["TradeSession"]] = relationship(
+        "TradeSession",
+        back_populates="legs",
+        foreign_keys=[session_id],
+    )
 
     __table_args__ = (
         Index("idx_trades_ticker", "ticker"),
         Index("idx_trades_wheel_id", "wheel_id"),
         Index("idx_trades_status", "status"),
         Index("idx_trades_expiry", "expiry_date", postgresql_where=text("expiry_date IS NOT NULL")),
+        Index("idx_trades_session_id", "session_id", postgresql_where=text("session_id IS NOT NULL")),
     )
