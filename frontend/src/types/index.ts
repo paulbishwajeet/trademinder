@@ -49,6 +49,7 @@ export interface TechnicalsData {
 export interface Trade {
   id: string
   wheel_id: string | null
+  session_id: string | null
   type: string
   category: string
   strategy: string
@@ -102,6 +103,7 @@ export interface TradeUpdate {
   exit_strategy?: string | null
   rationale_notes?: string | null
   signal_action?: string | null
+  session_id?: string | null
 }
 
 export interface Commentary {
@@ -125,4 +127,40 @@ export interface Alert {
   is_dismissed: boolean
   triggered_at: string
   dismissed_at: string | null
+}
+
+export interface SessionSummary {
+  id: string
+  ticker: string
+  strategy: string
+  status: string
+  rotation_number: number
+  opened_at: string
+  closed_at: string | null
+  parent_session_id: string | null
+}
+
+export interface SessionLeg {
+  id: string
+  type: string
+  strategy: string
+  ticker: string
+  open_date: string
+  expiry_date: string | null
+  strike_price: number | null
+  quantity: number
+  premium: number | null
+  status: string
+}
+
+export interface SessionWithLegs extends SessionSummary {
+  legs: SessionLeg[]
+  rotation_chain: SessionSummary[]
+}
+
+export interface SessionLookupResponse {
+  ticker: string
+  strategy: string
+  has_existing: boolean
+  sessions: SessionSummary[]
 }
