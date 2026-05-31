@@ -5,20 +5,20 @@ import type { SessionSummary, SessionWithLegs, SessionLookupResponse } from '../
 export interface SessionCreate {
   ticker: string
   strategy: string
-  status: string
+  status: 'put_open' | 'shares_sitting' | 'cc_open' | 'called_away' | 'completed'
   opened_at: string
   rotation_number?: number
   parent_session_id?: string | null
 }
 
 export interface SessionUpdate {
-  status?: string
+  status?: 'put_open' | 'shares_sitting' | 'cc_open' | 'called_away' | 'completed'
   closed_at?: string | null
 }
 
 export const sessionsApi = {
   list: (params?: { strategy?: string; status?: string; ticker?: string }) => {
-    const entries = Object.entries(params ?? {}).filter(([, v]) => v !== undefined) as [string, string][]
+    const entries = Object.entries(params ?? {}).filter((e): e is [string, string] => e[1] !== undefined)
     const qs = entries.length ? '?' + new URLSearchParams(entries).toString() : ''
     return apiFetch<SessionSummary[]>(`/sessions${qs}`)
   },
