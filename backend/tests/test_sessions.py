@@ -138,3 +138,44 @@ async def test_rotation_chain(client: AsyncClient):
     assert len(data["rotation_chain"]) == 1
     assert data["rotation_chain"][0]["id"] == parent_id
     assert data["rotation_chain"][0]["rotation_number"] == 1
+
+
+async def test_create_trade_with_session_id(client: AsyncClient):
+    session_resp = await client.post("/api/sessions", json=SESSION_PAYLOAD)
+    session_id = session_resp.json()["id"]
+
+    response = await client.post("/api/trades", json={**TRADE_PAYLOAD, "session_id": session_id})
+    assert response.status_code == 201
+    assert response.json()["session_id"] == session_id
+
+
+async def test_create_trade_without_session_id_is_null(client: AsyncClient):
+    response = await client.post("/api/trades", json=TRADE_PAYLOAD)
+    assert response.status_code == 201
+    assert response.json()["session_id"] is None
+
+
+async def test_patch_trade_links_session(client: AsyncClient):
+    session_resp = await client.post("/api/sessions", json=SESSION_PAYLOAD)
+    session_id = session_resp.json()["id"]
+
+    trade_resp = await client.post("/api/trades", json=TRADE_PAYLOAD)
+    trade_id = trade_resp.json()["id"]
+
+    patch_resp = await client.patch(f"/api/trades/{trade_id}", json={"session_id": session_id})
+    assert patch_resp.status_code == 200
+    assert patch_resp.json()["session_id"] == session_id
+
+
+async def test_get_session_includes_linked_trade(client: AsyncClient):
+    session_resp = await client.post("/api/sessions", json=SESSION_PAYLOAD)
+    session_id = session_resp.json()["id"]
+
+    await client.post("/api/trades", json={**TRADE_PAYLOAD, "session_id": session_id})
+
+    response = await client.get(f"/api/sessions/{session_id}")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["legs"]) == 1
+    assert data["legs"][0]["ticker"] == "NVDA"
+    assert data["legs"][0]["strategy"] == "Sell Put"

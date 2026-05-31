@@ -57,6 +57,7 @@ class RationaleResponse(BaseModel):
 
 class TradeCreate(BaseModel):
     wheel_id: Optional[uuid.UUID] = None
+    session_id: Optional[uuid.UUID] = None
     type: Annotated[str, Field(min_length=1, max_length=10)]
     category: Annotated[str, Field(min_length=1, max_length=20)]
     strategy: Annotated[str, Field(min_length=1, max_length=30)]
@@ -90,6 +91,7 @@ class TradeUpdate(BaseModel):
     closed_date: Optional[date] = None
     current_price: Optional[Decimal] = None
     unrealized_pnl: Optional[Decimal] = None
+    session_id: Optional[uuid.UUID] = None
 
 
 class TradeListItem(BaseModel):
@@ -97,6 +99,7 @@ class TradeListItem(BaseModel):
 
     id: uuid.UUID
     wheel_id: Optional[uuid.UUID] = None
+    session_id: Optional[uuid.UUID] = None
     type: str
     category: str
     strategy: str

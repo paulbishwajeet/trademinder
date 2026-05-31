@@ -50,6 +50,7 @@ async def list_trades(
 async def create_trade(payload: TradeCreate, db: AsyncSession = Depends(get_db)):
     trade = Trade(
         wheel_id=payload.wheel_id,
+        session_id=payload.session_id,
         type=payload.type,
         category=payload.category,
         strategy=payload.strategy,
