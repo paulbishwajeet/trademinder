@@ -5,6 +5,7 @@ import { TradesPage } from './pages/TradesPage'
 import { TradeDetailPage } from './pages/TradeDetailPage'
 import { MarginDashboardPage } from './pages/MarginDashboardPage'
 import { ScannerPage } from './pages/ScannerPage'
+import { WheelDashboardPage } from './pages/WheelDashboardPage'
 
 function NavItem({ to, label }: { to: string; label: string }) {
   return (
@@ -27,6 +28,7 @@ export default function App() {
           <span className="font-bold text-gray-900 mr-4">TradeMinder</span>
           <NavItem to="/" label="Dashboard" />
           <NavItem to="/trades" label="Trades" />
+          <NavItem to="/wheel" label="WHEEL" />
           <NavItem to="/margin" label="Margin" />
           <NavItem to="/scanner" label="Scanner" />
         </nav>
@@ -35,6 +37,7 @@ export default function App() {
             <Route path="/" element={<DashboardPage />} />
             <Route path="/trades" element={<TradesPage />} />
             <Route path="/trades/:id" element={<TradeDetailPage />} />
+            <Route path="/wheel" element={<WheelDashboardPage />} />
             <Route path="/margin" element={<MarginDashboardPage />} />
             <Route path="/scanner" element={<ScannerPage />} />
           </Routes>
