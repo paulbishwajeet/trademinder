@@ -586,10 +586,10 @@ function applyRsiToRow(row, ticker) {
 function renderWheelPill(session) {
   if (!session) return null;
   const labels = {
-    put_open: 'WHEEL: Put Open',
-    shares_sitting: 'WHEEL: Shares Sitting',
-    cc_open: 'WHEEL: CC Open',
-    called_away: 'WHEEL: ⚠ Action Needed',
+    put_open: 'WHL: Put Open',
+    shares_sitting: 'WHL: Sitting',
+    cc_open: 'WHL: CC Open',
+    called_away: 'WHL: ⚠ Action',
   };
   const label = labels[session.status];
   if (!label) return null; // don't show pill for 'completed'
@@ -614,17 +614,17 @@ function renderWheelPill(session) {
 }
 
 function applyWheelPillToRow(row, ticker) {
-  const badge = row.querySelector('.tm-badge');
-  if (!badge) return;
+  const flyoutBtn = row.querySelector('button[aria-label="Open Quote Flyout"]');
+  if (!flyoutBtn) return;
 
-  // Remove existing WHEEL pill before re-rendering
-  badge.querySelector('.tm-wheel-pill')?.remove();
+  const symbolDiv = flyoutBtn.parentElement;
+  symbolDiv.querySelector('.tm-wheel-pill')?.remove();
 
   if (!sessionCache.has(ticker)) return; // not yet fetched
 
   const session = sessionCache.get(ticker);
   const pill = renderWheelPill(session);
-  if (pill) badge.appendChild(pill);
+  if (pill) symbolDiv.appendChild(pill);
 }
 
 // ============================================================
