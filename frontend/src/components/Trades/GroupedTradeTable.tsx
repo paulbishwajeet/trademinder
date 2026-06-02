@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import type { Trade } from '../../types'
+import { isStale } from '../../types'
 import { StatusBadge } from '../shared/StatusBadge'
 import { PnLDisplay } from '../shared/PnLDisplay'
 import { CommentaryCell } from './CommentaryCell'
@@ -9,6 +10,8 @@ import { CATEGORY_COLORS, CATEGORY_ORDER } from './categories'
 interface Props {
   trades: Trade[]
   onDelete: (id: string) => void
+  onClose?: (id: string) => void
+  staleOnly?: boolean
   statusFilter: string
 }
 
@@ -66,7 +69,7 @@ function saveGroupOrder(order: string[]): void {
   try { localStorage.setItem(LS_KEY, JSON.stringify(order)) } catch {}
 }
 
-export function GroupedTradeTable({ trades, onDelete, statusFilter }: Props) {
+export function GroupedTradeTable({ trades, onDelete, onClose, staleOnly, statusFilter }: Props) {
   const [sortKey, setSortKey] = useState<SortKey | null>(null)
   const [sortDir, setSortDir] = useState<1 | -1>(1)
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
@@ -171,7 +174,11 @@ export function GroupedTradeTable({ trades, onDelete, statusFilter }: Props) {
 
         {categories.map(category => {
           const allTrades = grouped.get(category) ?? []
-          const filtered = statusFilter ? allTrades.filter(t => t.status === statusFilter) : allTrades
+          const filtered = (() => {
+            let result = statusFilter ? allTrades.filter(t => t.status === statusFilter) : allTrades
+            if (staleOnly) result = result.filter(isStale)
+            return result
+          })()
           const visible = applySort(filtered, sortKey, sortDir)
           const color = CATEGORY_COLORS[category]
           const emptyMsg = statusFilter
@@ -234,7 +241,7 @@ export function GroupedTradeTable({ trades, onDelete, statusFilter }: Props) {
                   </tr>
                 ) : (
                   visible.map(trade => (
-                    <tr key={trade.id} className="hover:bg-gray-50 border-b border-gray-100 last:border-0">
+                    <tr key={trade.id} className={`hover:bg-gray-50 border-b border-gray-100 last:border-0 ${isStale(trade) ? 'bg-amber-50' : ''}`}>
                       <td className="w-8 px-2 py-3" />
                       <td className="px-4 py-3 font-semibold">
                         <Link to={`/trades/${trade.id}`} className="text-blue-600 hover:underline">{trade.ticker}</Link>
@@ -246,12 +253,29 @@ export function GroupedTradeTable({ trades, onDelete, statusFilter }: Props) {
                       <td className="px-4 py-3">{trade.quantity}</td>
                       <td className="px-4 py-3">{trade.premium !== null ? `$${trade.premium}` : '—'}</td>
                       <td className="px-4 py-3"><PnLDisplay value={trade.unrealized_pnl} /></td>
-                      <td className="px-4 py-3"><StatusBadge status={trade.status} /></td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-1.5">
+                          <StatusBadge status={trade.status} />
+                          {isStale(trade) && (
+                            <span className="text-xs px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-300 whitespace-nowrap">
+                              Not in E*TRADE
+                            </span>
+                          )}
+                        </div>
+                      </td>
                       <td className="px-4 py-3"><CommentaryCell tradeId={trade.id} ticker={trade.ticker} /></td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-3">
                           {trade.strategy === 'Stock' && trade.status === 'open' && (
                             <Link to={`/scanner?ticker=${trade.ticker}`} className="text-blue-500 hover:text-blue-700 text-xs">Scan →</Link>
+                          )}
+                          {isStale(trade) && onClose && (
+                            <button
+                              onClick={() => onClose(trade.id)}
+                              className="text-amber-600 hover:text-amber-800 text-xs font-medium"
+                            >
+                              Mark Closed
+                            </button>
                           )}
                           <button onClick={() => onDelete(trade.id)} className="text-red-500 hover:text-red-700 text-xs">Delete</button>
                         </div>
