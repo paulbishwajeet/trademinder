@@ -1,6 +1,6 @@
 # backend/app/routers/trades.py
 import uuid
-from datetime import date
+from datetime import date, datetime, timezone, timedelta
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -28,19 +28,28 @@ async def list_trades(
     strategy: Optional[str] = Query(None),
     wheel_id: Optional[uuid.UUID] = Query(None),
     etrade_symbol: Optional[str] = Query(None),
+    stale: bool = Query(False),
     db: AsyncSession = Depends(get_db),
 ):
     stmt = select(Trade)
-    if status:
-        stmt = stmt.where(Trade.status == status)
-    if ticker:
-        stmt = stmt.where(Trade.ticker == ticker.upper())
-    if strategy:
-        stmt = stmt.where(Trade.strategy == strategy)
-    if wheel_id:
-        stmt = stmt.where(Trade.wheel_id == wheel_id)
-    if etrade_symbol:
-        stmt = stmt.where(Trade.etrade_symbol == etrade_symbol)
+    if stale:
+        threshold = datetime.now(timezone.utc) - timedelta(days=1)
+        stmt = stmt.where(
+            Trade.status == "open",
+            Trade.last_etrade_seen.isnot(None),
+            Trade.last_etrade_seen < threshold,
+        )
+    else:
+        if status:
+            stmt = stmt.where(Trade.status == status)
+        if ticker:
+            stmt = stmt.where(Trade.ticker == ticker.upper())
+        if strategy:
+            stmt = stmt.where(Trade.strategy == strategy)
+        if wheel_id:
+            stmt = stmt.where(Trade.wheel_id == wheel_id)
+        if etrade_symbol:
+            stmt = stmt.where(Trade.etrade_symbol == etrade_symbol)
     stmt = stmt.order_by(Trade.created_at.desc())
     result = await db.execute(stmt)
     return result.scalars().all()

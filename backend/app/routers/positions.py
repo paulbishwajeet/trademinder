@@ -1,6 +1,6 @@
 # backend/app/routers/positions.py
 import uuid
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timezone, timedelta
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -12,7 +12,8 @@ from app.models.alert import Alert
 from app.models.commentary import Commentary
 from app.models.signal import TechnicalSignal
 from app.schemas.positions import (
-    PositionsStatusRequest, PositionStatus, ActiveSignal, DashboardTodayItem
+    PositionsStatusRequest, PositionStatus, ActiveSignal, DashboardTodayItem,
+    ReconcileRequest, ReconcileResponse, UnmatchedEtradeItem, StaleBackendItem,
 )
 
 router = APIRouter(prefix="/api", tags=["positions"])
@@ -154,6 +155,70 @@ async def positions_status(
         )
 
     return response
+
+
+@router.post("/positions/reconcile", response_model=ReconcileResponse)
+async def reconcile_positions(
+    payload: ReconcileRequest,
+    db: AsyncSession = Depends(get_db),
+) -> ReconcileResponse:
+    # Single query: all open trades (needed for both matching and stale detection)
+    all_open_stmt = select(Trade).where(Trade.status == "open")
+    all_result = await db.execute(all_open_stmt)
+    all_open_trades = all_result.scalars().all()
+
+    ticker_trades: dict[str, list[Trade]] = {}
+    for trade in all_open_trades:
+        ticker_trades.setdefault(trade.ticker, []).append(trade)
+
+    matched_ids: set = set()
+    unmatched_etrade: list[UnmatchedEtradeItem] = []
+
+    for pos in payload.positions:
+        ticker = pos.ticker.upper()
+        candidates = ticker_trades.get(ticker, [])
+
+        trade = None
+        if pos.full_symbol and candidates:
+            trade = next((t for t in candidates if t.etrade_symbol == pos.full_symbol), None)
+        if trade is None and candidates:
+            trade = _pick_best_trade(candidates, pos)
+
+        if trade is None:
+            unmatched_etrade.append(UnmatchedEtradeItem(
+                ticker=ticker,
+                full_symbol=pos.full_symbol,
+                option_type=pos.type,
+                strike=pos.strike,
+                expiry=pos.expiry,
+            ))
+        else:
+            matched_ids.add(trade.id)
+
+    now = datetime.now(timezone.utc)
+    for trade in all_open_trades:
+        if trade.id in matched_ids:
+            trade.last_etrade_seen = now
+    await db.commit()
+
+    stale_threshold = now - timedelta(days=1)
+    stale_backend = [
+        StaleBackendItem(
+            id=t.id,
+            ticker=t.ticker,
+            type=t.type,
+            strategy=t.strategy,
+            quantity=t.quantity,
+            open_date=t.open_date,
+            last_etrade_seen=t.last_etrade_seen,
+        )
+        for t in all_open_trades
+        if t.id not in matched_ids
+        and t.last_etrade_seen is not None
+        and t.last_etrade_seen < stale_threshold
+    ]
+
+    return ReconcileResponse(unmatched_etrade=unmatched_etrade, stale_backend=stale_backend)
 
 
 def _pick_best_trade(trades: list[Trade], pos_input) -> Trade:
