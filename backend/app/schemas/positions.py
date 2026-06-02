@@ -1,6 +1,6 @@
 # backend/app/schemas/positions.py
 import uuid
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
 from pydantic import BaseModel
@@ -67,3 +67,30 @@ class DashboardTodayItem(BaseModel):
     dte: Optional[int] = None
     category_name: Optional[str] = None
     category_icon: Optional[str] = None
+
+
+class ReconcileRequest(BaseModel):
+    positions: list[PositionInput]
+
+
+class UnmatchedEtradeItem(BaseModel):
+    ticker: str
+    full_symbol: Optional[str] = None
+    option_type: Optional[str] = None
+    strike: Optional[float] = None
+    expiry: Optional[date] = None
+
+
+class StaleBackendItem(BaseModel):
+    id: uuid.UUID
+    ticker: str
+    type: str
+    strategy: str
+    quantity: int
+    open_date: date
+    last_etrade_seen: Optional[datetime] = None
+
+
+class ReconcileResponse(BaseModel):
+    unmatched_etrade: list[UnmatchedEtradeItem]
+    stale_backend: list[StaleBackendItem]

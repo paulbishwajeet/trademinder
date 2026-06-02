@@ -115,6 +115,7 @@ class TradeListItem(BaseModel):
     unrealized_pnl: Optional[Decimal] = None
     created_at: datetime
     updated_at: datetime
+    last_etrade_seen: Optional[datetime] = None
 
 
 class TradeResponse(TradeListItem):
