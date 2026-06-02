@@ -69,6 +69,7 @@ export interface Trade {
   last_price_at: string | null
   created_at: string
   updated_at: string
+  last_etrade_seen: string | null
   rationale?: Rationale | null
 }
 
@@ -163,4 +164,9 @@ export interface SessionLookupResponse {
   strategy: string
   has_existing: boolean
   sessions: SessionSummary[]
+}
+
+export function isStale(trade: Trade): boolean {
+  if (!trade.last_etrade_seen) return false
+  return new Date(trade.last_etrade_seen) < new Date(Date.now() - 24 * 60 * 60 * 1000)
 }
