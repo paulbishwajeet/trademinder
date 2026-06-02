@@ -45,6 +45,7 @@ class Trade(Base):
     status: Mapped[str] = mapped_column(String(10), nullable=False, default="open")
     current_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2), nullable=True)
     last_price_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_etrade_seen: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     unrealized_pnl: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
