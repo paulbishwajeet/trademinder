@@ -36,6 +36,9 @@ const rsiCache = new Map();
 const commentaryCountCache = new Map();
 // ticker (uppercase) → { status: string } | null (WHEEL session status)
 const sessionCache = new Map();
+// full_symbol||ticker (uppercase) → true: position is in E*TRADE but not backend
+const reconcileCache = new Map();
+let lastReconcileKey = '';
 // all base tickers seen while processing rows (for batch RSI fetch)
 const seenTickers = new Set();
 let isProcessing = false;
@@ -381,6 +384,11 @@ async function processVisibleRows() {
       fetchWheelSessionsForTickers([...seenTickers]);
     }
 
+    // Fire-and-forget: reconcile all visible positions against backend
+    if (rows.length > 0) {
+      fireReconcile(rows);
+    }
+
     // Apply cached status immediately; collect what needs a fetch
     const needsFetch = [];
     toProcess.forEach(item => {
@@ -389,6 +397,7 @@ async function processVisibleRows() {
         applyFilter(item.row, statusCache.get(item.cacheKey));
         applyRsiToRow(item.row, item.info.ticker);
         applyWheelPillToRow(item.row, item.info.ticker);
+        applyReconcilePillToRow(item.row, item.info);
       } else {
         needsFetch.push(item);
       }
@@ -435,6 +444,7 @@ async function processVisibleRows() {
       applyFilter(item.row, status);
       applyRsiToRow(item.row, item.info.ticker);
       applyWheelPillToRow(item.row, item.info.ticker);
+      applyReconcilePillToRow(item.row, item.info);
     });
 
   } catch (err) {
@@ -625,6 +635,92 @@ function applyWheelPillToRow(row, ticker) {
   const session = sessionCache.get(ticker);
   const pill = renderWheelPill(session);
   if (pill) symbolDiv.appendChild(pill);
+}
+
+// ============================================================
+// RECONCILIATION
+// ============================================================
+async function fireReconcile(rows) {
+  const positions = [];
+  const keys = [];
+
+  rows.forEach(row => {
+    const info = getRowInfo(row);
+    if (!info) return;
+    const key = info.fullSymbol || info.ticker;
+    keys.push(key);
+    positions.push({
+      ticker: info.ticker,
+      full_symbol: info.fullSymbol || null,
+      type: info.optionDetails?.type || (info.isOption ? 'Option' : 'Stock'),
+      strike: info.optionDetails?.strike || null,
+      expiry: info.optionDetails?.expiry || null,
+    });
+  });
+
+  if (positions.length === 0) return;
+
+  const posKey = keys.slice().sort().join(',');
+  if (posKey === lastReconcileKey) return;
+  lastReconcileKey = posKey;
+
+  try {
+    const resp = await fetch(`${tmApiUrl}/api/positions/reconcile`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ positions }),
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!resp.ok) return;
+    const data = await resp.json();
+
+    reconcileCache.clear();
+    (data.unmatched_etrade || []).forEach(item => {
+      reconcileCache.set((item.full_symbol || item.ticker).toUpperCase(), true);
+    });
+
+    document.querySelectorAll(ETRADE.positionRows).forEach(row => {
+      const info = getRowInfo(row);
+      if (info) applyReconcilePillToRow(row, info);
+    });
+  } catch (err) {
+    if (err.name !== 'AbortError') {
+      console.debug('TradeMinder: reconcile failed', err.message);
+    }
+  }
+}
+
+function applyReconcilePillToRow(row, info) {
+  const badge = row.querySelector('.tm-badge');
+  if (!badge) return;
+
+  badge.querySelector('.tm-reconcile-pill')?.remove();
+
+  const key = (info.fullSymbol || info.ticker).toUpperCase();
+  if (!reconcileCache.has(key)) return;
+
+  const pill = document.createElement('span');
+  pill.className = 'tm-reconcile-pill';
+  pill.textContent = '+ Add';
+  pill.title = 'Not tracked in TradeMinder — click to add';
+  pill.style.cssText = [
+    'display:inline-flex',
+    'align-items:center',
+    'font-size:10px',
+    'padding:1px 6px',
+    'border-radius:3px',
+    'margin-left:4px',
+    'white-space:nowrap',
+    'background:#FEF9C3',
+    'color:#713F12',
+    'border:1px solid #FDE047',
+    'cursor:pointer',
+  ].join(';');
+  pill.addEventListener('click', e => {
+    e.stopPropagation();
+    showAddTradeModal(info);
+  });
+  badge.appendChild(pill);
 }
 
 // ============================================================
