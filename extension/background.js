@@ -4,7 +4,7 @@
 chrome.runtime.onInstalled.addListener(() => {
   chrome.storage.local.get(['tmApiUrl', 'tmStages'], (result) => {
     if (!result.tmApiUrl) {
-      chrome.storage.local.set({ tmApiUrl: 'http://localhost:5431' });
+      chrome.storage.local.set({ tmApiUrl: 'http://127.0.0.1:5431' });
     }
     if (!result.tmStages) {
       chrome.storage.local.set({
