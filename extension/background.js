@@ -29,6 +29,23 @@ chrome.runtime.onInstalled.addListener(() => {
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === 'FETCH') {
+    const { url, method = 'GET', headers = {}, body } = message;
+    fetch(url, {
+      method,
+      headers,
+      body: body !== undefined ? body : undefined,
+      signal: AbortSignal.timeout(15000),
+    })
+      .then(async (resp) => {
+        let data = null;
+        try { data = await resp.json(); } catch {}
+        sendResponse({ ok: resp.ok, status: resp.status, data });
+      })
+      .catch((err) => sendResponse({ ok: false, status: 0, data: null, error: err.message }));
+    return true; // keep message channel open for async response
+  }
+
   if (message.type === 'GET_SETTINGS') {
     chrome.storage.local.get(['tmApiUrl', 'tmStages'], (result) => {
       sendResponse({

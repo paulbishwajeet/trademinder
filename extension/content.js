@@ -57,6 +57,36 @@ let _hoverPill = null;
 // column name → cell index, built once from the header row
 let columnIndexCache = null;
 
+// ============================================================
+// BACKGROUND FETCH PROXY
+// Chrome's Private Network Access policy blocks content scripts
+// (which run under the E*TRADE origin) from fetching localhost.
+// Route all API calls through the background service worker,
+// which runs in an extension context exempt from PNA.
+// ============================================================
+function bgFetch(url, { method = 'GET', headers = {}, body, signal } = {}) {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage(
+      { type: 'FETCH', url, method, headers, body },
+      (resp) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+        if (resp.error && !resp.ok) {
+          reject(new Error(resp.error));
+          return;
+        }
+        resolve({
+          ok: resp.ok,
+          status: resp.status,
+          json: () => Promise.resolve(resp.data),
+        });
+      }
+    );
+  });
+}
+
 // ── Technicals helpers ──────────────────────────────────────────────────────
 
 const TECH_SELECT_FIELDS = {
@@ -147,7 +177,7 @@ function renderTechnicalsForm(container, ticker) {
     fetchBtn.disabled = true;
     statusEl.textContent = 'Fetching…';
     try {
-      const resp = await fetch(`${tmApiUrl}/api/market/technicals/${ticker.toUpperCase()}`, {
+      const resp = await bgFetch(`${tmApiUrl}/api/market/technicals/${ticker.toUpperCase()}`, {
         signal: AbortSignal.timeout(20000),
       });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
@@ -200,7 +230,7 @@ chrome.runtime.sendMessage({ type: 'GET_SETTINGS' }, (resp) => {
 
 async function loadCategoriesAndStart() {
   try {
-    const resp = await fetch(`${tmApiUrl}/api/categories`, { signal: AbortSignal.timeout(4000) });
+    const resp = await bgFetch(`${tmApiUrl}/api/categories`, { signal: AbortSignal.timeout(4000) });
     if (resp.ok) {
       allCategories = await resp.json();
     }
@@ -415,7 +445,7 @@ async function processVisibleRows() {
       is_itm: item.info.isITM,
     }));
 
-    const response = await fetch(`${tmApiUrl}/api/positions/status`, {
+    const response = await bgFetch(`${tmApiUrl}/api/positions/status`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ positions }),
@@ -665,7 +695,7 @@ async function fireReconcile(rows) {
   lastReconcileKey = posKey;
 
   try {
-    const resp = await fetch(`${tmApiUrl}/api/positions/reconcile`, {
+    const resp = await bgFetch(`${tmApiUrl}/api/positions/reconcile`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ positions }),
@@ -770,7 +800,7 @@ function hideCommentaryTrigger() {
 
 async function fetchCommentaryCount(tradeId) {
   try {
-    const resp = await fetch(`${tmApiUrl}/api/trades/${tradeId}/commentary`, {
+    const resp = await bgFetch(`${tmApiUrl}/api/trades/${tradeId}/commentary`, {
       signal: AbortSignal.timeout(5000),
     });
     if (resp.ok) {
@@ -869,7 +899,7 @@ function getOrCreatePanel() {
       const techSnapshot = panel._techControl ? panel._techControl.getValue() : null;
       const bodyObj = { note, ...(tags.length > 0 && { tags }) };
       if (techSnapshot) bodyObj.rationale = techSnapshot;
-      const resp = await fetch(`${tmApiUrl}/api/trades/${tradeId}/commentary`, {
+      const resp = await bgFetch(`${tmApiUrl}/api/trades/${tradeId}/commentary`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(bodyObj),
@@ -1005,8 +1035,8 @@ async function renderCommentaryThread(tradeId, panel) {
 
   try {
     const [commResp, tradeResp] = await Promise.all([
-      fetch(`${tmApiUrl}/api/trades/${tradeId}/commentary`, { signal }),
-      fetch(`${tmApiUrl}/api/trades/${tradeId}`, { signal }),
+      bgFetch(`${tmApiUrl}/api/trades/${tradeId}/commentary`, { signal }),
+      bgFetch(`${tmApiUrl}/api/trades/${tradeId}`, { signal }),
     ]);
     if (!commResp.ok) throw new Error(`HTTP ${commResp.status}`);
     const entries = await commResp.json();
@@ -1060,7 +1090,7 @@ async function renderCommentaryThread(tradeId, panel) {
       deleteBtn.textContent = '×';
       deleteBtn.addEventListener('click', async () => {
         try {
-          const r = await fetch(`${tmApiUrl}/api/commentary/${entry.id}`, {
+          const r = await bgFetch(`${tmApiUrl}/api/commentary/${entry.id}`, {
             method: 'DELETE',
             signal: AbortSignal.timeout(5000),
           });
@@ -1110,7 +1140,7 @@ async function fetchRsiForAll() {
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Fetching…'; }
 
   try {
-    const resp = await fetch(`${tmApiUrl}/api/market/rsi`, {
+    const resp = await bgFetch(`${tmApiUrl}/api/market/rsi`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ tickers }),
@@ -1142,7 +1172,7 @@ async function fetchWheelSessionsForTickers(tickers) {
   await Promise.all(unique.map(async ticker => {
     if (sessionCache.has(ticker)) return; // already fetched this page load
     try {
-      const res = await fetch(`${tmApiUrl}/api/sessions/lookup?ticker=${encodeURIComponent(ticker)}&strategy=WHEEL`, {
+      const res = await bgFetch(`${tmApiUrl}/api/sessions/lookup?ticker=${encodeURIComponent(ticker)}&strategy=WHEEL`, {
         signal: AbortSignal.timeout(5000),
       });
       if (!res.ok) { sessionCache.set(ticker, null); return; }
@@ -1277,7 +1307,7 @@ chrome.runtime.onMessage.addListener((message) => {
 // ============================================================
 async function fetchCategories() {
   try {
-    const resp = await fetch(`${tmApiUrl}/api/categories`, { signal: AbortSignal.timeout(5000) });
+    const resp = await bgFetch(`${tmApiUrl}/api/categories`, { signal: AbortSignal.timeout(5000) });
     if (!resp.ok) return [];
     return await resp.json();
   } catch (_) {
@@ -1445,7 +1475,7 @@ async function showAddTradeModal(info) {
     };
 
     try {
-      const resp = await fetch(`${tmApiUrl}/api/trades`, {
+      const resp = await bgFetch(`${tmApiUrl}/api/trades`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -1463,7 +1493,7 @@ async function showAddTradeModal(info) {
       const techSnapshot = techFormControl ? techFormControl.getValue() : null;
       if (techSnapshot) {
         try {
-          await fetch(`${tmApiUrl}/api/trades/${trade.id}/rationale`, {
+          await bgFetch(`${tmApiUrl}/api/trades/${trade.id}/rationale`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(techSnapshot),
@@ -1507,7 +1537,7 @@ async function showEditTradeModal(info) {
     const searchUrl = info.fullSymbol
       ? `${tmApiUrl}/api/trades?etrade_symbol=${encodeURIComponent(info.fullSymbol)}`
       : `${tmApiUrl}/api/trades?ticker=${encodeURIComponent(info.ticker || '')}&status=open`;
-    const searchResp = await fetch(searchUrl, { signal: AbortSignal.timeout(6000) });
+    const searchResp = await bgFetch(searchUrl, { signal: AbortSignal.timeout(6000) });
     if (!searchResp.ok) throw new Error(`HTTP ${searchResp.status}`);
     const matches = await searchResp.json();
     if (!matches.length) {
@@ -1522,7 +1552,7 @@ async function showEditTradeModal(info) {
 
   // 2. Fetch full trade detail (includes rationale.notes)
   try {
-    const detailResp = await fetch(`${tmApiUrl}/api/trades/${tradeId}`, { signal: AbortSignal.timeout(6000) });
+    const detailResp = await bgFetch(`${tmApiUrl}/api/trades/${tradeId}`, { signal: AbortSignal.timeout(6000) });
     if (!detailResp.ok) throw new Error(`HTTP ${detailResp.status}`);
     trade = await detailResp.json();
   } catch (err) {
@@ -1638,7 +1668,7 @@ async function showEditTradeModal(info) {
     };
 
     try {
-      const resp = await fetch(`${tmApiUrl}/api/trades/${tradeId}`, {
+      const resp = await bgFetch(`${tmApiUrl}/api/trades/${tradeId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
