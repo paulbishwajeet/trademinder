@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react'
 import type { SessionSummary, SessionWithLegs } from '../types'
 import { sessionsApi, quotePrice } from '../api/sessions'
 import { SpreadSessionCard } from '../components/Spreads/SpreadSessionCard'
+import { NewSpreadSessionModal } from '../components/Spreads/NewSpreadSessionModal'
 
 export function SpreadsDashboardPage() {
   const [sessions, setSessions] = useState<SessionWithLegs[]>([])
@@ -10,6 +11,7 @@ export function SpreadsDashboardPage() {
   const [prices, setPrices] = useState<Record<string, number | null>>({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [showNewModal, setShowNewModal] = useState(false)
 
   async function load() {
     setLoading(true)
@@ -50,10 +52,30 @@ export function SpreadsDashboardPage() {
     setSessions(prev => prev.filter(s => s.id !== id))
   }
 
+  async function handleNewSession(session: SessionSummary) {
+    setShowNewModal(false)
+    // Fetch full leg detail for the new session, then prepend it
+    try {
+      const detailed = await sessionsApi.get(session.id)
+      setSessions(prev => [detailed, ...prev])
+      const price = await quotePrice(session.ticker)
+      setPrices(prev => ({ ...prev, [session.ticker]: price }))
+    } catch {
+      // Fall back to a reload if detail fetch fails
+      load()
+    }
+  }
+
   return (
     <div className="p-6 max-w-4xl mx-auto">
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Spreads Dashboard</h1>
+        <button
+          onClick={() => setShowNewModal(true)}
+          className="px-4 py-2 text-sm bg-blue-600 text-white rounded hover:bg-blue-700"
+        >
+          + New Session
+        </button>
       </div>
 
       {loading && <p className="text-gray-500 text-center py-12">Loading…</p>}
@@ -110,6 +132,13 @@ export function SpreadsDashboardPage() {
             ))}
           </div>
         </section>
+      )}
+
+      {showNewModal && (
+        <NewSpreadSessionModal
+          onClose={() => setShowNewModal(false)}
+          onCreated={handleNewSession}
+        />
       )}
     </div>
   )
