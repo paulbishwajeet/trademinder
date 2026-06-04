@@ -25,19 +25,39 @@ def _compute_unrealized_pnl(trade: Trade, current_price: float) -> float | None:
     return None
 
 
+# Tickers that yfinance does not recognise as stocks — map to their index symbols.
+# The returned dict uses the *original* ticker as key so callers stay unaware.
+_YF_ALIASES: dict[str, str] = {
+    "SPX":  "^GSPC",
+    "SPXW": "^GSPC",
+    "XSP":  "^XSP",
+    "NDX":  "^NDX",
+    "RUT":  "^RUT",
+    "VIX":  "^VIX",
+}
+
+
+def _resolve(ticker: str) -> str:
+    """Return the yfinance symbol for a ticker, applying index aliases."""
+    return _YF_ALIASES.get(ticker.upper(), ticker)
+
+
 def _fetch_prices_from_yfinance(tickers: list[str]) -> dict[str, float]:
     """Batch-fetch last prices. Extracted for testability."""
     try:
-        data = yf.Tickers(" ".join(tickers)).history(period="1d", interval="1m")
+        # Build alias map so we can look up by yf symbol and key results by original ticker
+        alias_map = {_resolve(t): t for t in tickers}  # yf_symbol → original ticker
+        yf_tickers = list(alias_map.keys())
+        data = yf.Tickers(" ".join(yf_tickers)).history(period="1d", interval="1m")
         if data.empty:
             return {}
         close = data["Close"]
         prices: dict[str, float] = {}
-        for ticker in tickers:
-            if ticker in close.columns:
-                series = close[ticker].dropna()
+        for yf_sym, orig in alias_map.items():
+            if yf_sym in close.columns:
+                series = close[yf_sym].dropna()
                 if not series.empty:
-                    prices[ticker] = float(series.iloc[-1])
+                    prices[orig] = float(series.iloc[-1])
         return prices
     except Exception:
         return {}
@@ -46,7 +66,7 @@ def _fetch_prices_from_yfinance(tickers: list[str]) -> dict[str, float]:
 async def fetch_quote(ticker: str) -> dict | None:
     """Fetch current price + day stats for a single ticker."""
     try:
-        fast_info = yf.Ticker(ticker).fast_info
+        fast_info = yf.Ticker(_resolve(ticker)).fast_info
         price = fast_info.last_price
         if price is None:
             return None
@@ -81,7 +101,7 @@ def _compute_rsi_14(close: pd.Series) -> float | None:
 
 def _fetch_one_rsi(ticker: str) -> tuple[str, dict | None]:
     try:
-        df = yf.download(ticker, period="45d", interval="1d", progress=False, auto_adjust=True)
+        df = yf.download(_resolve(ticker), period="45d", interval="1d", progress=False, auto_adjust=True)
         if df is None or df.empty:
             return ticker, None
         close = df["Close"]
