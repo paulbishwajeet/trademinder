@@ -179,3 +179,49 @@ async def test_get_session_includes_linked_trade(client: AsyncClient):
     assert len(data["legs"]) == 1
     assert data["legs"][0]["ticker"] == "NVDA"
     assert data["legs"][0]["strategy"] == "Sell Put"
+
+
+async def test_session_lookup_no_strategy_returns_all_strategies(client: AsyncClient):
+    """Omitting strategy= returns sessions across all strategies for the ticker."""
+    await client.post("/api/sessions", json=SESSION_PAYLOAD)  # WHEEL put_open
+    await client.post("/api/sessions", json={
+        **SESSION_PAYLOAD,
+        "strategy": "IRON_CONDOR",
+        "status": "open",
+    })
+    response = await client.get("/api/sessions/lookup?ticker=NVDA")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["has_existing"] is True
+    assert data["strategy"] is None   # strategy=None when no filter applied
+    assert len(data["sessions"]) == 2
+
+
+async def test_session_lookup_excludes_closed(client: AsyncClient):
+    """Lookup does not return sessions with status='closed'."""
+    await client.post("/api/sessions", json={
+        **SESSION_PAYLOAD,
+        "strategy": "IRON_CONDOR",
+        "status": "closed",
+    })
+    response = await client.get("/api/sessions/lookup?ticker=NVDA")
+    assert response.status_code == 200
+    assert response.json()["has_existing"] is False
+
+
+async def test_session_lookup_includes_legs(client: AsyncClient):
+    """Lookup response embeds linked trade legs in each session."""
+    session_resp = await client.post("/api/sessions", json={
+        **SESSION_PAYLOAD,
+        "strategy": "IRON_CONDOR",
+        "status": "open",
+    })
+    session_id = session_resp.json()["id"]
+    await client.post("/api/trades", json={**TRADE_PAYLOAD, "session_id": session_id})
+
+    response = await client.get("/api/sessions/lookup?ticker=NVDA&strategy=IRON_CONDOR")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["sessions"]) == 1
+    assert len(data["sessions"][0]["legs"]) == 1
+    assert data["sessions"][0]["legs"][0]["strike_price"] == "120.00"
