@@ -161,7 +161,7 @@ export interface SessionWithLegs extends SessionSummary {
 
 export interface SessionLookupResponse {
   ticker: string
-  strategy: string
+  strategy: string | null
   has_existing: boolean
   sessions: SessionSummary[]
 }
