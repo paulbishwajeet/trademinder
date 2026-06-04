@@ -60,6 +60,6 @@ class SessionLookupItem(SessionSummary):
 
 class SessionLookupResponse(BaseModel):
     ticker: str
-    strategy: str          # "any" when no strategy filter was applied
+    strategy: Optional[str] = None
     has_existing: bool
     sessions: list[SessionLookupItem]

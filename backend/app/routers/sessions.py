@@ -72,14 +72,14 @@ async def lookup_sessions(
         )
         .options(selectinload(TradeSession.legs))
     )
-    if strategy:
+    if strategy is not None:
         stmt = stmt.where(TradeSession.strategy == strategy)
     stmt = stmt.order_by(TradeSession.rotation_number.desc())
     result = await db.execute(stmt)
     sessions = result.scalars().all()
     return SessionLookupResponse(
         ticker=ticker.upper(),
-        strategy=strategy or "any",
+        strategy=strategy,
         has_existing=len(sessions) > 0,
         sessions=[SessionLookupItem.model_validate(s) for s in sessions],
     )
