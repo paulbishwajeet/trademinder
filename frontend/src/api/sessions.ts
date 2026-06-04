@@ -40,3 +40,12 @@ export const sessionsApi = {
   listSpreads: (strategy: 'IRON_CONDOR' | 'PUT_B_W_FLY', status = 'open') =>
     apiFetch<SessionSummary[]>(`/sessions?strategy=${strategy}&status=${status}`),
 }
+
+export async function quotePrice(ticker: string): Promise<number | null> {
+  try {
+    const data = await apiFetch<{ price: number }>(`/market/quote/${encodeURIComponent(ticker)}`)
+    return data.price ?? null
+  } catch {
+    return null
+  }
+}
