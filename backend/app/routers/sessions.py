@@ -10,7 +10,7 @@ from app.database import get_db
 from app.models.trade_session import TradeSession
 from app.schemas.session import (
     SessionCreate, SessionUpdate, SessionSummary,
-    SessionWithLegs, SessionLegItem, SessionLookupResponse,
+    SessionWithLegs, SessionLegItem, SessionLookupResponse, SessionLookupItem,
 )
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
@@ -61,25 +61,27 @@ async def create_session(payload: SessionCreate, db: AsyncSession = Depends(get_
 @router.get("/lookup", response_model=SessionLookupResponse)
 async def lookup_sessions(
     ticker: str = Query(...),
-    strategy: str = Query("WHEEL"),
+    strategy: Optional[str] = Query(None),   # was: str = Query("WHEEL")
     db: AsyncSession = Depends(get_db),
 ):
     stmt = (
         select(TradeSession)
         .where(
             TradeSession.ticker == ticker.upper(),
-            TradeSession.strategy == strategy,
-            TradeSession.status != "completed",
+            TradeSession.status.not_in(["completed", "closed"]),  # was: != "completed"
         )
-        .order_by(TradeSession.rotation_number.desc())
+        .options(selectinload(TradeSession.legs))
     )
+    if strategy:
+        stmt = stmt.where(TradeSession.strategy == strategy)
+    stmt = stmt.order_by(TradeSession.rotation_number.desc())
     result = await db.execute(stmt)
     sessions = result.scalars().all()
     return SessionLookupResponse(
         ticker=ticker.upper(),
-        strategy=strategy,
+        strategy=strategy or "any",
         has_existing=len(sessions) > 0,
-        sessions=sessions,
+        sessions=[SessionLookupItem.model_validate(s) for s in sessions],
     )
 
 

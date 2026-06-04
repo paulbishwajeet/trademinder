@@ -53,8 +53,13 @@ class SessionWithLegs(SessionSummary):
     rotation_chain: list[SessionSummary] = []
 
 
+# Lightweight session shape used in lookup responses — includes legs but not rotation_chain
+class SessionLookupItem(SessionSummary):
+    legs: list[SessionLegItem] = []
+
+
 class SessionLookupResponse(BaseModel):
     ticker: str
-    strategy: str
+    strategy: str          # "any" when no strategy filter was applied
     has_existing: bool
-    sessions: list[SessionSummary]
+    sessions: list[SessionLookupItem]
