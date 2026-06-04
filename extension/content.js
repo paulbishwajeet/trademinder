@@ -36,6 +36,8 @@ const rsiCache = new Map();
 const commentaryCountCache = new Map();
 // ticker (uppercase) → { status: string } | null (WHEEL session status)
 const sessionCache = new Map();
+// ticker (uppercase) → current price (number) | null (spread session price signal)
+const priceCache = new Map();
 // full_symbol||ticker (uppercase) → true: position is in E*TRADE but not backend
 const reconcileCache = new Map();
 let lastReconcileKey = '';
@@ -379,9 +381,16 @@ async function processVisibleRows() {
 
     if (toProcess.length === 0) return;
 
-    // Fire-and-forget: prefetch wheel sessions for all visible tickers (fills sessionCache async)
+    // Fire-and-forget: fetch sessions for all strategies, then prices for spread sessions
     if (seenTickers.size > 0) {
-      fetchWheelSessionsForTickers([...seenTickers]);
+      fetchSessionsForTickers([...seenTickers]).then(async () => {
+        await fetchPricesForSpreadSessions([...seenTickers]);
+        // Re-apply pills now that price data is available
+        document.querySelectorAll(ETRADE.positionRows).forEach(row => {
+          const info = getRowInfo(row);
+          if (info?.ticker) applyWheelPillToRow(row, info.ticker);
+        });
+      });
     }
 
     // Fire-and-forget: reconcile all visible positions against backend
@@ -623,18 +632,89 @@ function renderWheelPill(session) {
   return pill;
 }
 
+function computePriceSignal(session) {
+  const price = priceCache.get(session.ticker?.toUpperCase());
+  if (price == null) return 'unknown';
+  const legs = session.legs || [];
+
+  if (session.strategy === 'IRON_CONDOR') {
+    const shortPutStrikes = legs
+      .filter(l => l.strategy === 'Sell Put' && l.strike_price != null)
+      .map(l => Number(l.strike_price));
+    const shortCallStrikes = legs
+      .filter(l => l.strategy === 'Sell Call' && l.strike_price != null)
+      .map(l => Number(l.strike_price));
+    if (!shortPutStrikes.length || !shortCallStrikes.length) return 'unknown';
+    const sp = Math.max(...shortPutStrikes);
+    const sc = Math.min(...shortCallStrikes);
+    if (price <= sp || price >= sc) return 'danger';
+    if (price < sp * 1.05 || price > sc * 0.95) return 'warning';
+    return 'safe';
+  }
+
+  if (session.strategy === 'PUT_B_W_FLY') {
+    const shortStrikes = legs
+      .filter(l => l.strategy === 'Sell Put' && l.strike_price != null)
+      .map(l => Number(l.strike_price));
+    if (shortStrikes.length < 2) return 'unknown';
+    const low = Math.min(...shortStrikes);
+    const high = Math.max(...shortStrikes);
+    if (price <= low || price >= high) return 'danger';
+    if (price < low * 1.05 || price > high * 0.95) return 'warning';
+    return 'safe';
+  }
+  return 'unknown';
+}
+
+function renderStrategyPill(session) {
+  if (!session) return null;
+  const signal = computePriceSignal(session);
+  const shortLabel = session.strategy === 'IRON_CONDOR' ? 'IC' : 'PBWB';
+  const icons = { safe: '✓', warning: '⚠', danger: '✗', unknown: '' };
+  const icon = icons[signal] || '';
+  const label = icon ? `${shortLabel} ${icon}` : shortLabel;
+
+  const colorMap = {
+    safe: session.strategy === 'IRON_CONDOR'
+      ? { bg: '#EDE9FE', color: '#5B21B6', border: '#C4B5FD' }
+      : { bg: '#CCFBF1', color: '#0F766E', border: '#5EEAD4' },
+    warning: { bg: '#FEF3C7', color: '#92400E', border: '#FCD34D' },
+    danger:  { bg: '#FEE2E2', color: '#991B1B', border: '#FCA5A5' },
+    unknown: session.strategy === 'IRON_CONDOR'
+      ? { bg: '#EDE9FE', color: '#5B21B6', border: '#C4B5FD' }
+      : { bg: '#CCFBF1', color: '#0F766E', border: '#5EEAD4' },
+  };
+  const c = colorMap[signal];
+
+  const pill = document.createElement('span');
+  pill.className = 'tm-strategy-pill';
+  pill.textContent = label;
+  pill.style.cssText = [
+    'display:inline-flex', 'align-items:center', 'font-size:10px',
+    'padding:1px 5px', 'border-radius:3px', 'margin-left:4px', 'white-space:nowrap',
+    `background:${c.bg}`, `color:${c.color}`, `border:1px solid ${c.border}`,
+  ].join(';');
+  return pill;
+}
+
 function applyWheelPillToRow(row, ticker) {
   const flyoutBtn = row.querySelector('button[aria-label="Open Quote Flyout"]');
   if (!flyoutBtn) return;
-
   const symbolDiv = flyoutBtn.parentElement;
   symbolDiv.querySelector('.tm-wheel-pill')?.remove();
+  symbolDiv.querySelector('.tm-strategy-pill')?.remove();
 
-  if (!sessionCache.has(ticker)) return; // not yet fetched
-
+  if (!sessionCache.has(ticker)) return;
   const session = sessionCache.get(ticker);
-  const pill = renderWheelPill(session);
-  if (pill) symbolDiv.appendChild(pill);
+  if (!session) return;
+
+  if (session.strategy === 'WHEEL') {
+    const pill = renderWheelPill(session);
+    if (pill) symbolDiv.appendChild(pill);
+  } else {
+    const pill = renderStrategyPill(session);
+    if (pill) symbolDiv.appendChild(pill);
+  }
 }
 
 // ============================================================
@@ -1137,19 +1217,43 @@ async function fetchRsiForAll() {
   if (btn) { btn.disabled = false; btn.textContent = '🔄 Refresh RSI'; }
 }
 
-async function fetchWheelSessionsForTickers(tickers) {
+async function fetchSessionsForTickers(tickers) {
   const unique = [...new Set(tickers.map(t => t.toUpperCase()))];
   await Promise.all(unique.map(async ticker => {
     if (sessionCache.has(ticker)) return; // already fetched this page load
     try {
-      const res = await fetch(`${tmApiUrl}/api/sessions/lookup?ticker=${encodeURIComponent(ticker)}&strategy=WHEEL`, {
-        signal: AbortSignal.timeout(5000),
-      });
+      const res = await fetch(
+        `${tmApiUrl}/api/sessions/lookup?ticker=${encodeURIComponent(ticker)}`,
+        { signal: AbortSignal.timeout(5000) },
+      );
       if (!res.ok) { sessionCache.set(ticker, null); return; }
       const data = await res.json();
       sessionCache.set(ticker, data.has_existing && data.sessions?.length ? data.sessions[0] : null);
     } catch {
       sessionCache.set(ticker, null);
+    }
+  }));
+}
+
+async function fetchPricesForSpreadSessions(tickers) {
+  const spreadTickers = tickers
+    .map(t => t.toUpperCase())
+    .filter(t => {
+      const s = sessionCache.get(t);
+      return s && (s.strategy === 'IRON_CONDOR' || s.strategy === 'PUT_B_W_FLY');
+    });
+  await Promise.all(spreadTickers.map(async ticker => {
+    if (priceCache.has(ticker)) return;
+    try {
+      const res = await fetch(
+        `${tmApiUrl}/api/market/quote/${encodeURIComponent(ticker)}`,
+        { signal: AbortSignal.timeout(5000) },
+      );
+      if (!res.ok) { priceCache.set(ticker, null); return; }
+      const data = await res.json();
+      priceCache.set(ticker, typeof data.price === 'number' ? data.price : null);
+    } catch {
+      priceCache.set(ticker, null);
     }
   }));
 }
