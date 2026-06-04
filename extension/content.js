@@ -701,7 +701,7 @@ function applyReconcilePillToRow(row, info) {
 
   const pill = document.createElement('span');
   pill.className = 'tm-reconcile-pill';
-  pill.textContent = '+ Add';
+  pill.textContent = '+';
   pill.title = 'Not tracked in TradeMinder — click to add';
   pill.style.cssText = [
     'display:inline-flex',
