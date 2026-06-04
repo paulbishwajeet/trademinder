@@ -1453,6 +1453,13 @@ async function showAddTradeModal(info) {
             ${buildCategoryOptions(categories, 'WHEEL')}
           </select>
         </div>
+        ${info.isOption ? `
+        <div class="tm-field-row tm-field-full" id="tm-session-row">
+          <label>Spread Session <span style="font-weight:normal;color:#6B7280">(optional)</span></label>
+          <select name="session_id" id="tm-session-select">
+            <option value="">Loading…</option>
+          </select>
+        </div>` : ''}
         <div class="tm-field-row">
           <label>Strike</label>
           <input type="number" name="strike_price" step="0.01" value="${info.strike != null ? info.strike : ''}" placeholder="optional" />
@@ -1494,6 +1501,35 @@ async function showAddTradeModal(info) {
     </div>`;
 
   document.body.appendChild(overlay);
+
+  // Populate spread session picker for option rows
+  if (info.isOption) {
+    const sessionSelect = overlay.querySelector('#tm-session-select');
+    const ticker = (info.ticker || '').toUpperCase();
+    try {
+      const res = await fetch(
+        `${tmApiUrl}/api/sessions?ticker=${encodeURIComponent(ticker)}&status=open`,
+        { signal: AbortSignal.timeout(5000) },
+      );
+      const sessions = res.ok ? await res.json() : [];
+      const spreadSessions = sessions.filter(s =>
+        s.strategy === 'IRON_CONDOR' || s.strategy === 'PUT_B_W_FLY'
+      );
+      sessionSelect.innerHTML =
+        '<option value="">— None —</option>' +
+        spreadSessions.map(s => {
+          const label = s.strategy === 'IRON_CONDOR' ? 'IC' : 'PBWB';
+          return `<option value="${s.id}">${label} · ${s.ticker} · opened ${s.opened_at}</option>`;
+        }).join('') +
+        '<option value="__new_IC__">→ New Iron Condor Session</option>' +
+        '<option value="__new_PBWB__">→ New Put BWB Session</option>';
+    } catch {
+      sessionSelect.innerHTML =
+        '<option value="">— None —</option>' +
+        '<option value="__new_IC__">→ New Iron Condor Session</option>' +
+        '<option value="__new_PBWB__">→ New Put BWB Session</option>';
+    }
+  }
 
   const closeModal = () => overlay.remove();
   overlay.querySelector('#tm-modal-close').addEventListener('click', closeModal);
@@ -1547,6 +1583,35 @@ async function showAddTradeModal(info) {
       ...(fd.get('exit_strategy') && { exit_strategy: fd.get('exit_strategy').trim() }),
       ...(fd.get('rationale_notes')?.trim() && { rationale_notes: fd.get('rationale_notes').trim() }),
     };
+
+    // Resolve session_id: create a new session if requested, or use existing
+    let resolvedSessionId = null;
+    const rawSession = info.isOption ? (fd.get('session_id') || '') : '';
+    if (rawSession && !rawSession.startsWith('__new_')) {
+      resolvedSessionId = rawSession;
+    } else if (rawSession === '__new_IC__' || rawSession === '__new_PBWB__') {
+      const strategy = rawSession === '__new_IC__' ? 'IRON_CONDOR' : 'PUT_B_W_FLY';
+      const sessionResp = await fetch(`${tmApiUrl}/api/sessions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ticker: payload.ticker,
+          strategy,
+          status: 'open',
+          opened_at: payload.open_date,
+        }),
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!sessionResp.ok) {
+        const err = await sessionResp.json().catch(() => ({}));
+        throw new Error(err.detail || 'Failed to create session');
+      }
+      const newSession = await sessionResp.json();
+      resolvedSessionId = newSession.id;
+      // Invalidate session cache so the pill reflects the new session
+      sessionCache.delete(payload.ticker.toUpperCase());
+    }
+    if (resolvedSessionId) payload.session_id = resolvedSessionId;
 
     try {
       const resp = await fetch(`${tmApiUrl}/api/trades`, {
