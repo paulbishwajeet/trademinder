@@ -46,6 +46,7 @@ class SessionLegItem(BaseModel):
     quantity: int
     premium: Optional[Decimal] = None
     status: str
+    etrade_symbol: Optional[str] = None
 
 
 class SessionWithLegs(SessionSummary):

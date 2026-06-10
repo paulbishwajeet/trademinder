@@ -85,6 +85,20 @@ async def lookup_sessions(
     )
 
 
+# NOTE: /active must be defined BEFORE /{session_id} so FastAPI
+# does not try to parse "active" as a UUID path parameter.
+@router.get("/active", response_model=list[SessionLookupItem])
+async def list_active_sessions(db: AsyncSession = Depends(get_db)):
+    stmt = (
+        select(TradeSession)
+        .where(TradeSession.status.not_in(["completed", "closed"]))
+        .options(selectinload(TradeSession.legs))
+    )
+    result = await db.execute(stmt)
+    sessions = result.scalars().all()
+    return [SessionLookupItem.model_validate(s) for s in sessions]
+
+
 @router.get("/{session_id}", response_model=SessionWithLegs)
 async def get_session(session_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     stmt = (

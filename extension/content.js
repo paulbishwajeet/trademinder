@@ -34,8 +34,12 @@ const statusCache = new Map();
 const rsiCache = new Map();
 // trade_id → commentary count (populated on first badge render)
 const commentaryCountCache = new Map();
-// ticker (uppercase) → { status: string } | null (WHEEL session status)
-const sessionCache = new Map();
+// etrade_symbol (uppercase) → session object (active WHEEL/IC/PBWB session owning that leg)
+let etradeSymbolIndex = new Map();
+// all sessions returned by /api/sessions/active (used for spread price lookups)
+let allActiveSessions = [];
+// true once /api/sessions/active has been fetched for this page load
+let activeSessionsFetched = false;
 // ticker (uppercase) → current price (number) | null (spread session price signal)
 const priceCache = new Map();
 // full_symbol||ticker (uppercase) → true: position is in E*TRADE but not backend
@@ -381,17 +385,14 @@ async function processVisibleRows() {
 
     if (toProcess.length === 0) return;
 
-    // Fire-and-forget: fetch sessions for all strategies, then prices for spread sessions
-    if (seenTickers.size > 0) {
-      fetchSessionsForTickers([...seenTickers]).then(async () => {
-        await fetchPricesForSpreadSessions([...seenTickers]);
-        // Re-apply pills now that price data is available
-        document.querySelectorAll(ETRADE.positionRows).forEach(row => {
-          const info = getRowInfo(row);
-          if (info?.ticker) applyWheelPillToRow(row, info.ticker);
-        });
+    // Fire-and-forget: fetch all active sessions, then prices for spread sessions
+    fetchAllActiveSessions().then(async () => {
+      await fetchPricesForSpreadSessions();
+      // Re-apply pills now that session/price data is available
+      document.querySelectorAll(ETRADE.positionRows).forEach(row => {
+        applyWheelPillToRow(row);
       });
-    }
+    });
 
     // Fire-and-forget: reconcile all visible positions against backend
     if (rows.length > 0) {
@@ -405,7 +406,7 @@ async function processVisibleRows() {
         applyTMToRow(item.row, statusCache.get(item.cacheKey), item.info);
         applyFilter(item.row, statusCache.get(item.cacheKey));
         applyRsiToRow(item.row, item.info.ticker);
-        applyWheelPillToRow(item.row, item.info.ticker);
+        applyWheelPillToRow(item.row);
         applyReconcilePillToRow(item.row, item.info);
       } else {
         needsFetch.push(item);
@@ -452,7 +453,7 @@ async function processVisibleRows() {
       applyTMToRow(item.row, status, item.info);
       applyFilter(item.row, status);
       applyRsiToRow(item.row, item.info.ticker);
-      applyWheelPillToRow(item.row, item.info.ticker);
+      applyWheelPillToRow(item.row);
       applyReconcilePillToRow(item.row, item.info);
     });
 
@@ -697,15 +698,22 @@ function renderStrategyPill(session) {
   return pill;
 }
 
-function applyWheelPillToRow(row, ticker) {
+// Returns the session that owns this specific row's position, or null.
+// A row belongs to a session iff its etrade_symbol matches a leg's etrade_symbol exactly.
+function findSessionForRow(info) {
+  if (!info?.fullSymbol) return null;
+  return etradeSymbolIndex.get(info.fullSymbol.toUpperCase()) || null;
+}
+
+function applyWheelPillToRow(row) {
   const flyoutBtn = row.querySelector('button[aria-label="Open Quote Flyout"]');
   if (!flyoutBtn) return;
   const symbolDiv = flyoutBtn.parentElement;
   symbolDiv.querySelector('.tm-wheel-pill')?.remove();
   symbolDiv.querySelector('.tm-strategy-pill')?.remove();
 
-  if (!sessionCache.has(ticker)) return;
-  const session = sessionCache.get(ticker);
+  const info = getRowInfo(row);
+  const session = findSessionForRow(info);
   if (!session) return;
 
   if (session.strategy === 'WHEEL') {
@@ -1217,31 +1225,37 @@ async function fetchRsiForAll() {
   if (btn) { btn.disabled = false; btn.textContent = '🔄 Refresh RSI'; }
 }
 
-async function fetchSessionsForTickers(tickers) {
-  const unique = [...new Set(tickers.map(t => t.toUpperCase()))];
-  await Promise.all(unique.map(async ticker => {
-    if (sessionCache.has(ticker)) return; // already fetched this page load
-    try {
-      const res = await fetch(
-        `${tmApiUrl}/api/sessions/lookup?ticker=${encodeURIComponent(ticker)}`,
-        { signal: AbortSignal.timeout(5000) },
-      );
-      if (!res.ok) { sessionCache.set(ticker, null); return; }
-      const data = await res.json();
-      sessionCache.set(ticker, data.has_existing && data.sessions?.length ? data.sessions[0] : null);
-    } catch {
-      sessionCache.set(ticker, null);
+// Fetches all active sessions (any ticker/strategy) once per page load and
+// builds an etrade_symbol → session index for exact row-to-session matching.
+async function fetchAllActiveSessions(force = false) {
+  if (activeSessionsFetched && !force) return;
+  try {
+    const res = await fetch(
+      `${tmApiUrl}/api/sessions/active`,
+      { signal: AbortSignal.timeout(5000) },
+    );
+    if (!res.ok) { activeSessionsFetched = true; return; }
+    const sessions = await res.json();
+    allActiveSessions = sessions;
+    const index = new Map();
+    for (const session of sessions) {
+      for (const leg of session.legs || []) {
+        if (leg.etrade_symbol && leg.status === 'open') index.set(leg.etrade_symbol.toUpperCase(), session);
+      }
     }
-  }));
+    etradeSymbolIndex = index;
+    activeSessionsFetched = true;
+  } catch {
+    activeSessionsFetched = true;
+  }
 }
 
-async function fetchPricesForSpreadSessions(tickers) {
-  const spreadTickers = tickers
-    .map(t => t.toUpperCase())
-    .filter(t => {
-      const s = sessionCache.get(t);
-      return s && (s.strategy === 'IRON_CONDOR' || s.strategy === 'PUT_B_W_FLY');
-    });
+async function fetchPricesForSpreadSessions() {
+  const spreadTickers = [...new Set(
+    allActiveSessions
+      .filter(s => s.strategy === 'IRON_CONDOR' || s.strategy === 'PUT_B_W_FLY')
+      .map(s => s.ticker.toUpperCase()),
+  )];
   await Promise.all(spreadTickers.map(async ticker => {
     if (priceCache.has(ticker)) return;
     try {
@@ -1608,8 +1622,6 @@ async function showAddTradeModal(info) {
       }
       const newSession = await sessionResp.json();
       resolvedSessionId = newSession.id;
-      // Invalidate session cache so the pill reflects the new session
-      sessionCache.delete(payload.ticker.toUpperCase());
     }
     if (resolvedSessionId) payload.session_id = resolvedSessionId;
 
@@ -1651,6 +1663,8 @@ async function showAddTradeModal(info) {
       processedRows.forEach((val, key) => {
         if (val === cacheKey || val === info.ticker) processedRows.delete(key);
       });
+      // Refresh active sessions so the new/updated session's legs are indexed
+      await fetchAllActiveSessions(true);
       processVisibleRows();
       closeModal();
 
