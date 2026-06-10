@@ -26,17 +26,18 @@ A dedicated WHEEL Strategy page in the frontend that shows every active WHEEL in
 ## Key Files / Modules Involved
 - `backend/alembic/versions/006_trade_sessions.py` — new migration
 - `backend/app/models/trade_session.py` — new SQLAlchemy model
-- `backend/app/schemas/session.py` — new Pydantic schemas
-- `backend/app/routers/sessions.py` — new router (GET list, POST create, GET detail, PATCH, GET lookup)
+- `backend/app/schemas/session.py` — new Pydantic schemas; `SessionLegItem.etrade_symbol` added (2026-06-09)
+- `backend/app/routers/sessions.py` — router (GET list, POST create, GET detail, PATCH, GET lookup, **GET /active** added 2026-06-09)
 - `backend/app/schemas/trade.py` — add session_id to TradeCreate/TradeUpdate
 - `backend/tests/test_sessions.py` — new tests
 - `frontend/src/pages/WheelDashboardPage.tsx` — new page
-- `frontend/src/components/Wheel/WheelSessionCard.tsx` — new component
-- `frontend/src/components/Wheel/NewWheelModal.tsx` — new component
-- `frontend/src/api/sessions.ts` — new API wrapper
+- `frontend/src/components/Wheel/WheelSessionCard.tsx` — multi-leg display; **called_away technical-signal badge + auto-close option leg on called_away transition** (2026-06-10)
+- `frontend/src/components/Wheel/NewWheelModal.tsx` — **rewritten step 2 to multi-select checkbox linking** (2026-06-09), so stock + CC can both be linked as legs
+- `frontend/src/api/sessions.ts` — API wrapper
+- `frontend/src/api/technicals.ts` — used by WheelSessionCard called_away badge (2026-06-10)
 - `frontend/src/types/index.ts` — add Session types
 - `frontend/src/App.tsx` — add /wheel route
-- `extension/content.js` — session lookup + WHEEL status pill
+- `extension/content.js` — **rewritten pill matching: `etrade_symbol`-exact via `/api/sessions/active` + `etradeSymbolIndex`** (2026-06-09); index now only includes `status === 'open'` legs (2026-06-10)
 
 ## Technical Approach
 - `trade_sessions` table: id, ticker, strategy, status, rotation_number, parent_session_id (self-ref), opened_at, closed_at, metadata JSONB
@@ -63,6 +64,12 @@ shares_sitting can also start from: direct Buy (Buy Write)
 | Rotation model | One session per rotation, parent_session_id chain | Enables per-rotation P&L and performance audit |
 | wheel_id | Left unchanged | Separate concern; no active UI uses it |
 | Extension role | Read-only display | Entry flow automation is future scope |
+| Pill matching | Exact `etrade_symbol` match via client-side `etradeSymbolIndex` (built from `GET /api/sessions/active`) | Ticker/strategy heuristics couldn't distinguish a standalone sold put from an active wheel CC on the same ticker, and broke with parallel wheel sessions on the same ticker |
+| `/api/sessions/active` | Single bulk endpoint, `status NOT IN ('completed','closed')`, no ticker/strategy filter | Replaces N per-ticker `/lookup` calls; client builds one index for both pill matching and spread price lookups |
+| NewWheelModal linking | Multi-select checkboxes (was single-select dropdown) | A wheel session needs BOTH the stock and the CC linked as legs (each via its own `etrade_symbol`); single-select left one trade with `session_id = NULL`, breaking pill matching for that leg |
+| `called_away` transition | Auto-`POST /trades/{id}/close` on the open option leg (CC); stock leg left untouched | The CC is gone from E*TRADE once assigned/expired; the stock may still be carried into another wheel rotation, so it must not be auto-closed |
+| Extension leg index filter | `etradeSymbolIndex` only includes legs with `status === 'open'` | Once a leg is closed in TradeMinder (e.g. via the called_away auto-close above), its E*TRADE row (even if still showing as a stale position) should stop getting a WHL pill |
+| `called_away` dashboard signal | Live `GET /api/market/technicals/{ticker}` fetched client-side per called_away `WheelSessionCard`, badge derived from RSI/Bollinger/sentiment | User has no E*TRADE reminder to watch for a put-selling setup after a CC is called away; reuses the existing technicals endpoint rather than persisting new state |
 
 ## Open Questions / Blockers
 - [ ] Alembic migration 006 not yet applied to QNAP production DB (pre-existing blocker — need to run `alembic upgrade head` on prod)
@@ -71,6 +78,8 @@ shares_sitting can also start from: direct Buy (Buy Write)
   2. List endpoint does not sort by status priority (called_away/shares_sitting first); sorts by ticker only
   3. `leg_count` missing from `SessionSummary` list response (requires a JOIN/subquery)
   4. "+ New Put" / "+ Sell CC" action buttons don't pre-fill the trade form (links to `/trades` only)
+- [ ] **"Continue Wheel (New Rotation)" feature** — proposed but not implemented/confirmed: when a `called_away` session is ready to restart (new put sold), mark it `completed`, create a new session with `rotation_number + 1` and `parent_session_id` pointing at the old one, then link the new put trade. `SessionCreate`/`sessionsApi.create` already support `rotation_number`/`parent_session_id`; `NewWheelModal` doesn't expose them yet.
+- [ ] **called_away signal badge fetches yfinance live on every render/expand** of a called_away `WheelSessionCard`. Fine for a handful of sessions; if the user accumulates many parallel called_away wheels this could get slow/rate-limited. Possible follow-up: cache server-side via the existing `technical_signals` table instead of a client-side live fetch.
 
 ## Progress Log
 - 2026-05-30 — Design discussion: user described problem (80 trades, no grouping), WHEEL lifecycle, opportunistic Put distinction
@@ -78,23 +87,22 @@ shares_sitting can also start from: direct Buy (Buy Write)
 - 2026-05-31 — Spec written and approved: `docs/superpowers/specs/2026-05-31-wheel-dashboard-design.md`
 - 2026-05-31 — Implementation plan written: `docs/superpowers/plans/2026-05-31-wheel-dashboard.md`
 - 2026-05-31 — All 8 tasks implemented via subagent-driven development (8 implementers + spec + quality reviews each). 12 commits on `strategy-sessions`. 124 backend tests pass, TypeScript 0 errors. Branch kept as-is for user to push/merge when ready.
+- 2026-06-09 — Fixed strategy-pill mismatch bug (e.g. a standalone sold put showing "WHL: CC Open"): replaced ticker-based `/lookup` matching with exact `etrade_symbol` leg matching via a new bulk `GET /api/sessions/active` endpoint and client-side `etradeSymbolIndex`. Also fixed `NewWheelModal` so creating a wheel can link multiple existing trades (stock + CC) via checkboxes, not just one — confirmed working end-to-end after a fresh-DB test.
+- 2026-06-10 — Added a `called_away` "watch for a put-selling setup" signal badge to `WheelSessionCard` (RSI/Bollinger/sentiment via `/api/market/technicals`). Also: marking a session `called_away` now auto-closes its open option leg (CC) via `POST /trades/{id}/close` while leaving the stock leg open (may belong to another rotation); extension `etradeSymbolIndex` now skips non-`open` legs so a closed CC's stale E*TRADE row stops showing a WHL pill.
 
 ## Current State (Resume Here)
-All 8 tasks are complete on branch `strategy-sessions`. The branch has **not been pushed** and has **not been merged to master**.
+Branch `bug-ext-strategypill` (current branch). All changes above are implemented and `npx tsc --noEmit` passes from `frontend/`. **Not yet committed.**
 
-**Next action:** Push the branch and open a PR, or merge locally:
-```bash
-# Option A: push + PR
-git push -u origin strategy-sessions
-gh pr create --title "feat: add WHEEL Strategy Dashboard with sessions API and extension pills"
+What's done and untested end-to-end:
+- `etrade_symbol`-exact pill matching + `/api/sessions/active` (tested, confirmed working by user on 2026-06-09)
+- `NewWheelModal` multi-select linking (tested, confirmed working by user on 2026-06-09)
+- `called_away` technical-signal badge on `WheelSessionCard` (implemented 2026-06-10, **not yet manually tested in browser**)
+- `called_away` → auto-close CC leg + extension stops pilling closed legs (implemented 2026-06-10, **not yet manually tested**)
 
-# Option B: merge locally
-git checkout master && git merge strategy-sessions
-```
+**Next action:** Reload the Chrome extension (content.js changed) and test the called_away flow end-to-end:
+1. Open a `cc_open` wheel session on the Wheel dashboard, click "Update Status" → `called_away`.
+2. Verify the CC trade is auto-closed (`status='closed'`, `closed_date` set) — check via `GET /api/trades/{id}` or DB.
+3. Refresh the E*TRADE positions tab and confirm the (now-stale) CC row no longer shows a "WHL: ⚠ Action" pill, while the stock row's pill behavior is unchanged.
+4. Confirm the called_away `WheelSessionCard` shows the new RSI/sentiment-based "Pulled back — consider put" / "Neutral — keep watching" / etc. badge next to "+ New Put".
 
-Before deploying, apply the Alembic migration on the production QNAP DB:
-```bash
-cd backend && alembic upgrade head
-```
-
-The 4 minor spec gaps above can be addressed as a quick follow-up before or after merging.
+Then decide whether to proceed with the still-unconfirmed "Continue Wheel (New Rotation)" feature (see Open Questions).
