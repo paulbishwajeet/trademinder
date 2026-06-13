@@ -705,24 +705,73 @@ function findSessionForRow(info) {
   return etradeSymbolIndex.get(info.fullSymbol.toUpperCase()) || null;
 }
 
+// Non-session strategy categories — shown as a simple pill using the
+// category's own color from the backend (categories table). WHEEL and the
+// spread categories (PUT_SPREAD/CALL_SPREAD/IRON_CONDOR/IRON_BUTTERFLY) are
+// handled via the session-based pills above and are intentionally excluded here.
+const CATEGORY_PILL_LABELS = {
+  SWING: 'Swing',
+  HOLD: 'Hold',
+  LEAP: 'Leap',
+  SKIP: 'Skip',
+  HOPS: 'Hops',
+};
+
+// Explicit bg/text/border triples per category — distinct hues with enough
+// contrast to tell apart at a glance. A low-alpha tint of the backend's
+// category_color washed out to near-identical pale colors, so these are
+// hand-picked instead of derived from category_color.
+const CATEGORY_PILL_STYLES = {
+  SWING: { bg: '#CFFAFE', color: '#155E75', border: '#67E8F9' }, // cyan
+  HOLD:  { bg: '#D1FAE5', color: '#065F46', border: '#6EE7B7' }, // emerald
+  LEAP:  { bg: '#EDE9FE', color: '#5B21B6', border: '#C4B5FD' }, // violet
+  SKIP:  { bg: '#F3F4F6', color: '#374151', border: '#D1D5DB' }, // gray
+  HOPS:  { bg: '#ECFCCB', color: '#3F6212', border: '#BEF264' }, // lime
+};
+
+function renderCategoryPill(status) {
+  if (!status?.category_name) return null;
+  const label = CATEGORY_PILL_LABELS[status.category_name];
+  const style = CATEGORY_PILL_STYLES[status.category_name];
+  if (!label || !style) return null;
+
+  const pill = document.createElement('span');
+  pill.className = 'tm-category-pill';
+  pill.textContent = label;
+  pill.style.cssText = [
+    'display:inline-flex', 'align-items:center', 'font-size:10px',
+    'padding:1px 5px', 'border-radius:3px', 'margin-left:4px', 'white-space:nowrap',
+    `background:${style.bg}`, `color:${style.color}`, `border:1px solid ${style.border}`,
+  ].join(';');
+  return pill;
+}
+
 function applyWheelPillToRow(row) {
   const flyoutBtn = row.querySelector('button[aria-label="Open Quote Flyout"]');
   if (!flyoutBtn) return;
   const symbolDiv = flyoutBtn.parentElement;
   symbolDiv.querySelector('.tm-wheel-pill')?.remove();
   symbolDiv.querySelector('.tm-strategy-pill')?.remove();
+  symbolDiv.querySelector('.tm-category-pill')?.remove();
 
   const info = getRowInfo(row);
   const session = findSessionForRow(info);
-  if (!session) return;
-
-  if (session.strategy === 'WHEEL') {
-    const pill = renderWheelPill(session);
-    if (pill) symbolDiv.appendChild(pill);
-  } else {
-    const pill = renderStrategyPill(session);
-    if (pill) symbolDiv.appendChild(pill);
+  if (session) {
+    if (session.strategy === 'WHEEL') {
+      const pill = renderWheelPill(session);
+      if (pill) symbolDiv.appendChild(pill);
+    } else {
+      const pill = renderStrategyPill(session);
+      if (pill) symbolDiv.appendChild(pill);
+    }
+    return;
   }
+
+  // No active session — fall back to a plain category pill (Swing/Hold/Leap/Skip/Hops)
+  const cacheKey = info.fullSymbol || info.ticker;
+  const status = statusCache.get(cacheKey);
+  const pill = renderCategoryPill(status);
+  if (pill) symbolDiv.appendChild(pill);
 }
 
 // ============================================================
