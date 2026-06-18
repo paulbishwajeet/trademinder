@@ -1922,6 +1922,12 @@ async function showEditTradeModal(info) {
             ${buildCategoryOptions(categories, trade.category || 'WHEEL')}
           </select>
         </div>
+        <div class="tm-field-row tm-field-full" id="tm-session-row">
+          <label>Session <span style="font-weight:normal;color:#6B7280">(optional)</span></label>
+          <select name="session_id" id="tm-session-select">
+            <option value="">— None —</option>
+          </select>
+        </div>
         <div class="tm-field-row">
           <label>Strike</label>
           <input type="number" name="strike_price" step="0.01" value="${trade.strike_price != null ? trade.strike_price : ''}" placeholder="optional" />
@@ -1956,6 +1962,66 @@ async function showEditTradeModal(info) {
 
   document.body.appendChild(overlay);
 
+  // Populate session picker
+  let tickerSessions = [];
+  {
+    const sessionSelect = overlay.querySelector('#tm-session-select');
+    const strategySelect = overlay.querySelector('[name="strategy"]');
+    const categorySelect = overlay.querySelector('[name="category"]');
+    const ticker = (trade.ticker || '').toUpperCase();
+
+    await fetchAllActiveSessions(true);
+    tickerSessions = allActiveSessions.filter(
+      s => s.ticker.toUpperCase() === ticker,
+    );
+
+    rebuildSessionDropdown(sessionSelect, tickerSessions, strategySelect.value);
+
+    // Pre-select current session if trade is linked
+    if (trade.session_id) {
+      const currentId = String(trade.session_id);
+      const exists = sessionSelect.querySelector(`option[value="${currentId}"]`);
+      if (exists) {
+        sessionSelect.value = currentId;
+      } else {
+        // Session exists but filtered out (different status) — add as disabled option
+        const s = allActiveSessions.find(s => String(s.id) === currentId);
+        if (s) {
+          const tag = s.strategy === 'WHEEL' ? 'WHL'
+            : s.strategy === 'IRON_CONDOR' ? 'IC' : 'PBWB';
+          const lbl = s.strategy === 'WHEEL'
+            ? `${tag} · ${s.ticker} · ${WHEEL_STATUS_LABELS[s.status] || s.status} · opened ${s.opened_at}`
+            : `${tag} · ${s.ticker} · opened ${s.opened_at}`;
+          const opt = document.createElement('option');
+          opt.value = currentId;
+          opt.textContent = lbl;
+          sessionSelect.insertBefore(opt, sessionSelect.options[1]);
+          sessionSelect.value = currentId;
+        }
+      }
+    }
+
+    strategySelect.addEventListener('change', () => {
+      const prevValue = sessionSelect.value;
+      rebuildSessionDropdown(sessionSelect, tickerSessions, strategySelect.value);
+      // Restore selection if it's still in the rebuilt list
+      const stillExists = sessionSelect.querySelector(`option[value="${prevValue}"]`);
+      if (stillExists) sessionSelect.value = prevValue;
+    });
+
+    sessionSelect.addEventListener('change', () => {
+      const strat = getSessionStrategyFromValue(sessionSelect.value, tickerSessions);
+      if (strat) {
+        const catMap = { WHEEL: 'WHEEL', IRON_CONDOR: 'IRON_CONDOR', PUT_B_W_FLY: 'PUT_B_W_FLY' };
+        const catName = catMap[strat];
+        if (catName) {
+          const catOption = categorySelect.querySelector(`option[value="${catName}"]`);
+          if (catOption) categorySelect.value = catName;
+        }
+      }
+    });
+  }
+
   const closeModal = () => overlay.remove();
   overlay.querySelector('#tm-modal-close').addEventListener('click', closeModal);
   overlay.querySelector('#tm-modal-cancel').addEventListener('click', closeModal);
@@ -1985,6 +2051,62 @@ async function showEditTradeModal(info) {
       ...(premium != null && { premium }),
     };
 
+    // Resolve session_id: create new if sentinel, use existing if UUID, omit if unchanged
+    const rawSession = fd.get('session_id') || '';
+    let resolvedSessionId = null;
+    let resolvedSessionStrategy = null;
+    const sessionChanged = rawSession !== String(trade.session_id || '');
+
+    if (sessionChanged && rawSession && !rawSession.startsWith('__new_')) {
+      resolvedSessionId = rawSession;
+      resolvedSessionStrategy = getSessionStrategyFromValue(rawSession, tickerSessions);
+      payload.session_id = resolvedSessionId;
+    } else if (rawSession.startsWith('__new_')) {
+      if (rawSession === '__new_WHEEL__') {
+        const wheelStatus = (fd.get('strategy') === 'Sell Put') ? 'put_open' : 'cc_open';
+        const sessionResp = await fetch(`${tmApiUrl}/api/sessions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ticker: payload.ticker || trade.ticker.toUpperCase(),
+            strategy: 'WHEEL',
+            status: wheelStatus,
+            opened_at: trade.open_date,
+          }),
+          signal: AbortSignal.timeout(8000),
+        });
+        if (!sessionResp.ok) {
+          const err = await sessionResp.json().catch(() => ({}));
+          throw new Error(err.detail || 'Failed to create session');
+        }
+        const newSession = await sessionResp.json();
+        resolvedSessionId = newSession.id;
+        resolvedSessionStrategy = 'WHEEL';
+        payload.session_id = resolvedSessionId;
+      } else {
+        const strategy = rawSession === '__new_IC__' ? 'IRON_CONDOR' : 'PUT_B_W_FLY';
+        const sessionResp = await fetch(`${tmApiUrl}/api/sessions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ticker: payload.ticker || trade.ticker.toUpperCase(),
+            strategy,
+            status: 'open',
+            opened_at: trade.open_date,
+          }),
+          signal: AbortSignal.timeout(8000),
+        });
+        if (!sessionResp.ok) {
+          const err = await sessionResp.json().catch(() => ({}));
+          throw new Error(err.detail || 'Failed to create session');
+        }
+        const newSession = await sessionResp.json();
+        resolvedSessionId = newSession.id;
+        resolvedSessionStrategy = strategy;
+        payload.session_id = resolvedSessionId;
+      }
+    }
+
     try {
       const resp = await fetch(`${tmApiUrl}/api/trades/${tradeId}`, {
         method: 'PATCH',
@@ -1998,6 +2120,31 @@ async function showEditTradeModal(info) {
         throw new Error(err.detail || `HTTP ${resp.status}`);
       }
 
+      // Auto-transition WHEEL session status when a leg is attached
+      if (resolvedSessionId && resolvedSessionStrategy === 'WHEEL') {
+        const tradeStrategy = fd.get('strategy');
+        const selectedSession = tickerSessions.find(s => String(s.id) === resolvedSessionId);
+        let newStatus = null;
+        if ((tradeStrategy === 'Sell Call' || tradeStrategy === 'Covered Call')
+            && selectedSession?.status === 'shares_sitting') {
+          newStatus = 'cc_open';
+        } else if (tradeStrategy === 'Sell Put' && selectedSession?.status === 'called_away') {
+          newStatus = 'put_open';
+        }
+        if (newStatus) {
+          try {
+            await fetch(`${tmApiUrl}/api/sessions/${resolvedSessionId}`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ status: newStatus }),
+              signal: AbortSignal.timeout(5000),
+            });
+          } catch (e) {
+            console.debug('[TM] session auto-transition failed:', e.message);
+          }
+        }
+      }
+
       // Invalidate cache so the row badge refreshes
       const cacheKey = info.fullSymbol || info.ticker;
       statusCache.delete(cacheKey);
@@ -2005,6 +2152,7 @@ async function showEditTradeModal(info) {
       processedRows.forEach((val, key) => {
         if (val === cacheKey || val === info.ticker) processedRows.delete(key);
       });
+      await fetchAllActiveSessions(true);
       processVisibleRows();
       closeModal();
 
