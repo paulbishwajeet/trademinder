@@ -37,7 +37,8 @@ A dedicated WHEEL Strategy page in the frontend that shows every active WHEEL in
 - `frontend/src/api/technicals.ts` — used by WheelSessionCard called_away badge (2026-06-10)
 - `frontend/src/types/index.ts` — add Session types
 - `frontend/src/App.tsx` — add /wheel route
-- `extension/content.js` — **rewritten pill matching: `etrade_symbol`-exact via `/api/sessions/active` + `etradeSymbolIndex`** (2026-06-09); index now only includes `status === 'open'` legs (2026-06-10)
+- `frontend/src/components/Wheel/LinkLegModal.tsx` — **new** (2026-06-18): modal for selecting an unlinked open trade to attach as a leg before status transition
+- `extension/content.js` — **rewritten pill matching: `etrade_symbol`-exact via `/api/sessions/active` + `etradeSymbolIndex`** (2026-06-09); index now only includes `status === 'open'` legs (2026-06-10); **60s TTL refresh replaces once-per-page-load fetch** (2026-06-18)
 
 ## Technical Approach
 - `trade_sessions` table: id, ticker, strategy, status, rotation_number, parent_session_id (self-ref), opened_at, closed_at, metadata JSONB
@@ -70,6 +71,9 @@ shares_sitting can also start from: direct Buy (Buy Write)
 | `called_away` transition | Auto-`POST /trades/{id}/close` on the open option leg (CC); stock leg left untouched | The CC is gone from E*TRADE once assigned/expired; the stock may still be carried into another wheel rotation, so it must not be auto-closed |
 | Extension leg index filter | `etradeSymbolIndex` only includes legs with `status === 'open'` | Once a leg is closed in TradeMinder (e.g. via the called_away auto-close above), its E*TRADE row (even if still showing as a stale position) should stop getting a WHL pill |
 | `called_away` dashboard signal | Live `GET /api/market/technicals/{ticker}` fetched client-side per called_away `WheelSessionCard`, badge derived from RSI/Bollinger/sentiment | User has no E*TRADE reminder to watch for a put-selling setup after a CC is called away; reuses the existing technicals endpoint rather than persisting new state |
+| Leg linking on status transition | `LinkLegModal` — in-context modal to select+link an existing trade before moving to `put_open`/`cc_open` (replaces navigating to `/trades`) | Streamlines the reinstatement flow; user shouldn't have to leave the Wheel dashboard to link a new leg |
+| `shares_sitting` auto-close | Auto-close open option legs on `shares_sitting` transition (same as `called_away`) | When shares are assigned from a put, the put contract is gone — its trade should be closed |
+| Extension session refresh | 60s TTL (`ACTIVE_SESSIONS_TTL`) instead of once-per-page-load | Pills were stale after status changes; periodic refresh keeps them current without requiring a full page reload |
 
 ## Open Questions / Blockers
 - [ ] Alembic migration 006 not yet applied to QNAP production DB (pre-existing blocker — need to run `alembic upgrade head` on prod)
@@ -89,20 +93,19 @@ shares_sitting can also start from: direct Buy (Buy Write)
 - 2026-05-31 — All 8 tasks implemented via subagent-driven development (8 implementers + spec + quality reviews each). 12 commits on `strategy-sessions`. 124 backend tests pass, TypeScript 0 errors. Branch kept as-is for user to push/merge when ready.
 - 2026-06-09 — Fixed strategy-pill mismatch bug (e.g. a standalone sold put showing "WHL: CC Open"): replaced ticker-based `/lookup` matching with exact `etrade_symbol` leg matching via a new bulk `GET /api/sessions/active` endpoint and client-side `etradeSymbolIndex`. Also fixed `NewWheelModal` so creating a wheel can link multiple existing trades (stock + CC) via checkboxes, not just one — confirmed working end-to-end after a fresh-DB test.
 - 2026-06-10 — Added a `called_away` "watch for a put-selling setup" signal badge to `WheelSessionCard` (RSI/Bollinger/sentiment via `/api/market/technicals`). Also: marking a session `called_away` now auto-closes its open option leg (CC) via `POST /trades/{id}/close` while leaving the stock leg open (may belong to another rotation); extension `etradeSymbolIndex` now skips non-`open` legs so a closed CC's stale E*TRADE row stops showing a WHL pill.
+- 2026-06-18 — Added `LinkLegModal` for wheel session reinstatement: "+" New Put" and "+ Sell CC" buttons now open a modal to select and link an existing unlinked open trade before transitioning status (replaces plain navigation to `/trades`). Also: extension active-sessions fetch changed from once-per-page-load to 60s TTL refresh; `shares_sitting` transition now auto-closes open option legs (same as `called_away`); `WheelDashboardPage.handleStatusUpdate` re-fetches session detail after optimistic update to refresh leg state.
 
 ## Current State (Resume Here)
-Branch `bug-ext-strategypill` (current branch). All changes above are implemented and `npx tsc --noEmit` passes from `frontend/`. **Not yet committed.**
+Branch `feature/strategyupdate`. All wheel session reinstatement changes committed (`9a332f5`). The `LinkLegModal` flow replaces the old "navigate to /trades" buttons with an in-context modal that lets the user pick an existing unlinked trade to attach as a leg before transitioning status.
 
-What's done and untested end-to-end:
-- `etrade_symbol`-exact pill matching + `/api/sessions/active` (tested, confirmed working by user on 2026-06-09)
-- `NewWheelModal` multi-select linking (tested, confirmed working by user on 2026-06-09)
-- `called_away` technical-signal badge on `WheelSessionCard` (implemented 2026-06-10, **not yet manually tested in browser**)
-- `called_away` → auto-close CC leg + extension stops pilling closed legs (implemented 2026-06-10, **not yet manually tested**)
+**What's implemented but not yet end-to-end tested in browser:**
+- `LinkLegModal` — selecting an unlinked trade, linking it to the session, and transitioning status (put_open / cc_open)
+- `shares_sitting` auto-close of option legs (parallels the existing `called_away` auto-close)
+- Extension 60s TTL refresh of active sessions (was once-per-page-load)
+- Dashboard leg refresh after status update (re-fetches session detail)
 
-**Next action:** Reload the Chrome extension (content.js changed) and test the called_away flow end-to-end:
-1. Open a `cc_open` wheel session on the Wheel dashboard, click "Update Status" → `called_away`.
-2. Verify the CC trade is auto-closed (`status='closed'`, `closed_date` set) — check via `GET /api/trades/{id}` or DB.
-3. Refresh the E*TRADE positions tab and confirm the (now-stale) CC row no longer shows a "WHL: ⚠ Action" pill, while the stock row's pill behavior is unchanged.
-4. Confirm the called_away `WheelSessionCard` shows the new RSI/sentiment-based "Pulled back — consider put" / "Neutral — keep watching" / etc. badge next to "+ New Put".
-
-Then decide whether to proceed with the still-unconfirmed "Continue Wheel (New Rotation)" feature (see Open Questions).
+**Next action:** Start the frontend dev server and backend, open the Wheel dashboard, and test the `LinkLegModal` flow:
+1. From a `called_away` session, click "+ New Put" → verify modal shows unlinked open trades for that ticker → select one → confirm it links and transitions to `put_open`.
+2. From a `shares_sitting` session, click "+ Sell CC" → same flow → transitions to `cc_open`.
+3. Verify the "Skip" path works (transitions status without linking a trade).
+4. Reload the Chrome extension and confirm pills refresh within 60s without a full page reload.

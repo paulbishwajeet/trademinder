@@ -48,7 +48,7 @@ The dropdown contents update dynamically when the strategy `<select>` changes:
 | Trade strategy selected | Sessions shown | "New" options shown |
 |---|---|---|
 | Sell Call, Covered Call | WHEEL with status `shares_sitting` | → New Wheel Session |
-| Sell Put | WHEEL with status `called_away` or `completed` + IC + PBWB | → New Wheel Session, → New IC, → New PBWB |
+| Sell Put | WHEEL with status `called_away` + IC + PBWB | → New Wheel Session, → New IC, → New PBWB |
 | Put Credit Spread, Call Credit Spread | IC + PBWB | → New IC, → New PBWB |
 | Buy Put, Buy Call | IC + PBWB | → New IC, → New PBWB |
 | Stock | (dropdown hidden) | — |
@@ -95,7 +95,6 @@ After the trade is created/updated and linked to a WHEEL session, the extension 
 |---|---|---|
 | `shares_sitting` | Sell Call / Covered Call | `cc_open` |
 | `called_away` | Sell Put | `put_open` |
-| `completed` | Sell Put | `put_open` |
 
 This uses the existing `PATCH /api/sessions/{id}` endpoint with `{ status: "..." }`.
 
@@ -126,8 +125,8 @@ The edit modal gains a session dropdown between Category and Strike:
 
 - Fetches sessions for `trade.ticker` on modal open
 - Pre-selects `trade.session_id` if present (matched against fetched sessions)
-- If `trade.session_id` points to a session not in the fetched list (e.g., closed session), show it as a disabled option: `{label} (closed)` so the user sees what it was
-- Clearing to "— None —" sends `session_id: null` in the PATCH payload
+- If `trade.session_id` points to a session not in the fetched list (e.g., filtered by strategy), show it as an extra option so the user sees the current link
+- Selecting "— None —" omits `session_id` from the PATCH payload (backend `exclude_none=True` prevents clearing to null; detaching a trade from a session must be done from the Wheel dashboard)
 - Same strategy-aware filtering, "new" options, auto-category, and auto-transition as add modal
 - `rebuildSessionDropdown` is shared between both modals
 
