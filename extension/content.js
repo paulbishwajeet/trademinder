@@ -1463,11 +1463,74 @@ function buildCategoryOptions(categories, selectedValue = 'WHEEL') {
 }
 
 // ============================================================
+// SESSION DROPDOWN HELPERS (shared by add-trade & edit-trade)
+// ============================================================
+const WHEEL_STATUS_LABELS = {
+  put_open: 'Put Open',
+  shares_sitting: 'Shares Sitting',
+  cc_open: 'CC Open',
+  called_away: 'Called Away',
+  completed: 'Completed',
+};
+
+function rebuildSessionDropdown(selectEl, sessions, strategy) {
+  const isCC = strategy === 'Sell Call' || strategy === 'Covered Call';
+  const isPut = strategy === 'Sell Put';
+
+  const filtered = sessions.filter(s => {
+    if (s.strategy === 'WHEEL') {
+      if (isCC) return s.status === 'shares_sitting';
+      if (isPut) return s.status === 'called_away';
+      return false;
+    }
+    if (s.strategy === 'IRON_CONDOR' || s.strategy === 'PUT_B_W_FLY') {
+      return !isCC;
+    }
+    return false;
+  });
+
+  const options = filtered.map(s => {
+    let label;
+    if (s.strategy === 'WHEEL') {
+      const statusLabel = WHEEL_STATUS_LABELS[s.status] || s.status;
+      label = `WHL · ${s.ticker} · ${statusLabel} · opened ${s.opened_at}`;
+    } else {
+      const tag = s.strategy === 'IRON_CONDOR' ? 'IC' : 'PBWB';
+      label = `${tag} · ${s.ticker} · opened ${s.opened_at}`;
+    }
+    return `<option value="${s.id}">${label}</option>`;
+  });
+
+  const newOptions = [];
+  if (isCC || isPut) {
+    newOptions.push('<option value="__new_WHEEL__">→ New Wheel Session</option>');
+  }
+  if (!isCC) {
+    newOptions.push('<option value="__new_IC__">→ New Iron Condor Session</option>');
+    newOptions.push('<option value="__new_PBWB__">→ New Put BWB Session</option>');
+  }
+
+  selectEl.innerHTML =
+    '<option value="">— None —</option>' +
+    options.join('') +
+    newOptions.join('');
+}
+
+function getSessionStrategyFromValue(value, sessions) {
+  if (value === '__new_WHEEL__') return 'WHEEL';
+  if (value === '__new_IC__') return 'IRON_CONDOR';
+  if (value === '__new_PBWB__') return 'PUT_B_W_FLY';
+  const match = sessions.find(s => String(s.id) === value);
+  return match ? match.strategy : null;
+}
+
+// ============================================================
 // ADD TRADE MODAL
 // ============================================================
 async function showAddTradeModal(info) {
   const categories = await fetchCategories();
   if (document.getElementById('tm-modal-overlay')) return; // already open
+  let tickerSessions = [];
 
   const overlay = document.createElement('div');
   overlay.id = 'tm-modal-overlay';
@@ -1519,9 +1582,9 @@ async function showAddTradeModal(info) {
         </div>
         ${info.isOption ? `
         <div class="tm-field-row tm-field-full" id="tm-session-row">
-          <label>Spread Session <span style="font-weight:normal;color:#6B7280">(optional)</span></label>
+          <label>Session <span style="font-weight:normal;color:#6B7280">(optional)</span></label>
           <select name="session_id" id="tm-session-select">
-            <option value="">Loading…</option>
+            <option value="">— None —</option>
           </select>
         </div>` : ''}
         <div class="tm-field-row">
@@ -1566,33 +1629,35 @@ async function showAddTradeModal(info) {
 
   document.body.appendChild(overlay);
 
-  // Populate spread session picker for option rows
+  // Populate session picker for option rows (WHEEL, IC, PBWB)
   if (info.isOption) {
     const sessionSelect = overlay.querySelector('#tm-session-select');
+    const strategySelect = overlay.querySelector('[name="strategy"]');
+    const categorySelect = overlay.querySelector('[name="category"]');
     const ticker = (info.ticker || '').toUpperCase();
-    try {
-      const res = await fetch(
-        `${tmApiUrl}/api/sessions?ticker=${encodeURIComponent(ticker)}&status=open`,
-        { signal: AbortSignal.timeout(5000) },
-      );
-      const sessions = res.ok ? await res.json() : [];
-      const spreadSessions = sessions.filter(s =>
-        s.strategy === 'IRON_CONDOR' || s.strategy === 'PUT_B_W_FLY'
-      );
-      sessionSelect.innerHTML =
-        '<option value="">— None —</option>' +
-        spreadSessions.map(s => {
-          const label = s.strategy === 'IRON_CONDOR' ? 'IC' : 'PBWB';
-          return `<option value="${s.id}">${label} · ${s.ticker} · opened ${s.opened_at}</option>`;
-        }).join('') +
-        '<option value="__new_IC__">→ New Iron Condor Session</option>' +
-        '<option value="__new_PBWB__">→ New Put BWB Session</option>';
-    } catch {
-      sessionSelect.innerHTML =
-        '<option value="">— None —</option>' +
-        '<option value="__new_IC__">→ New Iron Condor Session</option>' +
-        '<option value="__new_PBWB__">→ New Put BWB Session</option>';
-    }
+
+    await fetchAllActiveSessions(true);
+    tickerSessions = allActiveSessions.filter(
+      s => s.ticker.toUpperCase() === ticker,
+    );
+
+    rebuildSessionDropdown(sessionSelect, tickerSessions, strategySelect.value);
+
+    strategySelect.addEventListener('change', () => {
+      rebuildSessionDropdown(sessionSelect, tickerSessions, strategySelect.value);
+    });
+
+    sessionSelect.addEventListener('change', () => {
+      const strat = getSessionStrategyFromValue(sessionSelect.value, tickerSessions);
+      if (strat) {
+        const catMap = { WHEEL: 'WHEEL', IRON_CONDOR: 'IRON_CONDOR', PUT_B_W_FLY: 'PUT_B_W_FLY' };
+        const catName = catMap[strat];
+        if (catName) {
+          const catOption = categorySelect.querySelector(`option[value="${catName}"]`);
+          if (catOption) categorySelect.value = catName;
+        }
+      }
+    });
   }
 
   const closeModal = () => overlay.remove();
@@ -1650,28 +1715,53 @@ async function showAddTradeModal(info) {
 
     // Resolve session_id: create a new session if requested, or use existing
     let resolvedSessionId = null;
+    let resolvedSessionStrategy = null;
     const rawSession = info.isOption ? (fd.get('session_id') || '') : '';
     if (rawSession && !rawSession.startsWith('__new_')) {
       resolvedSessionId = rawSession;
-    } else if (rawSession === '__new_IC__' || rawSession === '__new_PBWB__') {
-      const strategy = rawSession === '__new_IC__' ? 'IRON_CONDOR' : 'PUT_B_W_FLY';
-      const sessionResp = await fetch(`${tmApiUrl}/api/sessions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ticker: payload.ticker,
-          strategy,
-          status: 'open',
-          opened_at: payload.open_date,
-        }),
-        signal: AbortSignal.timeout(8000),
-      });
-      if (!sessionResp.ok) {
-        const err = await sessionResp.json().catch(() => ({}));
-        throw new Error(err.detail || 'Failed to create session');
+      resolvedSessionStrategy = getSessionStrategyFromValue(rawSession, tickerSessions);
+    } else if (rawSession.startsWith('__new_')) {
+      if (rawSession === '__new_WHEEL__') {
+        const wheelStatus = (fd.get('strategy') === 'Sell Put') ? 'put_open' : 'cc_open';
+        const sessionResp = await fetch(`${tmApiUrl}/api/sessions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ticker: payload.ticker,
+            strategy: 'WHEEL',
+            status: wheelStatus,
+            opened_at: payload.open_date,
+          }),
+          signal: AbortSignal.timeout(8000),
+        });
+        if (!sessionResp.ok) {
+          const err = await sessionResp.json().catch(() => ({}));
+          throw new Error(err.detail || 'Failed to create session');
+        }
+        const newSession = await sessionResp.json();
+        resolvedSessionId = newSession.id;
+        resolvedSessionStrategy = 'WHEEL';
+      } else {
+        const strategy = rawSession === '__new_IC__' ? 'IRON_CONDOR' : 'PUT_B_W_FLY';
+        const sessionResp = await fetch(`${tmApiUrl}/api/sessions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ticker: payload.ticker,
+            strategy,
+            status: 'open',
+            opened_at: payload.open_date,
+          }),
+          signal: AbortSignal.timeout(8000),
+        });
+        if (!sessionResp.ok) {
+          const err = await sessionResp.json().catch(() => ({}));
+          throw new Error(err.detail || 'Failed to create session');
+        }
+        const newSession = await sessionResp.json();
+        resolvedSessionId = newSession.id;
+        resolvedSessionStrategy = strategy;
       }
-      const newSession = await sessionResp.json();
-      resolvedSessionId = newSession.id;
     }
     if (resolvedSessionId) payload.session_id = resolvedSessionId;
 
@@ -1689,6 +1779,31 @@ async function showAddTradeModal(info) {
       }
 
       const trade = await resp.json();
+
+      // Auto-transition WHEEL session status when a leg is attached
+      if (resolvedSessionId && resolvedSessionStrategy === 'WHEEL') {
+        const tradeStrategy = fd.get('strategy');
+        const selectedSession = tickerSessions.find(s => String(s.id) === resolvedSessionId);
+        let newStatus = null;
+        if ((tradeStrategy === 'Sell Call' || tradeStrategy === 'Covered Call')
+            && selectedSession?.status === 'shares_sitting') {
+          newStatus = 'cc_open';
+        } else if (tradeStrategy === 'Sell Put' && selectedSession?.status === 'called_away') {
+          newStatus = 'put_open';
+        }
+        if (newStatus) {
+          try {
+            await fetch(`${tmApiUrl}/api/sessions/${resolvedSessionId}`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ status: newStatus }),
+              signal: AbortSignal.timeout(5000),
+            });
+          } catch (e) {
+            console.debug('[TM] session auto-transition failed:', e.message);
+          }
+        }
+      }
 
       // Save technicals snapshot if user fetched them
       const techSnapshot = techFormControl ? techFormControl.getValue() : null;
