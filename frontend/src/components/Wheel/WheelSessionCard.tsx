@@ -5,6 +5,7 @@ import type { SessionWithLegs, SessionSummary, SessionLeg, TechnicalsData } from
 import { sessionsApi } from '../../api/sessions'
 import { tradesApi } from '../../api/trades'
 import { technicalsApi } from '../../api/technicals'
+import { LinkLegModal } from './LinkLegModal'
 
 interface Props {
   session: SessionWithLegs
@@ -71,6 +72,7 @@ export function WheelSessionCard({ session, onStatusUpdate }: Props) {
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [technicals, setTechnicals] = useState<TechnicalsData | null>(null)
+  const [linkModalTarget, setLinkModalTarget] = useState<string | null>(null)
 
   // Called-away sessions sit in cash waiting for a good setup to sell a new put.
   // Surface a quick technical read so it's not just a silent "needs action" bucket.
@@ -91,14 +93,19 @@ export function WheelSessionCard({ session, onStatusUpdate }: Props) {
     .filter(l => l.premium != null)
     .reduce((sum, l) => sum + (l.premium ?? 0) * l.quantity, 0)
 
+  const LINK_BEFORE_TRANSITION = new Set(['cc_open', 'put_open'])
+
   async function handleStatusChange(newStatus: string) {
+    if (LINK_BEFORE_TRANSITION.has(newStatus)) {
+      setLinkModalTarget(newStatus)
+      setShowStatusEdit(false)
+      return
+    }
     setSaving(true)
     setSaveError(null)
     try {
       await sessionsApi.update(session.id, { status: newStatus as 'put_open' | 'shares_sitting' | 'cc_open' | 'called_away' | 'completed' })
-      if (newStatus === 'called_away') {
-        // The CC was assigned/expired and is gone from E*TRADE — close it out.
-        // Leave the stock leg open: it may still be carried by another wheel rotation.
+      if (newStatus === 'called_away' || newStatus === 'shares_sitting') {
         const optionLegs = session.legs.filter(l => l.status === 'open' && l.strike_price != null)
         await Promise.all(optionLegs.map(l => tradesApi.close(l.id)))
       }
@@ -153,21 +160,21 @@ export function WheelSessionCard({ session, onStatusUpdate }: Props) {
                     {putSellSignal(technicals).label}
                   </span>
                 )}
-                <Link
-                  to="/trades"
+                <button
+                  onClick={() => setLinkModalTarget('put_open')}
                   className="px-2 py-1 text-xs bg-amber-100 text-amber-800 rounded hover:bg-amber-200"
                 >
                   + New Put
-                </Link>
+                </button>
               </>
             )}
             {session.status === 'shares_sitting' && (
-              <Link
-                to="/trades"
+              <button
+                onClick={() => setLinkModalTarget('cc_open')}
                 className="px-2 py-1 text-xs bg-amber-100 text-amber-800 rounded hover:bg-amber-200"
               >
                 + Sell CC
-              </Link>
+              </button>
             )}
             {nextStatuses.length > 0 && !showStatusEdit && (
               <button
@@ -265,6 +272,18 @@ export function WheelSessionCard({ session, onStatusUpdate }: Props) {
             </div>
           )}
         </div>
+      )}
+      {linkModalTarget && (
+        <LinkLegModal
+          sessionId={session.id}
+          ticker={session.ticker}
+          targetStatus={linkModalTarget}
+          onDone={() => {
+            setLinkModalTarget(null)
+            onStatusUpdate(session.id, linkModalTarget)
+          }}
+          onCancel={() => setLinkModalTarget(null)}
+        />
       )}
     </div>
   )

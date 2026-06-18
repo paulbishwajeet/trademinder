@@ -38,8 +38,9 @@ const commentaryCountCache = new Map();
 let etradeSymbolIndex = new Map();
 // all sessions returned by /api/sessions/active (used for spread price lookups)
 let allActiveSessions = [];
-// true once /api/sessions/active has been fetched for this page load
-let activeSessionsFetched = false;
+// timestamp (ms) when /api/sessions/active was last fetched; 0 = never
+let activeSessionsFetchedAt = 0;
+const ACTIVE_SESSIONS_TTL = 60_000; // re-fetch every 60 seconds
 // ticker (uppercase) → current price (number) | null (spread session price signal)
 const priceCache = new Map();
 // full_symbol||ticker (uppercase) → true: position is in E*TRADE but not backend
@@ -1277,13 +1278,13 @@ async function fetchRsiForAll() {
 // Fetches all active sessions (any ticker/strategy) once per page load and
 // builds an etrade_symbol → session index for exact row-to-session matching.
 async function fetchAllActiveSessions(force = false) {
-  if (activeSessionsFetched && !force) return;
+  if (!force && activeSessionsFetchedAt && (Date.now() - activeSessionsFetchedAt < ACTIVE_SESSIONS_TTL)) return;
   try {
     const res = await fetch(
       `${tmApiUrl}/api/sessions/active`,
       { signal: AbortSignal.timeout(5000) },
     );
-    if (!res.ok) { activeSessionsFetched = true; return; }
+    if (!res.ok) { activeSessionsFetchedAt = Date.now(); return; }
     const sessions = await res.json();
     allActiveSessions = sessions;
     const index = new Map();
@@ -1293,9 +1294,9 @@ async function fetchAllActiveSessions(force = false) {
       }
     }
     etradeSymbolIndex = index;
-    activeSessionsFetched = true;
+    activeSessionsFetchedAt = Date.now();
   } catch {
-    activeSessionsFetched = true;
+    activeSessionsFetchedAt = Date.now();
   }
 }
 

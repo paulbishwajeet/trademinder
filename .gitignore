@@ -25,3 +25,5 @@ frontend/.vite/
 .vscode/
 stockpile-main
 .playwright-mcp/
+
+.docs/DOMSample.html
