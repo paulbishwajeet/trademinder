@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import type { WheelSessionDetail, WheelSessionSummary, WheelSlotDetail } from '../types'
-import { wheelApi } from '../api/wheel'
+import type { WheelSessionDetail, WheelSessionSummary, WheelSlotDetail, CCSignalResult } from '../types'
+import { wheelApi, ccSignalApi } from '../api/wheel'
 import { NewWheelModalV2 } from '../components/Wheel/NewWheelModalV2'
 import { AddSlotModal } from '../components/Wheel/AddSlotModal'
 import { ResolveModal } from '../components/Wheel/ResolveModal'
@@ -24,6 +24,13 @@ const STATUS_LABELS: Record<string, string> = {
   sold_put_active: 'Sold Put Active',
 }
 
+const GRADE_COLORS: Record<string, string> = {
+  strong: 'bg-green-100 text-green-800 border-green-300',
+  moderate: 'bg-amber-100 text-amber-800 border-amber-300',
+  weak: 'bg-gray-100 text-gray-600 border-gray-300',
+  wait: 'bg-gray-50 text-gray-400 border-gray-200',
+}
+
 export function WheelDashboardPage() {
   const [sessions, setSessions] = useState<WheelSessionDetail[]>([])
   const [loading, setLoading] = useState(true)
@@ -33,6 +40,8 @@ export function WheelDashboardPage() {
   const [resolveSlotId, setResolveSlotId] = useState<string | null>(null)
   const [linkSlotId, setLinkSlotId] = useState<string | null>(null)
   const [expandedSlot, setExpandedSlot] = useState<string | null>(null)
+  const [signals, setSignals] = useState<Record<string, CCSignalResult | 'loading' | 'error'>>({})
+  const [signalDetail, setSignalDetail] = useState<string | null>(null)
 
   async function load() {
     setLoading(true)
@@ -49,6 +58,18 @@ export function WheelDashboardPage() {
   }
 
   useEffect(() => { load() }, [])
+
+  useEffect(() => {
+    if (sessions.length === 0) return
+    const tickers = [...new Set(sessions.map(s => s.ticker))]
+    tickers.forEach(ticker => {
+      if (signals[ticker]) return
+      setSignals(prev => ({ ...prev, [ticker]: 'loading' }))
+      ccSignalApi.get(ticker)
+        .then(result => setSignals(prev => ({ ...prev, [ticker]: result })))
+        .catch(() => setSignals(prev => ({ ...prev, [ticker]: 'error' })))
+    })
+  }, [sessions])
 
   const allSlots = flattenSlots(sessions)
   const needsAction = allSlots.filter(f => f.slot.needs_action)
@@ -76,10 +97,65 @@ export function WheelDashboardPage() {
     return parts.join(' · ') || '—'
   }
 
+  function renderSignalBadge(ticker: string) {
+    const sig = signals[ticker]
+    if (sig === 'loading') return <span className="text-xs text-gray-400 animate-pulse">...</span>
+    if (sig === 'error' || !sig) return <span className="text-xs text-gray-300" title="Signal unavailable">&mdash;</span>
+    return (
+      <button
+        onClick={() => setSignalDetail(signalDetail === ticker ? null : ticker)}
+        className={`text-xs font-medium px-2 py-0.5 rounded-full border ${GRADE_COLORS[sig.grade] ?? GRADE_COLORS.wait} hover:opacity-80`}
+        title={sig.commentary ?? `Score: ${sig.score}`}
+      >
+        {sig.grade === 'wait' ? 'Wait' : `${sig.grade.charAt(0).toUpperCase() + sig.grade.slice(1)} ${sig.score}`}
+      </button>
+    )
+  }
+
+  function renderSignalDetailRow(ticker: string) {
+    if (signalDetail !== ticker) return null
+    const sig = signals[ticker]
+    if (!sig || sig === 'loading' || sig === 'error') return null
+
+    return (
+      <tr key={`${ticker}-signal-detail`}>
+        <td colSpan={8} className="py-3 px-4 bg-gray-50 border-t border-gray-200">
+          <div className="space-y-2 text-xs">
+            <div className="grid grid-cols-2 gap-x-6 gap-y-1">
+              {sig.factors.map(f => (
+                <div key={f.name} className="flex justify-between">
+                  <span className="text-gray-500">{f.name}</span>
+                  <span className="text-gray-700 font-medium">
+                    {f.points}/{f.max}{' '}
+                    <span className="text-gray-400 font-normal">{f.detail}</span>
+                  </span>
+                </div>
+              ))}
+            </div>
+            {sig.commentary && (
+              <p className="text-gray-700 pt-1 border-t border-gray-200">{sig.commentary}</p>
+            )}
+            {sig.strike_hint && (
+              <p className="text-blue-700">{sig.strike_hint}</p>
+            )}
+            {sig.caution && (
+              <p className="text-amber-700 font-medium">{sig.caution}</p>
+            )}
+            <p className="text-gray-400">
+              IV Pct: {sig.iv_percentile != null ? `${sig.iv_percentile}%` : 'N/A'}
+              {sig.atm_iv != null && ` · ATM IV: ${(sig.atm_iv * 100).toFixed(1)}%`}
+              {sig.spot_price != null && ` · Spot: $${sig.spot_price}`}
+              {' · '}Updated: {new Date(sig.cached_at).toLocaleTimeString()}
+            </p>
+          </div>
+        </td>
+      </tr>
+    )
+  }
+
   function renderSlotRow(f: FlatSlot) {
     const { slot, ticker } = f
     const isExpanded = expandedSlot === slot.id
-    const currentLegs = slot.legs.filter(l => l.rotation_number === slot.rotation_number)
 
     return (
       <tr key={slot.id} className="group">
@@ -98,6 +174,7 @@ export function WheelDashboardPage() {
         <td className="py-2 pr-3 text-xs text-gray-500">{activeLegInfo(slot)}</td>
         <td className="py-2 pr-3 text-xs text-gray-400">R{slot.rotation_number}</td>
         <td className="py-2 pr-3 text-xs font-medium text-green-600">${slot.total_premium}</td>
+        <td className="py-2 pr-3">{renderSignalBadge(ticker)}</td>
         <td className="py-2 text-right">
           <div className="flex items-center gap-1 justify-end">
             {slot.needs_action && (
@@ -129,7 +206,7 @@ export function WheelDashboardPage() {
     if (currentLegs.length === 0) {
       return (
         <tr key={`${f.slot.id}-legs`}>
-          <td colSpan={7} className="py-1 pl-8 text-xs text-gray-400 italic">No legs in current rotation.</td>
+          <td colSpan={8} className="py-1 pl-8 text-xs text-gray-400 italic">No legs in current rotation.</td>
         </tr>
       )
     }
@@ -142,7 +219,7 @@ export function WheelDashboardPage() {
           {leg.trade_expiry_date ?? '—'}{leg.trade_premium != null ? ` · $${leg.trade_premium}` : ''}
         </td>
         <td className="py-1 pr-3 text-xs text-gray-400 capitalize">{leg.trade_status}</td>
-        <td colSpan={2} className="py-1 text-xs text-right">
+        <td colSpan={3} className="py-1 text-xs text-right">
           <Link to={`/trades/${leg.trade_id}`} className="text-blue-500 hover:underline">view</Link>
         </td>
       </tr>
@@ -167,15 +244,20 @@ export function WheelDashboardPage() {
                 <th className="py-2 pr-3 font-normal">Active Leg</th>
                 <th className="py-2 pr-3 font-normal">Rot</th>
                 <th className="py-2 pr-3 font-normal">Premium</th>
+                <th className="py-2 pr-3 font-normal">Signal</th>
                 <th className="py-2 pr-3 font-normal"></th>
               </tr>
             </thead>
-            {slots.map(f => (
-              <tbody key={f.slot.id} className="border-t border-gray-50">
-                {renderSlotRow(f)}
-                {renderLegRows(f)}
-              </tbody>
-            ))}
+            {slots.map((f, idx) => {
+              const isFirstForTicker = slots.findIndex(s => s.ticker === f.ticker) === idx
+              return (
+                <tbody key={f.slot.id} className="border-t border-gray-50">
+                  {renderSlotRow(f)}
+                  {renderLegRows(f)}
+                  {isFirstForTicker && renderSignalDetailRow(f.ticker)}
+                </tbody>
+              )
+            })}
           </table>
         </div>
       </section>

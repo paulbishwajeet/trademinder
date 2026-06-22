@@ -239,6 +239,31 @@ export interface WheelActiveSlot {
   etrade_symbols: string[]
 }
 
+// ── CC Sell Signal types ────────────────────────────────────────
+
+export interface CCSignalFactor {
+  name: string
+  points: number
+  max: number
+  detail: string
+}
+
+export interface CCSignalResult {
+  ticker: string
+  score: number
+  grade: string
+  iv_percentile: number | null
+  atm_iv: number | null
+  spot_price: number | null
+  factors: CCSignalFactor[]
+  commentary: string | null
+  strike_hint: string | null
+  caution: string | null
+  cached_at: string
+  fetch_status: string
+  fetch_error: string | null
+}
+
 export function isStale(trade: Trade): boolean {
   if (!trade.last_etrade_seen) return false
   return new Date(trade.last_etrade_seen) < new Date(Date.now() - 24 * 60 * 60 * 1000)

@@ -1,7 +1,7 @@
 import { apiFetch } from './client'
 import type {
   WheelSessionSummary, WheelSessionDetail, WheelSlotDetail,
-  WheelSlotLegItem, WheelActiveSlot,
+  WheelSlotLegItem, WheelActiveSlot, CCSignalResult,
 } from '../types'
 
 export interface WheelSessionCreate {
@@ -62,4 +62,9 @@ export const wheelApi = {
     apiFetch<WheelSlotDetail>(`/wheel/slots/${slotId}/resolve`, { method: 'POST', body: JSON.stringify(payload) }),
 
   activeSlots: () => apiFetch<WheelActiveSlot[]>('/wheel/active-slots'),
+}
+
+export const ccSignalApi = {
+  get: (ticker: string) =>
+    apiFetch<CCSignalResult>(`/market/cc-signal/${encodeURIComponent(ticker)}`),
 }
