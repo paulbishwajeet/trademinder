@@ -115,9 +115,33 @@ def _fetch_one_rsi(ticker: str) -> tuple[str, dict | None]:
 
 
 def _fetch_rsi_from_yfinance(tickers: list[str]) -> dict[str, dict | None]:
-    """Parallel RSI fetch — 5 workers keeps yfinance from throttling."""
-    with ThreadPoolExecutor(max_workers=5) as ex:
-        return dict(ex.map(_fetch_one_rsi, tickers))
+    """Batch RSI fetch — single yf.download call to avoid rate limiting."""
+    result: dict[str, dict | None] = {t: None for t in tickers}
+    try:
+        yf_map = {_resolve(t): t for t in tickers}
+        yf_symbols = list(yf_map.keys())
+        df = yf.download(yf_symbols, period="45d", interval="1d", progress=False, auto_adjust=True, group_by="ticker")
+        if df is None or df.empty:
+            return result
+        for yf_sym, orig in yf_map.items():
+            try:
+                if len(yf_symbols) == 1:
+                    close = df["Close"]
+                else:
+                    close = df[(yf_sym, "Close")]
+                if isinstance(close, pd.DataFrame):
+                    close = close.iloc[:, 0]
+                close = close.dropna()
+                if close.empty:
+                    continue
+                price = round(float(close.iloc[-1]), 2)
+                rsi = _compute_rsi_14(close)
+                result[orig] = {"rsi": rsi, "price": price}
+            except (KeyError, IndexError):
+                continue
+    except Exception:
+        pass
+    return result
 
 
 async def fetch_rsi_batch(tickers: list[str]) -> dict[str, dict | None]:
