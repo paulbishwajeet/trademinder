@@ -65,7 +65,18 @@ def _compute_fresh(ticker: str) -> dict:
     close_d = close_d.dropna()
 
     iv_percentile, atm_iv = _compute_iv_percentile(close_d, ticker)
-    spot = float(close_d.iloc[-1])
+    # Use live price for day color instead of stale close-to-close comparison
+    try:
+        live_price = float(yf.Ticker(ticker).fast_info.last_price)
+    except Exception:
+        live_price = float(close_d.iloc[-1])
+    prev_close = float(close_d.iloc[-1])
+    # During market hours, fast_info.last_price is intraday; close_d.iloc[-1] is prev close
+    # After hours, they'll be the same — that's fine
+    technicals = dict(technicals)
+    technicals["day_color"] = "green" if live_price > prev_close else "red"
+    technicals["price_action"] = str(round(live_price, 2))
+    spot = live_price
     score, grade, factors = _score_factors(technicals, iv_percentile, atm_iv, close_d)
 
     commentary_data = _get_llm_commentary(ticker, score, grade, factors, technicals, iv_percentile, spot)
