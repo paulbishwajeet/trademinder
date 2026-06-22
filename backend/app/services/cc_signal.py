@@ -52,27 +52,20 @@ def compute_cc_signal(ticker: str) -> dict:
 def _compute_fresh(ticker: str) -> dict:
     from app.services.technicals_fetcher import fetch_technicals
 
-    technicals = fetch_technicals(ticker)
+    technicals, close_d = fetch_technicals(ticker, return_closes=True)
     if technicals.get("fetch_status") != "ok":
         raise ValueError(f"Technicals fetch failed: {technicals.get('fetch_error')}")
-
-    df_d = yf.download(ticker, period="1y", interval="1d", progress=False, auto_adjust=True)
-    if df_d is None or df_d.empty:
+    if close_d.empty:
         raise ValueError(f"No daily data for {ticker}")
-    close_d = df_d["Close"]
-    if isinstance(close_d, pd.DataFrame):
-        close_d = close_d.iloc[:, 0]
-    close_d = close_d.dropna()
 
-    iv_percentile, atm_iv = _compute_iv_percentile(close_d, ticker)
-    # Use live price for day color instead of stale close-to-close comparison
+    # IV percentile + live price share one Ticker object to minimize API calls
+    t = yf.Ticker(ticker)
+    iv_percentile, atm_iv = _compute_iv_percentile_from_ticker(close_d, t)
     try:
-        live_price = float(yf.Ticker(ticker).fast_info.last_price)
+        live_price = float(t.fast_info.last_price)
     except Exception:
         live_price = float(close_d.iloc[-1])
     prev_close = float(close_d.iloc[-1])
-    # During market hours, fast_info.last_price is intraday; close_d.iloc[-1] is prev close
-    # After hours, they'll be the same — that's fine
     technicals = dict(technicals)
     technicals["day_color"] = "green" if live_price > prev_close else "red"
     technicals["price_action"] = str(round(live_price, 2))
@@ -98,7 +91,7 @@ def _compute_fresh(ticker: str) -> dict:
     }
 
 
-def _compute_iv_percentile(daily_closes: pd.Series, ticker: str) -> tuple[float | None, float | None]:
+def _compute_iv_percentile_from_ticker(daily_closes: pd.Series, t: Any) -> tuple[float | None, float | None]:
     try:
         log_returns = np.log(daily_closes / daily_closes.shift(1)).dropna()
         if len(log_returns) < 60:
@@ -108,7 +101,6 @@ def _compute_iv_percentile(daily_closes: pd.Series, ticker: str) -> tuple[float 
         if len(hv30) < 30:
             return None, None
 
-        t = yf.Ticker(ticker)
         expirations = t.options
         if not expirations:
             return None, None

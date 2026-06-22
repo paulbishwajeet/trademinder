@@ -66,7 +66,7 @@ def _get_next_earnings(ticker: str) -> str | None:
         return None
 
 
-def fetch_technicals(ticker: str) -> dict:
+def fetch_technicals(ticker: str, return_closes: bool = False) -> dict | tuple[dict, pd.Series]:
     try:
         df_d = yf.download(ticker, period="200d", interval="1d", progress=False, auto_adjust=True)
         if df_d is None or df_d.empty:
@@ -117,7 +117,7 @@ def fetch_technicals(ticker: str) -> dict:
         sentiment = _infer_sentiment(macd["macd_signal"], price, ma_50d, rsi_14)
         next_earnings = _get_next_earnings(ticker)
 
-        return {
+        result = {
             "macd_signal": macd["macd_signal"],
             "macd_notes": macd["macd_notes"],
             "rsi_14": rsi_14,
@@ -138,5 +138,11 @@ def fetch_technicals(ticker: str) -> dict:
             "fetch_status": "ok",
             "fetch_error": None,
         }
+        if return_closes:
+            return result, close_d
+        return result
     except Exception as exc:
-        return {"fetch_status": "error", "fetch_error": str(exc)}
+        err = {"fetch_status": "error", "fetch_error": str(exc)}
+        if return_closes:
+            return err, pd.Series(dtype=float)
+        return err
