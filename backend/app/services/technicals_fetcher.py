@@ -70,7 +70,10 @@ def fetch_technicals(ticker: str, return_closes: bool = False) -> dict | tuple[d
     try:
         df_d = yf.download(ticker, period="200d", interval="1d", progress=False, auto_adjust=True)
         if df_d is None or df_d.empty:
-            return {"fetch_status": "error", "fetch_error": f"No daily data for {ticker}"}
+            err = {"fetch_status": "error", "fetch_error": f"No daily data for {ticker}"}
+            if return_closes:
+                return err, pd.Series(dtype=float)
+            return err
 
         close_d = df_d["Close"]
         if isinstance(close_d, pd.DataFrame):
@@ -78,7 +81,10 @@ def fetch_technicals(ticker: str, return_closes: bool = False) -> dict | tuple[d
         close_d = close_d.dropna()
 
         if len(close_d) < 2:
-            return {"fetch_status": "error", "fetch_error": f"Insufficient daily history for {ticker}"}
+            err = {"fetch_status": "error", "fetch_error": f"Insufficient daily history for {ticker}"}
+            if return_closes:
+                return err, pd.Series(dtype=float)
+            return err
 
         df_w = yf.download(ticker, period="2y", interval="1wk", progress=False, auto_adjust=True)
         close_w = pd.Series(dtype=float)
