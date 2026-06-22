@@ -178,7 +178,7 @@ export function WheelDashboardPage() {
         <td className="py-2 pr-3">{renderSignalBadge(ticker)}</td>
         <td className="py-2 text-right">
           <div className="flex items-center gap-1 justify-end">
-            {slot.needs_action && (
+            {(slot.status === 'cc_active' || slot.status === 'sold_put_active' || slot.needs_action) && (
               <button onClick={() => setResolveSlotId(slot.id)} className="px-2 py-0.5 text-xs bg-amber-100 text-amber-800 rounded hover:bg-amber-200">
                 Resolve
               </button>
