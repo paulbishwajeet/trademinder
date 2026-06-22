@@ -76,6 +76,7 @@ export function WheelDashboardPage() {
   const awaitingCC = allSlots.filter(f => f.slot.status === 'awaiting_cc' && !f.slot.needs_action)
   const awaitingSP = allSlots.filter(f => f.slot.status === 'awaiting_sold_put' && !f.slot.needs_action)
   const active = allSlots.filter(f => (f.slot.status === 'cc_active' || f.slot.status === 'sold_put_active') && !f.slot.needs_action)
+  const emptyWheels = sessions.filter(s => s.slots.length === 0)
 
   const resolveSlotTicker = resolveSlotId
     ? allSlots.find(f => f.slot.id === resolveSlotId)?.ticker ?? ''
@@ -289,6 +290,43 @@ export function WheelDashboardPage() {
 
       {!loading && !error && sessions.length > 0 && (
         <>
+          {emptyWheels.length > 0 && (
+            <section className="mb-5">
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-sm font-bold text-purple-600">NEW — NEEDS SLOT</span>
+                <span className="bg-purple-50 text-purple-600 text-xs px-2 py-0.5 rounded-full font-medium">{emptyWheels.length}</span>
+              </div>
+              <div className="bg-white border border-purple-200 rounded-lg overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-xs text-gray-400 border-b border-gray-100">
+                      <th className="py-2 pr-3 pl-3 font-normal">Ticker</th>
+                      <th className="py-2 pr-3 font-normal">Shares</th>
+                      <th className="py-2 pr-3 font-normal">Created</th>
+                      <th className="py-2 pr-3 font-normal"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {emptyWheels.map(s => (
+                      <tr key={s.id} className="border-t border-gray-50">
+                        <td className="py-2 pr-3 pl-3 font-bold text-gray-900">{s.ticker}</td>
+                        <td className="py-2 pr-3 text-gray-500 text-xs">{s.total_shares}</td>
+                        <td className="py-2 pr-3 text-gray-400 text-xs">{s.opened_at}</td>
+                        <td className="py-2 text-right">
+                          <button
+                            onClick={() => setAddSlotSessionId(s.id)}
+                            className="px-2 py-0.5 text-xs bg-purple-100 text-purple-800 rounded hover:bg-purple-200"
+                          >
+                            + Add Slot
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
           {renderSection('NEEDS ACTION', 'text-amber-600', 'bg-amber-100', 'border-amber-300', needsAction)}
           {renderSection('AWAITING CC', 'text-amber-600', 'bg-amber-50', 'border-amber-200', awaitingCC)}
           {renderSection('AWAITING SOLD PUT', 'text-orange-600', 'bg-orange-50', 'border-orange-200', awaitingSP)}
@@ -296,7 +334,8 @@ export function WheelDashboardPage() {
         </>
       )}
 
-      {showNewModal && <NewWheelModalV2 onClose={() => setShowNewModal(false)} onCreated={() => { setShowNewModal(false); load() }} />}
+      {showNewModal && <NewWheelModalV2 onClose={() => setShowNewModal(false)} onCreated={(s) => { setShowNewModal(false); setAddSlotSessionId(s.id); load() }} />}
+      {addSlotSessionId && <AddSlotModal sessionId={addSlotSessionId} onClose={() => setAddSlotSessionId(null)} onCreated={() => { setAddSlotSessionId(null); load() }} />}
       {resolveSlotId && <ResolveModal slotId={resolveSlotId} ticker={resolveSlotTicker} onClose={() => setResolveSlotId(null)} onResolved={() => { setResolveSlotId(null); load() }} />}
       {linkSlotId && <LinkLegModalV2 slotId={linkSlotId} ticker={linkSlotTicker} slotStatus={linkSlotStatus} onClose={() => setLinkSlotId(null)} onLinked={() => { setLinkSlotId(null); load() }} />}
     </div>
