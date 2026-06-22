@@ -5,14 +5,14 @@ import type { SessionSummary, SessionWithLegs, SessionLookupResponse } from '../
 export interface SessionCreate {
   ticker: string
   strategy: string
-  status: 'put_open' | 'shares_sitting' | 'cc_open' | 'called_away' | 'completed'
+  status: string   // broadened: was a narrow union; IC/PBWB use 'open', WHEEL uses put_open etc.
   opened_at: string
   rotation_number?: number
   parent_session_id?: string | null
 }
 
 export interface SessionUpdate {
-  status?: 'put_open' | 'shares_sitting' | 'cc_open' | 'called_away' | 'completed'
+  status?: string
   closed_at?: string | null
 }
 
@@ -31,6 +31,21 @@ export const sessionsApi = {
   update: (id: string, payload: SessionUpdate) =>
     apiFetch<SessionSummary>(`/sessions/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
 
-  lookup: (ticker: string, strategy = 'WHEEL') =>
-    apiFetch<SessionLookupResponse>(`/sessions/lookup?ticker=${encodeURIComponent(ticker)}&strategy=${encodeURIComponent(strategy)}`),
+  lookup: (ticker: string, strategy?: string) => {
+    const qs = strategy ? `&strategy=${encodeURIComponent(strategy)}` : ''
+    return apiFetch<SessionLookupResponse>(`/sessions/lookup?ticker=${encodeURIComponent(ticker)}${qs}`)
+  },
+
+  // Fetch open sessions for a spread strategy (IC or PBWB)
+  listSpreads: (strategy: 'IRON_CONDOR' | 'PUT_B_W_FLY', status = 'open') =>
+    apiFetch<SessionSummary[]>(`/sessions?strategy=${strategy}&status=${status}`),
+}
+
+export async function quotePrice(ticker: string): Promise<number | null> {
+  try {
+    const data = await apiFetch<{ price: number }>(`/market/quote/${encodeURIComponent(ticker)}`)
+    return data.price ?? null
+  } catch {
+    return null
+  }
 }

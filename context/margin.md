@@ -19,11 +19,12 @@ Adds a Black-Scholes probability-of-assignment layer to the margin dashboard. Ea
   - Position table: 4 new columns — Gain %, RSI (colored pill), Assign. Prob, Wtd. Obligation
   - Expiry breakdown table: Wtd. Obligation column + footer total
   - Extension `fetchRsiForAll` updated to read `val.rsi` from new response shape
+  - Spread-aware obligation: two-pass CSV parser caps obligation at spread width for vertical spreads, butterflies, and iron condors
 - Out of scope:
   - Server-side probability storage or history
   - Live options chain IV (uses IV from CSV snapshot)
-  - Multi-leg positions or spreads
   - Probability decay over time (static DTE-based snapshot only)
+  - Call spread obligation tracking (only put side is tracked)
 
 ## Key Files / Modules Involved
 - `backend/app/services/price_fetcher.py` — `_fetch_one_rsi` returns `{rsi, price}` dict
@@ -33,7 +34,7 @@ Adds a Black-Scholes probability-of-assignment layer to the margin dashboard. Ea
 - `extension/background.js` — default API URL updated to 5431
 - `extension/popup/popup.js` — default API URL updated to 5431
 - `extension/popup/popup.html` — placeholder URL updated to 5431
-- `frontend/src/pages/MarginDashboardPage.tsx` — all frontend changes
+- `frontend/src/pages/MarginDashboardPage.tsx` — all frontend changes; spread-aware parser; `API_URL` fix
 - `frontend/vite.config.ts` — dev port 5430, proxy target 5431
 - `frontend/Dockerfile` — EXPOSE updated to 5430
 - `frontend/nginx.conf` — proxy_pass updated to backend:5431
@@ -56,11 +57,15 @@ Pure client-side computation triggered by a single batch request to the existing
 | Row key in position table | `p.symbol` | Unique per option contract; more stable than array index under `marketData` re-renders |
 | AbortController on `fetchMarketData` | Yes, via `abortCtrlRef` | Prevents stale response from earlier upload overwriting newer one on rapid re-upload |
 | Application ports | frontend 5430, backend 5431, postgres 5432 | Consolidate onto a consistent port range; avoid conflicts with common dev defaults (3000/3001) |
+| Spread obligation matching key | `ticker\|\|expiryLabel` (no qty) | Butterflies have short qty = 2× long qty; excluding qty from the key lets the algorithm match across asymmetric structures |
+| Spread obligation allocation order | Higher-strike long puts first (zero obligation), then lower-strike | Higher-strike long put assignment = profitable (sell at L > buy-at-K); allocating those first minimises obligation correctly |
+| `API_URL` constant | `''` (empty string) | All other pages use relative `/api` paths through the Vite proxy / nginx; hardcoded `http://localhost:5431` broke access from any non-localhost client |
 
 ## Open Questions / Blockers
 - [ ] Should `gainPct = 0` (no recorded entry premium) show as red or as `—`? Currently shows as red `0.0%` — could confuse a position with missing data for a losing trade.
 - [ ] Banner uses emoji spinner (`⏳`) — consider replacing with a CSS spinner for better screen-reader experience (`aria-hidden` on decorative emoji).
 - [ ] Liquid Coverage card lost the "Sufficient / Below 1:1" qualitative label — replaced by adjusted coverage %. Worth adding back as a second sub-line?
+- [ ] Call spread obligation is not tracked — Iron Condor call wing (e.g. short 764C / long 770C) does not appear in any obligation figure. If call-side risk tracking is desired, `parsePortfolioCSV` needs a parallel pass for short calls.
 
 ## Progress Log
 - 2026-05-17 — Feature designed and specced (`docs/superpowers/specs/2026-05-17-margin-assignment-confidence-design.md`)
@@ -68,11 +73,15 @@ Pure client-side computation triggered by a single batch request to the existing
 - 2026-05-17 — All 8 tasks implemented and reviewed via subagent-driven development. 19/19 backend tests pass, frontend build clean (97 modules, 312 kB).
 - 2026-05-17 — Port reassignment across 10 files: frontend 5430, backend 5431, postgres 5432 (unchanged). Context files updated to match.
 - 2026-05-17 — `context/margin.md` created (this file); `context/_active.md` updated to point here.
+- 2026-06-02 — Fixed spread-aware obligation in `parsePortfolioCSV`: two-pass parser now matches long puts by `ticker||expiryLabel` (no qty), allocates higher-strike long puts first (zero obligation) then lower-strike ones. Handles Iron Condor (equal qty) and Put Butterfly (short qty = 2× long qty). Verified against real portfolio CSV: SPXW butterfly $4,566,000 → $3,000; total obligation $5,726,650 → $1,163,650. Also fixed `API_URL` constant from `http://localhost:5431` to `''` so market data fetch works from non-localhost clients.
 
 ## Current State (Resume Here)
-All implementation is complete and committed on branch `develop`. The `superpowers:finishing-a-development-branch` skill was invoked, tests verified (19/19 pass), and options were presented. **The merge/PR decision was not made — session ended before the user chose.**
+All spread-obligation and API-URL fixes are implemented and committed on branch `margin` (commit `4580f0c` — "Margin for spreads fixed"). The frontend build is clean (105 modules). The changes are not yet merged to `master`.
 
-Next step: Re-invoke `superpowers:finishing-a-development-branch` (or manually run the appropriate git commands). Choose one of:
-1. `git checkout master && git pull && git merge develop` — merge locally
-2. `git push -u origin develop && gh pr create` — open a PR
-3. Keep `develop` as-is
+**What was changed in `frontend/src/pages/MarginDashboardPage.tsx`:**
+1. `ShortPut` interface gained `longStrike: number | null`
+2. `parsePortfolioCSV` is now two-pass: Pass 1 builds `longPutsByExpiry` (Map keyed `ticker||expiryLabel`, values are `{strike, qty}[]` sorted desc). Pass 2 allocates long puts to each short put — higher-strike first (zero obligation), then lower-strike (spread width × covered qty × 100), remainder naked.
+3. Position table sub-label shows `$744/$749 Put Spread` when `longStrike` is set.
+4. `API_URL` constant changed from `'http://localhost:5431'` to `''` so fetch uses the Vite/nginx proxy.
+
+**Next action:** Decide whether to merge `margin` into `master` (or open a PR). Run `superpowers:finishing-a-development-branch` or manually: `git checkout master && git merge margin`.

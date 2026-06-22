@@ -10,7 +10,7 @@ from app.database import get_db
 from app.models.trade_session import TradeSession
 from app.schemas.session import (
     SessionCreate, SessionUpdate, SessionSummary,
-    SessionWithLegs, SessionLegItem, SessionLookupResponse,
+    SessionWithLegs, SessionLegItem, SessionLookupResponse, SessionLookupItem,
 )
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
@@ -61,26 +61,42 @@ async def create_session(payload: SessionCreate, db: AsyncSession = Depends(get_
 @router.get("/lookup", response_model=SessionLookupResponse)
 async def lookup_sessions(
     ticker: str = Query(...),
-    strategy: str = Query("WHEEL"),
+    strategy: Optional[str] = Query(None),   # was: str = Query("WHEEL")
     db: AsyncSession = Depends(get_db),
 ):
     stmt = (
         select(TradeSession)
         .where(
             TradeSession.ticker == ticker.upper(),
-            TradeSession.strategy == strategy,
-            TradeSession.status != "completed",
+            TradeSession.status.not_in(["completed", "closed"]),  # was: != "completed"
         )
-        .order_by(TradeSession.rotation_number.desc())
+        .options(selectinload(TradeSession.legs))
     )
+    if strategy is not None:
+        stmt = stmt.where(TradeSession.strategy == strategy)
+    stmt = stmt.order_by(TradeSession.rotation_number.desc())
     result = await db.execute(stmt)
     sessions = result.scalars().all()
     return SessionLookupResponse(
         ticker=ticker.upper(),
         strategy=strategy,
         has_existing=len(sessions) > 0,
-        sessions=sessions,
+        sessions=[SessionLookupItem.model_validate(s) for s in sessions],
     )
+
+
+# NOTE: /active must be defined BEFORE /{session_id} so FastAPI
+# does not try to parse "active" as a UUID path parameter.
+@router.get("/active", response_model=list[SessionLookupItem])
+async def list_active_sessions(db: AsyncSession = Depends(get_db)):
+    stmt = (
+        select(TradeSession)
+        .where(TradeSession.status.not_in(["completed", "closed"]))
+        .options(selectinload(TradeSession.legs))
+    )
+    result = await db.execute(stmt)
+    sessions = result.scalars().all()
+    return [SessionLookupItem.model_validate(s) for s in sessions]
 
 
 @router.get("/{session_id}", response_model=SessionWithLegs)

@@ -34,8 +34,15 @@ const statusCache = new Map();
 const rsiCache = new Map();
 // trade_id → commentary count (populated on first badge render)
 const commentaryCountCache = new Map();
-// ticker (uppercase) → { status: string } | null (WHEEL session status)
-const sessionCache = new Map();
+// etrade_symbol (uppercase) → session object (active WHEEL/IC/PBWB session owning that leg)
+let etradeSymbolIndex = new Map();
+// all sessions returned by /api/sessions/active (used for spread price lookups)
+let allActiveSessions = [];
+// timestamp (ms) when /api/sessions/active was last fetched; 0 = never
+let activeSessionsFetchedAt = 0;
+const ACTIVE_SESSIONS_TTL = 60_000; // re-fetch every 60 seconds
+// ticker (uppercase) → current price (number) | null (spread session price signal)
+const priceCache = new Map();
 // full_symbol||ticker (uppercase) → true: position is in E*TRADE but not backend
 const reconcileCache = new Map();
 let lastReconcileKey = '';
@@ -409,10 +416,14 @@ async function processVisibleRows() {
 
     if (toProcess.length === 0) return;
 
-    // Fire-and-forget: prefetch wheel sessions for all visible tickers (fills sessionCache async)
-    if (seenTickers.size > 0) {
-      fetchWheelSessionsForTickers([...seenTickers]);
-    }
+    // Fire-and-forget: fetch all active sessions, then prices for spread sessions
+    fetchAllActiveSessions().then(async () => {
+      await fetchPricesForSpreadSessions();
+      // Re-apply pills now that session/price data is available
+      document.querySelectorAll(ETRADE.positionRows).forEach(row => {
+        applyWheelPillToRow(row);
+      });
+    });
 
     // Fire-and-forget: reconcile all visible positions against backend
     if (rows.length > 0) {
@@ -426,7 +437,7 @@ async function processVisibleRows() {
         applyTMToRow(item.row, statusCache.get(item.cacheKey), item.info);
         applyFilter(item.row, statusCache.get(item.cacheKey));
         applyRsiToRow(item.row, item.info.ticker);
-        applyWheelPillToRow(item.row, item.info.ticker);
+        applyWheelPillToRow(item.row);
         applyReconcilePillToRow(item.row, item.info);
       } else {
         needsFetch.push(item);
@@ -473,7 +484,7 @@ async function processVisibleRows() {
       applyTMToRow(item.row, status, item.info);
       applyFilter(item.row, status);
       applyRsiToRow(item.row, item.info.ticker);
-      applyWheelPillToRow(item.row, item.info.ticker);
+      applyWheelPillToRow(item.row);
       applyReconcilePillToRow(item.row, item.info);
     });
 
@@ -653,17 +664,144 @@ function renderWheelPill(session) {
   return pill;
 }
 
-function applyWheelPillToRow(row, ticker) {
+function computePriceSignal(session) {
+  const price = priceCache.get(session.ticker?.toUpperCase());
+  if (price == null) return 'unknown';
+  const legs = session.legs || [];
+
+  if (session.strategy === 'IRON_CONDOR') {
+    const shortPutStrikes = legs
+      .filter(l => l.strategy === 'Sell Put' && l.strike_price != null)
+      .map(l => Number(l.strike_price));
+    const shortCallStrikes = legs
+      .filter(l => l.strategy === 'Sell Call' && l.strike_price != null)
+      .map(l => Number(l.strike_price));
+    if (!shortPutStrikes.length || !shortCallStrikes.length) return 'unknown';
+    const sp = Math.max(...shortPutStrikes);
+    const sc = Math.min(...shortCallStrikes);
+    if (price <= sp || price >= sc) return 'danger';
+    if (price < sp * 1.05 || price > sc * 0.95) return 'warning';
+    return 'safe';
+  }
+
+  if (session.strategy === 'PUT_B_W_FLY') {
+    const shortStrikes = legs
+      .filter(l => l.strategy === 'Sell Put' && l.strike_price != null)
+      .map(l => Number(l.strike_price));
+    if (shortStrikes.length < 2) return 'unknown';
+    const low = Math.min(...shortStrikes);
+    const high = Math.max(...shortStrikes);
+    if (price <= low || price >= high) return 'danger';
+    if (price < low * 1.05 || price > high * 0.95) return 'warning';
+    return 'safe';
+  }
+  return 'unknown';
+}
+
+function renderStrategyPill(session) {
+  if (!session) return null;
+  const signal = computePriceSignal(session);
+  const shortLabel = session.strategy === 'IRON_CONDOR' ? 'IC' : 'PBWB';
+  const icons = { safe: '✓', warning: '⚠', danger: '✗', unknown: '' };
+  const icon = icons[signal] || '';
+  const label = icon ? `${shortLabel} ${icon}` : shortLabel;
+
+  const colorMap = {
+    safe: session.strategy === 'IRON_CONDOR'
+      ? { bg: '#EDE9FE', color: '#5B21B6', border: '#C4B5FD' }
+      : { bg: '#CCFBF1', color: '#0F766E', border: '#5EEAD4' },
+    warning: { bg: '#FEF3C7', color: '#92400E', border: '#FCD34D' },
+    danger: { bg: '#FEE2E2', color: '#991B1B', border: '#FCA5A5' },
+    unknown: session.strategy === 'IRON_CONDOR'
+      ? { bg: '#EDE9FE', color: '#5B21B6', border: '#C4B5FD' }
+      : { bg: '#CCFBF1', color: '#0F766E', border: '#5EEAD4' },
+  };
+  const c = colorMap[signal];
+
+  const pill = document.createElement('span');
+  pill.className = 'tm-strategy-pill';
+  pill.textContent = label;
+  pill.style.cssText = [
+    'display:inline-flex', 'align-items:center', 'font-size:10px',
+    'padding:1px 5px', 'border-radius:3px', 'margin-left:4px', 'white-space:nowrap',
+    `background:${c.bg}`, `color:${c.color}`, `border:1px solid ${c.border}`,
+  ].join(';');
+  return pill;
+}
+
+// Returns the session that owns this specific row's position, or null.
+// A row belongs to a session iff its etrade_symbol matches a leg's etrade_symbol exactly.
+function findSessionForRow(info) {
+  if (!info?.fullSymbol) return null;
+  return etradeSymbolIndex.get(info.fullSymbol.toUpperCase()) || null;
+}
+
+// Non-session strategy categories — shown as a simple pill using the
+// category's own color from the backend (categories table). WHEEL and the
+// spread categories (PUT_SPREAD/CALL_SPREAD/IRON_CONDOR/IRON_BUTTERFLY) are
+// handled via the session-based pills above and are intentionally excluded here.
+const CATEGORY_PILL_LABELS = {
+  SWING: 'Swing',
+  HOLD: 'Hold',
+  LEAP: 'Leap',
+  SKIP: 'Skip',
+  HOPS: 'Hops',
+};
+
+// Explicit bg/text/border triples per category — distinct hues with enough
+// contrast to tell apart at a glance. A low-alpha tint of the backend's
+// category_color washed out to near-identical pale colors, so these are
+// hand-picked instead of derived from category_color.
+const CATEGORY_PILL_STYLES = {
+  SWING: { bg: '#CFFAFE', color: '#155E75', border: '#67E8F9' }, // cyan
+  HOLD: { bg: '#D1FAE5', color: '#065F46', border: '#6EE7B7' }, // emerald
+  LEAP: { bg: '#EDE9FE', color: '#5B21B6', border: '#C4B5FD' }, // violet
+  SKIP: { bg: '#F3F4F6', color: '#374151', border: '#D1D5DB' }, // gray
+  HOPS: { bg: '#ECFCCB', color: '#3F6212', border: '#BEF264' }, // lime
+};
+
+function renderCategoryPill(status) {
+  if (!status?.category_name) return null;
+  const label = CATEGORY_PILL_LABELS[status.category_name];
+  const style = CATEGORY_PILL_STYLES[status.category_name];
+  if (!label || !style) return null;
+
+  const pill = document.createElement('span');
+  pill.className = 'tm-category-pill';
+  pill.textContent = label;
+  pill.style.cssText = [
+    'display:inline-flex', 'align-items:center', 'font-size:10px',
+    'padding:1px 5px', 'border-radius:3px', 'margin-left:4px', 'white-space:nowrap',
+    `background:${style.bg}`, `color:${style.color}`, `border:1px solid ${style.border}`,
+  ].join(';');
+  return pill;
+}
+
+function applyWheelPillToRow(row) {
   const flyoutBtn = row.querySelector('button[aria-label="Open Quote Flyout"]');
   if (!flyoutBtn) return;
-
   const symbolDiv = flyoutBtn.parentElement;
   symbolDiv.querySelector('.tm-wheel-pill')?.remove();
+  symbolDiv.querySelector('.tm-strategy-pill')?.remove();
+  symbolDiv.querySelector('.tm-category-pill')?.remove();
 
-  if (!sessionCache.has(ticker)) return; // not yet fetched
+  const info = getRowInfo(row);
+  const session = findSessionForRow(info);
+  if (session) {
+    if (session.strategy === 'WHEEL') {
+      const pill = renderWheelPill(session);
+      if (pill) symbolDiv.appendChild(pill);
+    } else {
+      const pill = renderStrategyPill(session);
+      if (pill) symbolDiv.appendChild(pill);
+    }
+    return;
+  }
 
-  const session = sessionCache.get(ticker);
-  const pill = renderWheelPill(session);
+  // No active session — fall back to a plain category pill (Swing/Hold/Leap/Skip/Hops)
+  const cacheKey = info.fullSymbol || info.ticker;
+  const status = statusCache.get(cacheKey);
+  const pill = renderCategoryPill(status);
   if (pill) symbolDiv.appendChild(pill);
 }
 
@@ -731,7 +869,7 @@ function applyReconcilePillToRow(row, info) {
 
   const pill = document.createElement('span');
   pill.className = 'tm-reconcile-pill';
-  pill.textContent = '+ Add';
+  pill.textContent = '+';
   pill.title = 'Not tracked in TradeMinder — click to add';
   pill.style.cssText = [
     'display:inline-flex',
@@ -1167,19 +1305,49 @@ async function fetchRsiForAll() {
   if (btn) { btn.disabled = false; btn.textContent = '🔄 Refresh RSI'; }
 }
 
-async function fetchWheelSessionsForTickers(tickers) {
-  const unique = [...new Set(tickers.map(t => t.toUpperCase()))];
-  await Promise.all(unique.map(async ticker => {
-    if (sessionCache.has(ticker)) return; // already fetched this page load
+// Fetches all active sessions (any ticker/strategy) once per page load and
+// builds an etrade_symbol → session index for exact row-to-session matching.
+async function fetchAllActiveSessions(force = false) {
+  if (!force && activeSessionsFetchedAt && (Date.now() - activeSessionsFetchedAt < ACTIVE_SESSIONS_TTL)) return;
+  try {
+    const res = await fetch(
+      `${tmApiUrl}/api/sessions/active`,
+      { signal: AbortSignal.timeout(5000) },
+    );
+    if (!res.ok) { activeSessionsFetchedAt = Date.now(); return; }
+    const sessions = await res.json();
+    allActiveSessions = sessions;
+    const index = new Map();
+    for (const session of sessions) {
+      for (const leg of session.legs || []) {
+        if (leg.etrade_symbol && leg.status === 'open') index.set(leg.etrade_symbol.toUpperCase(), session);
+      }
+    }
+    etradeSymbolIndex = index;
+    activeSessionsFetchedAt = Date.now();
+  } catch {
+    activeSessionsFetchedAt = Date.now();
+  }
+}
+
+async function fetchPricesForSpreadSessions() {
+  const spreadTickers = [...new Set(
+    allActiveSessions
+      .filter(s => s.strategy === 'IRON_CONDOR' || s.strategy === 'PUT_B_W_FLY')
+      .map(s => s.ticker.toUpperCase()),
+  )];
+  await Promise.all(spreadTickers.map(async ticker => {
+    if (priceCache.has(ticker)) return;
     try {
-      const res = await bgFetch(`${tmApiUrl}/api/sessions/lookup?ticker=${encodeURIComponent(ticker)}&strategy=WHEEL`, {
-        signal: AbortSignal.timeout(5000),
-      });
-      if (!res.ok) { sessionCache.set(ticker, null); return; }
+      const res = await fetch(
+        `${tmApiUrl}/api/market/quote/${encodeURIComponent(ticker)}`,
+        { signal: AbortSignal.timeout(5000) },
+      );
+      if (!res.ok) { priceCache.set(ticker, null); return; }
       const data = await res.json();
-      sessionCache.set(ticker, data.has_existing && data.sessions?.length ? data.sessions[0] : null);
+      priceCache.set(ticker, typeof data.price === 'number' ? data.price : null);
     } catch {
-      sessionCache.set(ticker, null);
+      priceCache.set(ticker, null);
     }
   }));
 }
@@ -1325,11 +1493,74 @@ function buildCategoryOptions(categories, selectedValue = 'WHEEL') {
 }
 
 // ============================================================
+// SESSION DROPDOWN HELPERS (shared by add-trade & edit-trade)
+// ============================================================
+const WHEEL_STATUS_LABELS = {
+  put_open: 'Put Open',
+  shares_sitting: 'Shares Sitting',
+  cc_open: 'CC Open',
+  called_away: 'Called Away',
+  completed: 'Completed',
+};
+
+function rebuildSessionDropdown(selectEl, sessions, strategy) {
+  const isCC = strategy === 'Sell Call' || strategy === 'Covered Call';
+  const isPut = strategy === 'Sell Put';
+
+  const filtered = sessions.filter(s => {
+    if (s.strategy === 'WHEEL') {
+      if (isCC) return s.status === 'shares_sitting';
+      if (isPut) return s.status === 'called_away';
+      return false;
+    }
+    if (s.strategy === 'IRON_CONDOR' || s.strategy === 'PUT_B_W_FLY') {
+      return !isCC;
+    }
+    return false;
+  });
+
+  const options = filtered.map(s => {
+    let label;
+    if (s.strategy === 'WHEEL') {
+      const statusLabel = WHEEL_STATUS_LABELS[s.status] || s.status;
+      label = `WHL · ${s.ticker} · ${statusLabel} · opened ${s.opened_at}`;
+    } else {
+      const tag = s.strategy === 'IRON_CONDOR' ? 'IC' : 'PBWB';
+      label = `${tag} · ${s.ticker} · opened ${s.opened_at}`;
+    }
+    return `<option value="${s.id}">${label}</option>`;
+  });
+
+  const newOptions = [];
+  if (isCC || isPut) {
+    newOptions.push('<option value="__new_WHEEL__">→ New Wheel Session</option>');
+  }
+  if (!isCC) {
+    newOptions.push('<option value="__new_IC__">→ New Iron Condor Session</option>');
+    newOptions.push('<option value="__new_PBWB__">→ New Put BWB Session</option>');
+  }
+
+  selectEl.innerHTML =
+    '<option value="">— None —</option>' +
+    options.join('') +
+    newOptions.join('');
+}
+
+function getSessionStrategyFromValue(value, sessions) {
+  if (value === '__new_WHEEL__') return 'WHEEL';
+  if (value === '__new_IC__') return 'IRON_CONDOR';
+  if (value === '__new_PBWB__') return 'PUT_B_W_FLY';
+  const match = sessions.find(s => String(s.id) === value);
+  return match ? match.strategy : null;
+}
+
+// ============================================================
 // ADD TRADE MODAL
 // ============================================================
 async function showAddTradeModal(info) {
   const categories = await fetchCategories();
   if (document.getElementById('tm-modal-overlay')) return; // already open
+  let tickerSessions = [];
 
   const overlay = document.createElement('div');
   overlay.id = 'tm-modal-overlay';
@@ -1379,6 +1610,13 @@ async function showAddTradeModal(info) {
             ${buildCategoryOptions(categories, 'WHEEL')}
           </select>
         </div>
+        ${info.isOption ? `
+        <div class="tm-field-row tm-field-full" id="tm-session-row">
+          <label>Session <span style="font-weight:normal;color:#6B7280">(optional)</span></label>
+          <select name="session_id" id="tm-session-select">
+            <option value="">— None —</option>
+          </select>
+        </div>` : ''}
         <div class="tm-field-row">
           <label>Strike</label>
           <input type="number" name="strike_price" step="0.01" value="${info.strike != null ? info.strike : ''}" placeholder="optional" />
@@ -1420,6 +1658,37 @@ async function showAddTradeModal(info) {
     </div>`;
 
   document.body.appendChild(overlay);
+
+  // Populate session picker for option rows (WHEEL, IC, PBWB)
+  if (info.isOption) {
+    const sessionSelect = overlay.querySelector('#tm-session-select');
+    const strategySelect = overlay.querySelector('[name="strategy"]');
+    const categorySelect = overlay.querySelector('[name="category"]');
+    const ticker = (info.ticker || '').toUpperCase();
+
+    await fetchAllActiveSessions(true);
+    tickerSessions = allActiveSessions.filter(
+      s => s.ticker.toUpperCase() === ticker,
+    );
+
+    rebuildSessionDropdown(sessionSelect, tickerSessions, strategySelect.value);
+
+    strategySelect.addEventListener('change', () => {
+      rebuildSessionDropdown(sessionSelect, tickerSessions, strategySelect.value);
+    });
+
+    sessionSelect.addEventListener('change', () => {
+      const strat = getSessionStrategyFromValue(sessionSelect.value, tickerSessions);
+      if (strat) {
+        const catMap = { WHEEL: 'WHEEL', IRON_CONDOR: 'IRON_CONDOR', PUT_B_W_FLY: 'PUT_B_W_FLY' };
+        const catName = catMap[strat];
+        if (catName) {
+          const catOption = categorySelect.querySelector(`option[value="${catName}"]`);
+          if (catOption) categorySelect.value = catName;
+        }
+      }
+    });
+  }
 
   const closeModal = () => overlay.remove();
   overlay.querySelector('#tm-modal-close').addEventListener('click', closeModal);
@@ -1474,8 +1743,60 @@ async function showAddTradeModal(info) {
       ...(fd.get('rationale_notes')?.trim() && { rationale_notes: fd.get('rationale_notes').trim() }),
     };
 
+    // Resolve session_id: create a new session if requested, or use existing
+    let resolvedSessionId = null;
+    let resolvedSessionStrategy = null;
+    const rawSession = info.isOption ? (fd.get('session_id') || '') : '';
+    if (rawSession && !rawSession.startsWith('__new_')) {
+      resolvedSessionId = rawSession;
+      resolvedSessionStrategy = getSessionStrategyFromValue(rawSession, tickerSessions);
+    } else if (rawSession.startsWith('__new_')) {
+      if (rawSession === '__new_WHEEL__') {
+        const wheelStatus = (fd.get('strategy') === 'Sell Put') ? 'put_open' : 'cc_open';
+        const sessionResp = await fetch(`${tmApiUrl}/api/sessions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ticker: payload.ticker,
+            strategy: 'WHEEL',
+            status: wheelStatus,
+            opened_at: payload.open_date,
+          }),
+          signal: AbortSignal.timeout(8000),
+        });
+        if (!sessionResp.ok) {
+          const err = await sessionResp.json().catch(() => ({}));
+          throw new Error(err.detail || 'Failed to create session');
+        }
+        const newSession = await sessionResp.json();
+        resolvedSessionId = newSession.id;
+        resolvedSessionStrategy = 'WHEEL';
+      } else {
+        const strategy = rawSession === '__new_IC__' ? 'IRON_CONDOR' : 'PUT_B_W_FLY';
+        const sessionResp = await fetch(`${tmApiUrl}/api/sessions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ticker: payload.ticker,
+            strategy,
+            status: 'open',
+            opened_at: payload.open_date,
+          }),
+          signal: AbortSignal.timeout(8000),
+        });
+        if (!sessionResp.ok) {
+          const err = await sessionResp.json().catch(() => ({}));
+          throw new Error(err.detail || 'Failed to create session');
+        }
+        const newSession = await sessionResp.json();
+        resolvedSessionId = newSession.id;
+        resolvedSessionStrategy = strategy;
+      }
+    }
+    if (resolvedSessionId) payload.session_id = resolvedSessionId;
+
     try {
-      const resp = await bgFetch(`${tmApiUrl}/api/trades`, {
+      const resp = await fetch(`${tmApiUrl}/api/trades`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -1488,6 +1809,31 @@ async function showAddTradeModal(info) {
       }
 
       const trade = await resp.json();
+
+      // Auto-transition WHEEL session status when a leg is attached
+      if (resolvedSessionId && resolvedSessionStrategy === 'WHEEL') {
+        const tradeStrategy = fd.get('strategy');
+        const selectedSession = tickerSessions.find(s => String(s.id) === resolvedSessionId);
+        let newStatus = null;
+        if ((tradeStrategy === 'Sell Call' || tradeStrategy === 'Covered Call')
+          && selectedSession?.status === 'shares_sitting') {
+          newStatus = 'cc_open';
+        } else if (tradeStrategy === 'Sell Put' && selectedSession?.status === 'called_away') {
+          newStatus = 'put_open';
+        }
+        if (newStatus) {
+          try {
+            await fetch(`${tmApiUrl}/api/sessions/${resolvedSessionId}`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ status: newStatus }),
+              signal: AbortSignal.timeout(5000),
+            });
+          } catch (e) {
+            console.debug('[TM] session auto-transition failed:', e.message);
+          }
+        }
+      }
 
       // Save technicals snapshot if user fetched them
       const techSnapshot = techFormControl ? techFormControl.getValue() : null;
@@ -1512,6 +1858,8 @@ async function showAddTradeModal(info) {
       processedRows.forEach((val, key) => {
         if (val === cacheKey || val === info.ticker) processedRows.delete(key);
       });
+      // Refresh active sessions so the new/updated session's legs are indexed
+      await fetchAllActiveSessions(true);
       processVisibleRows();
       closeModal();
 
@@ -1604,6 +1952,12 @@ async function showEditTradeModal(info) {
             ${buildCategoryOptions(categories, trade.category || 'WHEEL')}
           </select>
         </div>
+        <div class="tm-field-row tm-field-full" id="tm-session-row">
+          <label>Session <span style="font-weight:normal;color:#6B7280">(optional)</span></label>
+          <select name="session_id" id="tm-session-select">
+            <option value="">— None —</option>
+          </select>
+        </div>
         <div class="tm-field-row">
           <label>Strike</label>
           <input type="number" name="strike_price" step="0.01" value="${trade.strike_price != null ? trade.strike_price : ''}" placeholder="optional" />
@@ -1638,6 +1992,66 @@ async function showEditTradeModal(info) {
 
   document.body.appendChild(overlay);
 
+  // Populate session picker
+  let tickerSessions = [];
+  {
+    const sessionSelect = overlay.querySelector('#tm-session-select');
+    const strategySelect = overlay.querySelector('[name="strategy"]');
+    const categorySelect = overlay.querySelector('[name="category"]');
+    const ticker = (trade.ticker || '').toUpperCase();
+
+    await fetchAllActiveSessions(true);
+    tickerSessions = allActiveSessions.filter(
+      s => s.ticker.toUpperCase() === ticker,
+    );
+
+    rebuildSessionDropdown(sessionSelect, tickerSessions, strategySelect.value);
+
+    // Pre-select current session if trade is linked
+    if (trade.session_id) {
+      const currentId = String(trade.session_id);
+      const exists = sessionSelect.querySelector(`option[value="${currentId}"]`);
+      if (exists) {
+        sessionSelect.value = currentId;
+      } else {
+        // Session exists but filtered out (different status) — add as disabled option
+        const s = allActiveSessions.find(s => String(s.id) === currentId);
+        if (s) {
+          const tag = s.strategy === 'WHEEL' ? 'WHL'
+            : s.strategy === 'IRON_CONDOR' ? 'IC' : 'PBWB';
+          const lbl = s.strategy === 'WHEEL'
+            ? `${tag} · ${s.ticker} · ${WHEEL_STATUS_LABELS[s.status] || s.status} · opened ${s.opened_at}`
+            : `${tag} · ${s.ticker} · opened ${s.opened_at}`;
+          const opt = document.createElement('option');
+          opt.value = currentId;
+          opt.textContent = lbl;
+          sessionSelect.insertBefore(opt, sessionSelect.options[1]);
+          sessionSelect.value = currentId;
+        }
+      }
+    }
+
+    strategySelect.addEventListener('change', () => {
+      const prevValue = sessionSelect.value;
+      rebuildSessionDropdown(sessionSelect, tickerSessions, strategySelect.value);
+      // Restore selection if it's still in the rebuilt list
+      const stillExists = sessionSelect.querySelector(`option[value="${prevValue}"]`);
+      if (stillExists) sessionSelect.value = prevValue;
+    });
+
+    sessionSelect.addEventListener('change', () => {
+      const strat = getSessionStrategyFromValue(sessionSelect.value, tickerSessions);
+      if (strat) {
+        const catMap = { WHEEL: 'WHEEL', IRON_CONDOR: 'IRON_CONDOR', PUT_B_W_FLY: 'PUT_B_W_FLY' };
+        const catName = catMap[strat];
+        if (catName) {
+          const catOption = categorySelect.querySelector(`option[value="${catName}"]`);
+          if (catOption) categorySelect.value = catName;
+        }
+      }
+    });
+  }
+
   const closeModal = () => overlay.remove();
   overlay.querySelector('#tm-modal-close').addEventListener('click', closeModal);
   overlay.querySelector('#tm-modal-cancel').addEventListener('click', closeModal);
@@ -1667,8 +2081,64 @@ async function showEditTradeModal(info) {
       ...(premium != null && { premium }),
     };
 
+    // Resolve session_id: create new if sentinel, use existing if UUID, omit if unchanged
+    const rawSession = fd.get('session_id') || '';
+    let resolvedSessionId = null;
+    let resolvedSessionStrategy = null;
+    const sessionChanged = rawSession !== String(trade.session_id || '');
+
+    if (sessionChanged && rawSession && !rawSession.startsWith('__new_')) {
+      resolvedSessionId = rawSession;
+      resolvedSessionStrategy = getSessionStrategyFromValue(rawSession, tickerSessions);
+      payload.session_id = resolvedSessionId;
+    } else if (rawSession.startsWith('__new_')) {
+      if (rawSession === '__new_WHEEL__') {
+        const wheelStatus = (fd.get('strategy') === 'Sell Put') ? 'put_open' : 'cc_open';
+        const sessionResp = await fetch(`${tmApiUrl}/api/sessions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ticker: payload.ticker || trade.ticker.toUpperCase(),
+            strategy: 'WHEEL',
+            status: wheelStatus,
+            opened_at: trade.open_date,
+          }),
+          signal: AbortSignal.timeout(8000),
+        });
+        if (!sessionResp.ok) {
+          const err = await sessionResp.json().catch(() => ({}));
+          throw new Error(err.detail || 'Failed to create session');
+        }
+        const newSession = await sessionResp.json();
+        resolvedSessionId = newSession.id;
+        resolvedSessionStrategy = 'WHEEL';
+        payload.session_id = resolvedSessionId;
+      } else {
+        const strategy = rawSession === '__new_IC__' ? 'IRON_CONDOR' : 'PUT_B_W_FLY';
+        const sessionResp = await fetch(`${tmApiUrl}/api/sessions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ticker: payload.ticker || trade.ticker.toUpperCase(),
+            strategy,
+            status: 'open',
+            opened_at: trade.open_date,
+          }),
+          signal: AbortSignal.timeout(8000),
+        });
+        if (!sessionResp.ok) {
+          const err = await sessionResp.json().catch(() => ({}));
+          throw new Error(err.detail || 'Failed to create session');
+        }
+        const newSession = await sessionResp.json();
+        resolvedSessionId = newSession.id;
+        resolvedSessionStrategy = strategy;
+        payload.session_id = resolvedSessionId;
+      }
+    }
+
     try {
-      const resp = await bgFetch(`${tmApiUrl}/api/trades/${tradeId}`, {
+      const resp = await fetch(`${tmApiUrl}/api/trades/${tradeId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -1680,6 +2150,31 @@ async function showEditTradeModal(info) {
         throw new Error(err.detail || `HTTP ${resp.status}`);
       }
 
+      // Auto-transition WHEEL session status when a leg is attached
+      if (resolvedSessionId && resolvedSessionStrategy === 'WHEEL') {
+        const tradeStrategy = fd.get('strategy');
+        const selectedSession = tickerSessions.find(s => String(s.id) === resolvedSessionId);
+        let newStatus = null;
+        if ((tradeStrategy === 'Sell Call' || tradeStrategy === 'Covered Call')
+          && selectedSession?.status === 'shares_sitting') {
+          newStatus = 'cc_open';
+        } else if (tradeStrategy === 'Sell Put' && selectedSession?.status === 'called_away') {
+          newStatus = 'put_open';
+        }
+        if (newStatus) {
+          try {
+            await fetch(`${tmApiUrl}/api/sessions/${resolvedSessionId}`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ status: newStatus }),
+              signal: AbortSignal.timeout(5000),
+            });
+          } catch (e) {
+            console.debug('[TM] session auto-transition failed:', e.message);
+          }
+        }
+      }
+
       // Invalidate cache so the row badge refreshes
       const cacheKey = info.fullSymbol || info.ticker;
       statusCache.delete(cacheKey);
@@ -1687,6 +2182,7 @@ async function showEditTradeModal(info) {
       processedRows.forEach((val, key) => {
         if (val === cacheKey || val === info.ticker) processedRows.delete(key);
       });
+      await fetchAllActiveSessions(true);
       processVisibleRows();
       closeModal();
 

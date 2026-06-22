@@ -156,6 +156,90 @@ async def test_reconcile_option_matched_by_strike_and_expiry(
     assert trade.last_etrade_seen is not None
 
 
+async def test_reconcile_multi_leg_only_matched_leg_is_tracked(client: AsyncClient):
+    """Adding one leg of an iron condor must not absorb the other three legs.
+
+    Regression: _pick_best_trade had a len==1 early return that bypassed
+    strike/expiry checks, causing all XSP legs to match the single saved trade.
+    """
+    # Only the 744 put is saved in the backend (the leg the user added)
+    saved = await client.post("/api/trades", json={
+        "type": "Buy",
+        "category": "WHEEL",
+        "strategy": "Put",
+        "ticker": "XSP",
+        "open_date": str(date.today()),
+        "expiry_date": "2026-06-02",
+        "strike_price": "744.00",
+        "quantity": 1,
+        "premium": "1.00",
+        "etrade_symbol": "XSP---260602P00744000",
+    })
+    assert saved.status_code == 201
+
+    # All four legs of the iron condor are visible in E*TRADE
+    resp = await client.post(RECONCILE_URL, json={
+        "positions": [
+            {"ticker": "XSP", "full_symbol": "XSP---260602P00744000", "type": "Put",  "strike": 744.0, "expiry": "2026-06-02"},
+            {"ticker": "XSP", "full_symbol": "XSP---260602P00748000", "type": "Put",  "strike": 748.0, "expiry": "2026-06-02"},
+            {"ticker": "XSP", "full_symbol": "XSP---260602C00756000", "type": "Call", "strike": 756.0, "expiry": "2026-06-02"},
+            {"ticker": "XSP", "full_symbol": "XSP---260602C00758000", "type": "Call", "strike": 758.0, "expiry": "2026-06-02"},
+        ]
+    })
+    assert resp.status_code == 200
+    data = resp.json()
+
+    # The three untracked legs must appear as unmatched so + Add pills show up
+    unmatched_symbols = {item["full_symbol"] for item in data["unmatched_etrade"]}
+    assert "XSP---260602P00748000" in unmatched_symbols
+    assert "XSP---260602C00756000" in unmatched_symbols
+    assert "XSP---260602C00758000" in unmatched_symbols
+    # The tracked leg must NOT appear as unmatched
+    assert "XSP---260602P00744000" not in unmatched_symbols
+
+
+async def test_positions_status_multi_leg_no_spurious_trade_id(client: AsyncClient):
+    """Untracked legs of an iron condor must not inherit the tracked leg's trade_id.
+
+    Regression: positions/status used non-strict _pick_best_trade, so all four
+    XSP legs received the single saved trade's trade_id — causing the commentary
+    pill and 'Already in TradeMinder' context menu on untracked legs.
+    """
+    saved = await client.post("/api/trades", json={
+        "type": "Sell",
+        "category": "WHEEL",
+        "strategy": "Sell Put",
+        "ticker": "XSP",
+        "open_date": str(date.today()),
+        "expiry_date": "2026-06-02",
+        "strike_price": "744.00",
+        "quantity": 1,
+        "premium": "1.00",
+        "etrade_symbol": "XSP---260602P00744000",
+    })
+    assert saved.status_code == 201
+    saved_id = saved.json()["id"]
+
+    resp = await client.post("/api/positions/status", json={
+        "positions": [
+            {"ticker": "XSP", "full_symbol": "XSP---260602P00744000", "type": "Put",  "strike": 744.0, "expiry": "2026-06-02"},
+            {"ticker": "XSP", "full_symbol": "XSP---260602P00748000", "type": "Put",  "strike": 748.0, "expiry": "2026-06-02"},
+            {"ticker": "XSP", "full_symbol": "XSP---260602C00756000", "type": "Call", "strike": 756.0, "expiry": "2026-06-02"},
+            {"ticker": "XSP", "full_symbol": "XSP---260602C00758000", "type": "Call", "strike": 758.0, "expiry": "2026-06-02"},
+        ]
+    })
+    assert resp.status_code == 200
+    data = resp.json()
+
+    # Tracked leg has the correct trade_id
+    assert data["XSP---260602P00744000"]["trade_id"] == saved_id
+
+    # Untracked legs must NOT have a trade_id (no commentary pill, not isTracked)
+    assert data["XSP---260602P00748000"]["trade_id"] is None
+    assert data["XSP---260602C00756000"]["trade_id"] is None
+    assert data["XSP---260602C00758000"]["trade_id"] is None
+
+
 async def test_list_trades_stale_filter(client: AsyncClient, db_session: AsyncSession):
     """GET /api/trades?stale=true returns only trades with old last_etrade_seen."""
     from sqlalchemy import select

@@ -1,4 +1,3 @@
-// frontend/src/components/Wheel/NewWheelModal.tsx
 import { useState } from 'react'
 import type { SessionSummary, Trade } from '../../types'
 import { sessionsApi } from '../../api/sessions'
@@ -9,17 +8,15 @@ interface Props {
   onCreated: (session: SessionSummary) => void
 }
 
-const WHEEL_STATUSES = [
-  { value: 'put_open', label: 'Put Open — I have an active Sold Put' },
-  { value: 'shares_sitting', label: 'Shares Sitting — I own the stock, no CC yet' },
-  { value: 'cc_open', label: 'CC Open — I have an active Covered Call' },
-  { value: 'called_away', label: 'Called Away / Waiting Cash' },
+const STRATEGY_OPTIONS = [
+  { value: 'IRON_CONDOR', label: 'Iron Condor (IC)' },
+  { value: 'PUT_B_W_FLY', label: 'Put Broken Wing Butterfly (PBWB)' },
 ]
 
-export function NewWheelModal({ onClose, onCreated }: Props) {
+export function NewSpreadSessionModal({ onClose, onCreated }: Props) {
   const [step, setStep] = useState<1 | 2>(1)
   const [ticker, setTicker] = useState('')
-  const [status, setStatus] = useState('put_open')
+  const [strategy, setStrategy] = useState('IRON_CONDOR')
   const [openedAt, setOpenedAt] = useState(() => new Date().toISOString().slice(0, 10))
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -27,7 +24,7 @@ export function NewWheelModal({ onClose, onCreated }: Props) {
 
   // Step 2 state
   const [availableTrades, setAvailableTrades] = useState<Trade[]>([])
-  const [selectedTradeIds, setSelectedTradeIds] = useState<Set<string>>(new Set())
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [linking, setLinking] = useState(false)
 
   async function handleCreateSession() {
@@ -37,17 +34,16 @@ export function NewWheelModal({ onClose, onCreated }: Props) {
     try {
       const session = await sessionsApi.create({
         ticker: ticker.trim().toUpperCase(),
-        strategy: 'WHEEL',
-        status: status as 'put_open' | 'shares_sitting' | 'cc_open' | 'called_away' | 'completed',
+        strategy,
+        status: 'open',
         opened_at: openedAt,
       })
       setCreatedSession(session)
-      // Fetch trades for linking — failure is non-fatal; advance to step 2 regardless
       try {
         const all = await tradesApi.list({ ticker: ticker.trim().toUpperCase() })
         setAvailableTrades(all.filter(t => !t.session_id))
       } catch {
-        // Trade fetch failed — proceed to step 2 with empty list
+        // non-fatal — advance to step 2 with empty list
       }
       setStep(2)
     } catch (e: unknown) {
@@ -57,37 +53,38 @@ export function NewWheelModal({ onClose, onCreated }: Props) {
     }
   }
 
-  function toggleTradeSelection(tradeId: string) {
-    setSelectedTradeIds(prev => {
+  function toggleTrade(id: string) {
+    setSelectedIds(prev => {
       const next = new Set(prev)
-      if (next.has(tradeId)) next.delete(tradeId)
-      else next.add(tradeId)
+      next.has(id) ? next.delete(id) : next.add(id)
       return next
     })
   }
 
   async function handleLinkAndFinish() {
-    if (selectedTradeIds.size === 0 || !createdSession) return
+    if (!createdSession) return
     setLinking(true)
     setError(null)
     try {
       await Promise.all(
-        [...selectedTradeIds].map(id => tradesApi.update(id, { session_id: createdSession.id })),
+        [...selectedIds].map(id => tradesApi.update(id, { session_id: createdSession.id }))
       )
       onCreated(createdSession)
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to link trade')
+      setError(e instanceof Error ? e.message : 'Failed to link trades')
     } finally {
       setLinking(false)
     }
   }
+
+  const strategyLabel = STRATEGY_OPTIONS.find(o => o.value === strategy)?.label ?? strategy
 
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
       <div className="bg-white rounded-lg w-full max-w-md p-6 shadow-xl">
         {step === 1 && (
           <>
-            <h2 className="text-lg font-bold text-gray-900 mb-4">New WHEEL Session</h2>
+            <h2 className="text-lg font-bold text-gray-900 mb-4">New Spread Session</h2>
             {error && <p className="text-sm text-red-600 mb-3">{error}</p>}
             <div className="space-y-3">
               <div>
@@ -96,24 +93,24 @@ export function NewWheelModal({ onClose, onCreated }: Props) {
                   className="w-full border border-gray-300 rounded px-3 py-2 text-sm uppercase"
                   value={ticker}
                   onChange={e => setTicker(e.target.value.toUpperCase())}
-                  placeholder="e.g. NVDA"
+                  placeholder="e.g. QQQ"
                   autoFocus
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Current Phase</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Strategy</label>
                 <select
                   className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
-                  value={status}
-                  onChange={e => setStatus(e.target.value)}
+                  value={strategy}
+                  onChange={e => setStrategy(e.target.value)}
                 >
-                  {WHEEL_STATUSES.map(s => (
-                    <option key={s.value} value={s.value}>{s.label}</option>
+                  {STRATEGY_OPTIONS.map(o => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
                   ))}
                 </select>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Started On</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Opened On</label>
                 <input
                   type="date"
                   className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
@@ -139,28 +136,34 @@ export function NewWheelModal({ onClose, onCreated }: Props) {
 
         {step === 2 && (
           <>
-            <h2 className="text-lg font-bold text-gray-900 mb-1">Link Existing Trades</h2>
+            <h2 className="text-lg font-bold text-gray-900 mb-1">Link Existing Legs</h2>
             <p className="text-sm text-gray-500 mb-4">
-              Optionally attach existing {ticker} trades to this session as legs (e.g. the stock and its covered call).
+              Select unlinked {ticker} trades to attach as legs to this {strategyLabel} session.
             </p>
             {error && <p className="text-sm text-red-600 mb-3">{error}</p>}
             {availableTrades.length === 0 ? (
               <p className="text-sm text-gray-400 italic mb-4">No unlinked {ticker} trades found.</p>
             ) : (
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-1">Select trades to link</label>
-                <div className="space-y-1 border border-gray-300 rounded px-3 py-2">
-                  {availableTrades.map(t => (
-                    <label key={t.id} className="flex items-center gap-2 text-sm">
-                      <input
-                        type="checkbox"
-                        checked={selectedTradeIds.has(t.id)}
-                        onChange={() => toggleTradeSelection(t.id)}
-                      />
-                      {t.strategy} · {t.open_date}{t.strike_price != null ? ` · $${t.strike_price}` : ''} · {t.status}
-                    </label>
-                  ))}
-                </div>
+              <div className="mb-4 space-y-1 max-h-64 overflow-y-auto border border-gray-100 rounded p-2">
+                {availableTrades.map(t => (
+                  <label key={t.id} className="flex items-center gap-2 text-sm cursor-pointer hover:bg-gray-50 px-2 py-1 rounded">
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(t.id)}
+                      onChange={() => toggleTrade(t.id)}
+                      className="rounded"
+                    />
+                    <span className="text-gray-700">{t.strategy}</span>
+                    <span className="text-gray-400">·</span>
+                    <span className="text-gray-500">{t.open_date}</span>
+                    {t.strike_price != null && (
+                      <><span className="text-gray-400">·</span><span className="text-gray-600">${t.strike_price}</span></>
+                    )}
+                    {t.expiry_date && (
+                      <><span className="text-gray-400">·</span><span className="text-gray-500">exp {t.expiry_date}</span></>
+                    )}
+                  </label>
+                ))}
               </div>
             )}
             <div className="flex gap-2 justify-end">
@@ -176,13 +179,13 @@ export function NewWheelModal({ onClose, onCreated }: Props) {
               >
                 Skip
               </button>
-              {selectedTradeIds.size > 0 && (
+              {selectedIds.size > 0 && (
                 <button
                   onClick={handleLinkAndFinish}
                   disabled={linking}
                   className="px-4 py-2 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
                 >
-                  {linking ? 'Linking…' : 'Link & Done'}
+                  {linking ? 'Linking…' : `Link ${selectedIds.size} trade${selectedIds.size > 1 ? 's' : ''} & Done`}
                 </button>
               )}
             </div>

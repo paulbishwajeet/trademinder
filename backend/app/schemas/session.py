@@ -46,6 +46,7 @@ class SessionLegItem(BaseModel):
     quantity: int
     premium: Optional[Decimal] = None
     status: str
+    etrade_symbol: Optional[str] = None
 
 
 class SessionWithLegs(SessionSummary):
@@ -53,8 +54,13 @@ class SessionWithLegs(SessionSummary):
     rotation_chain: list[SessionSummary] = []
 
 
+# Lightweight session shape used in lookup responses — includes legs but not rotation_chain
+class SessionLookupItem(SessionSummary):
+    legs: list[SessionLegItem] = []
+
+
 class SessionLookupResponse(BaseModel):
     ticker: str
-    strategy: str
+    strategy: Optional[str] = None
     has_existing: bool
-    sessions: list[SessionSummary]
+    sessions: list[SessionLookupItem]

@@ -29,8 +29,14 @@ export function WheelDashboardPage() {
 
   useEffect(() => { load() }, [])
 
-  function handleStatusUpdate(id: string, newStatus: string) {
+  async function handleStatusUpdate(id: string, newStatus: string) {
     setSessions(prev => prev.map(s => s.id === id ? { ...s, status: newStatus } : s))
+    try {
+      const updated = await sessionsApi.get(id)
+      setSessions(prev => prev.map(s => s.id === id ? updated : s))
+    } catch {
+      // Status already updated optimistically; leg refresh is best-effort
+    }
   }
 
   function handleNewSession(_session: SessionSummary) {

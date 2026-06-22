@@ -57,11 +57,15 @@ async def list_trades(
 
 @router.post("", response_model=TradeListItem, status_code=201)
 async def create_trade(payload: TradeCreate, db: AsyncSession = Depends(get_db)):
+    cat_result = await db.execute(select(Category).where(Category.name == payload.category))
+    cat = cat_result.scalar_one_or_none()
+
     trade = Trade(
         wheel_id=payload.wheel_id,
         session_id=payload.session_id,
         type=payload.type,
         category=payload.category,
+        category_id=cat.id if cat else None,
         strategy=payload.strategy,
         ticker=payload.ticker.upper(),
         open_date=payload.open_date,

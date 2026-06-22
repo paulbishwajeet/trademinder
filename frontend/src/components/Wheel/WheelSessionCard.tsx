@@ -1,8 +1,11 @@
 // frontend/src/components/Wheel/WheelSessionCard.tsx
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import type { SessionWithLegs, SessionSummary, SessionLeg } from '../../types'
+import type { SessionWithLegs, SessionSummary, SessionLeg, TechnicalsData } from '../../types'
 import { sessionsApi } from '../../api/sessions'
+import { tradesApi } from '../../api/trades'
+import { technicalsApi } from '../../api/technicals'
+import { LinkLegModal } from './LinkLegModal'
 
 interface Props {
   session: SessionWithLegs
@@ -33,6 +36,24 @@ const VALID_NEXT_STATUSES: Record<string, string[]> = {
   completed: [],
 }
 
+// Rough read on whether conditions favor selling a new cash-secured put:
+// oversold / pulled-back-but-not-falling-knife setups are the classic entry.
+function putSellSignal(data: TechnicalsData): { label: string; color: string } {
+  if (data.rsi_result === 'rsi_overbought') {
+    return { label: 'Overbought — wait', color: '#EF4444' }
+  }
+  if (data.rsi_result === 'rsi_oversold' || data.bollinger_position === 'near_lower' || data.bollinger_position === 'below_lower') {
+    return { label: 'Pulled back — consider put', color: '#10B981' }
+  }
+  if (data.sentiment === 'bullish') {
+    return { label: 'Bullish — favorable', color: '#10B981' }
+  }
+  if (data.sentiment === 'bearish') {
+    return { label: 'Bearish — caution', color: '#EF4444' }
+  }
+  return { label: 'Neutral — keep watching', color: '#6B7280' }
+}
+
 function activeLegSummary(legs: SessionLeg[]): string {
   const openLegs = legs.filter(l => l.status === 'open')
   const leg = openLegs.length > 0 ? openLegs[openLegs.length - 1] : legs[legs.length - 1]
@@ -50,6 +71,19 @@ export function WheelSessionCard({ session, onStatusUpdate }: Props) {
   const [showStatusEdit, setShowStatusEdit] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
+  const [technicals, setTechnicals] = useState<TechnicalsData | null>(null)
+  const [linkModalTarget, setLinkModalTarget] = useState<string | null>(null)
+
+  // Called-away sessions sit in cash waiting for a good setup to sell a new put.
+  // Surface a quick technical read so it's not just a silent "needs action" bucket.
+  useEffect(() => {
+    if (session.status !== 'called_away') return
+    let cancelled = false
+    technicalsApi.fetch(session.ticker).then(data => {
+      if (!cancelled && data.fetch_status === 'ok') setTechnicals(data)
+    }).catch(() => {})
+    return () => { cancelled = true }
+  }, [session.status, session.ticker])
 
   const color = STATUS_COLORS[session.status] ?? '#6B7280'
   const label = STATUS_LABELS[session.status] ?? session.status
@@ -59,11 +93,22 @@ export function WheelSessionCard({ session, onStatusUpdate }: Props) {
     .filter(l => l.premium != null)
     .reduce((sum, l) => sum + (l.premium ?? 0) * l.quantity, 0)
 
+  const LINK_BEFORE_TRANSITION = new Set(['cc_open', 'put_open'])
+
   async function handleStatusChange(newStatus: string) {
+    if (LINK_BEFORE_TRANSITION.has(newStatus)) {
+      setLinkModalTarget(newStatus)
+      setShowStatusEdit(false)
+      return
+    }
     setSaving(true)
     setSaveError(null)
     try {
       await sessionsApi.update(session.id, { status: newStatus as 'put_open' | 'shares_sitting' | 'cc_open' | 'called_away' | 'completed' })
+      if (newStatus === 'called_away' || newStatus === 'shares_sitting') {
+        const optionLegs = session.legs.filter(l => l.status === 'open' && l.strike_price != null)
+        await Promise.all(optionLegs.map(l => tradesApi.close(l.id)))
+      }
       onStatusUpdate(session.id, newStatus)
       setShowStatusEdit(false)
     } catch {
@@ -105,20 +150,31 @@ export function WheelSessionCard({ session, onStatusUpdate }: Props) {
           <span className="hidden sm:block">{activeLegSummary(session.legs)}</span>
           <div className="flex gap-2" onClick={e => e.stopPropagation()}>
             {session.status === 'called_away' && (
-              <Link
-                to="/trades"
-                className="px-2 py-1 text-xs bg-amber-100 text-amber-800 rounded hover:bg-amber-200"
-              >
-                + New Put
-              </Link>
+              <>
+                {technicals && (
+                  <span
+                    className="px-2 py-1 text-xs rounded text-white whitespace-nowrap"
+                    style={{ background: putSellSignal(technicals).color }}
+                    title={`RSI ${technicals.rsi_14 ?? '—'} · MACD ${technicals.macd_signal ?? '—'} · Sentiment ${technicals.sentiment ?? '—'}`}
+                  >
+                    {putSellSignal(technicals).label}
+                  </span>
+                )}
+                <button
+                  onClick={() => setLinkModalTarget('put_open')}
+                  className="px-2 py-1 text-xs bg-amber-100 text-amber-800 rounded hover:bg-amber-200"
+                >
+                  + New Put
+                </button>
+              </>
             )}
             {session.status === 'shares_sitting' && (
-              <Link
-                to="/trades"
+              <button
+                onClick={() => setLinkModalTarget('cc_open')}
                 className="px-2 py-1 text-xs bg-amber-100 text-amber-800 rounded hover:bg-amber-200"
               >
                 + Sell CC
-              </Link>
+              </button>
             )}
             {nextStatuses.length > 0 && !showStatusEdit && (
               <button
@@ -216,6 +272,18 @@ export function WheelSessionCard({ session, onStatusUpdate }: Props) {
             </div>
           )}
         </div>
+      )}
+      {linkModalTarget && (
+        <LinkLegModal
+          sessionId={session.id}
+          ticker={session.ticker}
+          targetStatus={linkModalTarget}
+          onDone={() => {
+            setLinkModalTarget(null)
+            onStatusUpdate(session.id, linkModalTarget)
+          }}
+          onCancel={() => setLinkModalTarget(null)}
+        />
       )}
     </div>
   )

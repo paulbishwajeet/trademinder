@@ -112,9 +112,15 @@ async def positions_status(
         if pos_input.full_symbol:
             trade = next((t for t in trades if t.etrade_symbol == pos_input.full_symbol), None)
 
-        # Fallback: reconstruct match from instrument type + strike + expiry
+        # Fallback: reconstruct match from instrument type + strike + expiry.
+        # Use strict=True so untracked legs of a multi-leg position (e.g. iron
+        # condor) don't inherit the badge/commentary of the one tracked leg.
         if trade is None:
-            trade = _pick_best_trade(trades, pos_input)
+            trade = _pick_best_trade(trades, pos_input, strict=True)
+
+        if trade is None:
+            response[key] = PositionStatus(ticker=ticker, full_symbol=pos_input.full_symbol)
+            continue
 
         alert = best_alert.get(trade.id)
         cat = trade.category_obj
@@ -182,7 +188,7 @@ async def reconcile_positions(
         if pos.full_symbol and candidates:
             trade = next((t for t in candidates if t.etrade_symbol == pos.full_symbol), None)
         if trade is None and candidates:
-            trade = _pick_best_trade(candidates, pos)
+            trade = _pick_best_trade(candidates, pos, strict=True)
 
         if trade is None:
             unmatched_etrade.append(UnmatchedEtradeItem(
@@ -221,7 +227,7 @@ async def reconcile_positions(
     return ReconcileResponse(unmatched_etrade=unmatched_etrade, stale_backend=stale_backend)
 
 
-def _pick_best_trade(trades: list[Trade], pos_input) -> Trade:
+def _pick_best_trade(trades: list[Trade], pos_input, strict: bool = False) -> Trade | None:
     """Pick the most relevant trade for a position.
 
     Matching order:
@@ -229,8 +235,14 @@ def _pick_best_trade(trades: list[Trade], pos_input) -> Trade:
        accidentally matches a covered-call trade on the same ticker.
     2. Within the narrowed set, match by strike + expiry for options.
     3. Fallback: most recently created (handles the single-trade common case).
+
+    When strict=True (used by reconcile), steps 1-2 run but step 3 is replaced
+    with returning None. This prevents one tracked leg of a multi-leg position
+    (e.g., an iron condor) from absorbing all untracked legs of the same ticker.
+    The len==1 shortcuts are also skipped in strict mode so type+strike+expiry
+    filtering always runs.
     """
-    if len(trades) == 1:
+    if not strict and len(trades) == 1:
         return trades[0]
 
     # Step 1: filter by instrument type derived from the DOM row.
@@ -248,7 +260,12 @@ def _pick_best_trade(trades: list[Trade], pos_input) -> Trade:
 
     candidates = narrowed if narrowed else trades  # don't lose all candidates on a miss
 
-    if len(candidates) == 1:
+    # In strict mode, only skip the single-candidate shortcut when the position
+    # carries no strike/expiry (stocks). For options we must verify against
+    # strike+expiry before claiming a match, otherwise one tracked leg would
+    # absorb all untracked legs of the same ticker (e.g. iron condor).
+    has_option_details = bool(pos_input.strike and pos_input.expiry)
+    if len(candidates) == 1 and (not strict or not has_option_details):
         return candidates[0]
 
     # Step 2: for options, match by strike + expiry (uniquely identifies a contract).
@@ -258,6 +275,10 @@ def _pick_best_trade(trades: list[Trade], pos_input) -> Trade:
                     and abs(float(t.strike_price) - pos_input.strike) < 0.01
                     and t.expiry_date == pos_input.expiry):
                 return t
+
+    if strict:
+        # No confident match — treat as untracked so the + Add pill appears
+        return None
 
     # Step 3: fallback — most recently created
     return max(candidates, key=lambda t: t.created_at)

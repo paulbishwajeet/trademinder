@@ -1,7 +1,7 @@
 // frontend/src/pages/MarginDashboardPage.tsx
 import { useState, useCallback, useMemo, useRef, type DragEvent, type ChangeEvent } from 'react'
 
-const API_URL = 'http://localhost:5431'
+const API_URL = ''
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -19,6 +19,7 @@ interface ShortPut {
   dte: number
   iv: string
   gainPct: number            // pnl / |entryPremium|, clamped 0–1; computed in parsePortfolioCSV
+  longStrike: number | null  // protecting long put strike; null = naked
   stockPrice: number | null  // current price from backend; null until loaded
   rsi: number | null         // RSI-14 from backend; null until loaded
   assignmentProb: number | null  // BS put delta; null if stockPrice or IV unavailable
@@ -164,11 +165,34 @@ function parsePortfolioCSV(text: string): ParsedData {
   let liquidBuffer = 0
   let totalEquity = 0
   const shortPuts: ShortPut[] = []
-  let dataRowsFound = 0  // rows with enough columns to be real position data
+  let dataRowsFound = 0
 
+  // Pass 1: collect long puts keyed by ticker||expiryLabel (no qty — handles butterflies
+  // where short qty ≠ long qty).  Each entry is a list of {strike, qty} sorted by strike desc.
+  const longPutsByExpiry = new Map<string, Array<{ strike: number; qty: number }>>()
+  for (const line of lines) {
+    const cols = parseCSVLine(line)
+    if (cols.length < MIN_COLS) continue
+    const sym = cols[0]?.trim() ?? ''
+    const qty = parseNum(cols[1])
+    const type = cols[13]?.trim() ?? ''
+    if (type !== 'Option' || qty <= 0) continue
+    const m = OPTION_SYM_RE.exec(sym)
+    if (!m) continue
+    const [, ticker, monthStr, dayStr, yearStr, strikeStr, optionType] = m
+    if (optionType !== 'Put' || MONTHS[monthStr] === undefined) continue
+    const expiryLabel = `${monthStr} ${parseInt(dayStr, 10)} '${yearStr}`
+    const strike = parseFloat(strikeStr)
+    const key = `${ticker}||${expiryLabel}`
+    if (!longPutsByExpiry.has(key)) longPutsByExpiry.set(key, [])
+    longPutsByExpiry.get(key)!.push({ strike, qty: Math.abs(qty) })
+  }
+  for (const lps of longPutsByExpiry.values()) lps.sort((a, b) => b.strike - a.strike)
+
+  // Pass 2: process short puts with spread-aware obligation.
   for (let i = 0; i < lines.length; i++) {
     const cols = parseCSVLine(lines[i])
-    if (cols.length < MIN_COLS) continue  // skip header/summary rows (top 7 rows etc.)
+    if (cols.length < MIN_COLS) continue
     dataRowsFound++
     const symbol = cols[0]?.trim() ?? ''
     const qty = parseNum(cols[1])
@@ -202,7 +226,28 @@ function parsePortfolioCSV(text: string): ParsedData {
     const strike = parseFloat(strikeStr)
     const absQty = Math.abs(qty)
 
-    const obligation = strike * absQty * 100
+    // Spread-aware obligation.  Allocate available long puts for this ticker+expiry:
+    //   1. Higher-strike long puts (L > strike): zero obligation (assignment is profitable).
+    //   2. Lower-strike long puts (L < strike): obligation = (strike - L) × qty × 100.
+    //   3. Any uncovered remainder: naked obligation = strike × qty × 100.
+    const key = `${ticker}||${expiryLabel}`
+    const longPuts = longPutsByExpiry.get(key) ?? []
+    let remaining = absQty
+    let obligation = 0
+    let longStrike: number | null = null
+    for (const lp of longPuts) {
+      if (remaining === 0) break
+      const covered = Math.min(remaining, lp.qty)
+      if (lp.strike > strike) {
+        // Higher-strike long put: assignment produces a gain — zero cash obligation.
+      } else if (lp.strike < strike) {
+        obligation += (strike - lp.strike) * covered * 100
+        if (longStrike === null) longStrike = lp.strike
+      }
+      remaining -= covered
+    }
+    obligation += strike * remaining * 100  // naked remainder
+
     const entryPremium = pricePaid * absQty * 100
     const absEntry = Math.abs(entryPremium)
     const gainPct = absEntry > 0 ? Math.min(Math.max(totalGain / absEntry, 0), 1) : 0
@@ -221,10 +266,11 @@ function parsePortfolioCSV(text: string): ParsedData {
       dte: getDte(expiry),
       iv,
       gainPct,
+      longStrike,
       stockPrice: null,
       rsi: null,
       assignmentProb: null,
-      weightedObligation: obligation,   // conservative default: 100% risk until market data loads
+      weightedObligation: obligation,
     })
   }
 
@@ -651,7 +697,9 @@ export function MarginDashboardPage() {
                   <td className="px-4 py-2.5">
                     <div className="font-medium text-gray-800">{p.ticker}</div>
                     <div className="text-xs text-gray-400 truncate max-w-[180px]" title={p.symbol}>
-                      ${p.strike} Put
+                      {p.longStrike !== null
+                        ? `$${p.longStrike}/$${p.strike} Put Spread`
+                        : `$${p.strike} Put`}
                     </div>
                   </td>
                   <td className="px-4 py-2.5 text-center text-gray-600 whitespace-nowrap">{p.expiryLabel}</td>
