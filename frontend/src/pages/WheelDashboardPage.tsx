@@ -1,18 +1,38 @@
 import { useState, useEffect } from 'react'
-import type { WheelSessionDetail, WheelSessionSummary } from '../types'
+import { Link } from 'react-router-dom'
+import type { WheelSessionDetail, WheelSessionSummary, WheelSlotDetail } from '../types'
 import { wheelApi } from '../api/wheel'
-import { WheelSessionCardV2 } from '../components/Wheel/WheelSessionCardV2'
 import { NewWheelModalV2 } from '../components/Wheel/NewWheelModalV2'
+import { AddSlotModal } from '../components/Wheel/AddSlotModal'
 import { ResolveModal } from '../components/Wheel/ResolveModal'
 import { LinkLegModalV2 } from '../components/Wheel/LinkLegModalV2'
+
+interface FlatSlot {
+  slot: WheelSlotDetail
+  ticker: string
+  sessionId: string
+}
+
+function flattenSlots(sessions: WheelSessionDetail[]): FlatSlot[] {
+  return sessions.flatMap(s => s.slots.map(slot => ({ slot, ticker: s.ticker, sessionId: s.id })))
+}
+
+const STATUS_LABELS: Record<string, string> = {
+  awaiting_cc: 'Awaiting CC',
+  cc_active: 'CC Active',
+  awaiting_sold_put: 'Awaiting Sold Put',
+  sold_put_active: 'Sold Put Active',
+}
 
 export function WheelDashboardPage() {
   const [sessions, setSessions] = useState<WheelSessionDetail[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [showNewModal, setShowNewModal] = useState(false)
+  const [addSlotSessionId, setAddSlotSessionId] = useState<string | null>(null)
   const [resolveSlotId, setResolveSlotId] = useState<string | null>(null)
   const [linkSlotId, setLinkSlotId] = useState<string | null>(null)
+  const [expandedSlot, setExpandedSlot] = useState<string | null>(null)
 
   async function load() {
     setLoading(true)
@@ -30,31 +50,147 @@ export function WheelDashboardPage() {
 
   useEffect(() => { load() }, [])
 
-  function handleNewSession(_s: WheelSessionSummary) {
-    setShowNewModal(false)
-    load()
-  }
-
-  const needsAction = sessions.filter(s => s.slots.some(sl => sl.needs_action))
-  const monitoring = sessions.filter(s => !s.slots.some(sl => sl.needs_action))
+  const allSlots = flattenSlots(sessions)
+  const needsAction = allSlots.filter(f => f.slot.needs_action)
+  const awaitingCC = allSlots.filter(f => f.slot.status === 'awaiting_cc' && !f.slot.needs_action)
+  const awaitingSP = allSlots.filter(f => f.slot.status === 'awaiting_sold_put' && !f.slot.needs_action)
+  const active = allSlots.filter(f => (f.slot.status === 'cc_active' || f.slot.status === 'sold_put_active') && !f.slot.needs_action)
 
   const resolveSlotTicker = resolveSlotId
-    ? sessions.find(s => s.slots.some(sl => sl.id === resolveSlotId))?.ticker ?? ''
+    ? allSlots.find(f => f.slot.id === resolveSlotId)?.ticker ?? ''
     : ''
   const linkSlotTicker = linkSlotId
-    ? sessions.find(s => s.slots.some(sl => sl.id === linkSlotId))?.ticker ?? ''
+    ? allSlots.find(f => f.slot.id === linkSlotId)?.ticker ?? ''
     : ''
   const linkSlotStatus = linkSlotId
-    ? sessions.flatMap(s => s.slots).find(sl => sl.id === linkSlotId)?.status ?? ''
+    ? allSlots.find(f => f.slot.id === linkSlotId)?.slot.status ?? ''
     : ''
 
+  function activeLegInfo(slot: WheelSlotDetail): string {
+    const leg = slot.legs.find(l => l.rotation_number === slot.rotation_number && l.trade_status === 'open' && l.leg_role !== 'stock')
+    if (!leg) return '—'
+    const parts: string[] = []
+    if (leg.trade_strike_price != null) parts.push(`$${leg.trade_strike_price}`)
+    if (leg.trade_expiry_date) parts.push(`exp ${leg.trade_expiry_date}`)
+    if (leg.trade_premium != null) parts.push(`$${leg.trade_premium} prem`)
+    return parts.join(' · ') || '—'
+  }
+
+  function renderSlotRow(f: FlatSlot) {
+    const { slot, ticker } = f
+    const isExpanded = expandedSlot === slot.id
+    const currentLegs = slot.legs.filter(l => l.rotation_number === slot.rotation_number)
+
+    return (
+      <tr key={slot.id} className="group">
+        <td className="py-2 pr-3 font-bold text-gray-900">{ticker}</td>
+        <td className="py-2 pr-3 text-gray-500 text-xs">{slot.contracts}x100</td>
+        <td className="py-2 pr-3">
+          <span className={`text-xs font-medium px-2 py-0.5 rounded-full text-white ${
+            slot.status.includes('active') ? 'bg-blue-500' : 'bg-amber-500'
+          }`}>
+            {STATUS_LABELS[slot.status] ?? slot.status}
+          </span>
+          {slot.needs_action && (
+            <span className="ml-1 text-xs font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-300">!</span>
+          )}
+        </td>
+        <td className="py-2 pr-3 text-xs text-gray-500">{activeLegInfo(slot)}</td>
+        <td className="py-2 pr-3 text-xs text-gray-400">R{slot.rotation_number}</td>
+        <td className="py-2 pr-3 text-xs font-medium text-green-600">${slot.total_premium}</td>
+        <td className="py-2 text-right">
+          <div className="flex items-center gap-1 justify-end">
+            {slot.needs_action && (
+              <button onClick={() => setResolveSlotId(slot.id)} className="px-2 py-0.5 text-xs bg-amber-100 text-amber-800 rounded hover:bg-amber-200">
+                Resolve
+              </button>
+            )}
+            {(slot.status === 'awaiting_cc' || slot.status === 'awaiting_sold_put') && !slot.needs_action && (
+              <button onClick={() => setLinkSlotId(slot.id)} className="px-2 py-0.5 text-xs bg-blue-100 text-blue-800 rounded hover:bg-blue-200">
+                {slot.status === 'awaiting_cc' ? '+ CC' : '+ Put'}
+              </button>
+            )}
+            <button
+              onClick={() => setExpandedSlot(isExpanded ? null : slot.id)}
+              className="px-1.5 py-0.5 text-xs text-gray-400 hover:text-gray-600 rounded hover:bg-gray-100"
+              title="Show legs"
+            >
+              {isExpanded ? '−' : '+'}
+            </button>
+          </div>
+        </td>
+      </tr>
+    )
+  }
+
+  function renderLegRows(f: FlatSlot) {
+    if (expandedSlot !== f.slot.id) return null
+    const currentLegs = f.slot.legs.filter(l => l.rotation_number === f.slot.rotation_number)
+    if (currentLegs.length === 0) {
+      return (
+        <tr key={`${f.slot.id}-legs`}>
+          <td colSpan={7} className="py-1 pl-8 text-xs text-gray-400 italic">No legs in current rotation.</td>
+        </tr>
+      )
+    }
+    return currentLegs.map(leg => (
+      <tr key={leg.id} className="bg-gray-50">
+        <td className="py-1 pl-8 text-xs text-gray-400 capitalize">{leg.leg_role.replace('_', ' ')}</td>
+        <td className="py-1 pr-3 text-xs text-gray-500">{leg.trade_strategy}</td>
+        <td className="py-1 pr-3 text-xs text-gray-500">{leg.trade_strike_price != null ? `$${leg.trade_strike_price}` : '—'}</td>
+        <td className="py-1 pr-3 text-xs text-gray-500">
+          {leg.trade_expiry_date ?? '—'}{leg.trade_premium != null ? ` · $${leg.trade_premium}` : ''}
+        </td>
+        <td className="py-1 pr-3 text-xs text-gray-400 capitalize">{leg.trade_status}</td>
+        <td colSpan={2} className="py-1 text-xs text-right">
+          <Link to={`/trades/${leg.trade_id}`} className="text-blue-500 hover:underline">view</Link>
+        </td>
+      </tr>
+    ))
+  }
+
+  function renderSection(title: string, color: string, bgColor: string, borderColor: string, slots: FlatSlot[]) {
+    if (slots.length === 0) return null
+    return (
+      <section className="mb-5">
+        <div className="flex items-center gap-2 mb-2">
+          <span className={`text-sm font-bold ${color}`}>{title}</span>
+          <span className={`${bgColor} ${color} text-xs px-2 py-0.5 rounded-full font-medium`}>{slots.length}</span>
+        </div>
+        <div className={`bg-white border ${borderColor} rounded-lg overflow-hidden`}>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs text-gray-400 border-b border-gray-100">
+                <th className="py-2 pr-3 pl-3 font-normal">Ticker</th>
+                <th className="py-2 pr-3 font-normal">Size</th>
+                <th className="py-2 pr-3 font-normal">Status</th>
+                <th className="py-2 pr-3 font-normal">Active Leg</th>
+                <th className="py-2 pr-3 font-normal">Rot</th>
+                <th className="py-2 pr-3 font-normal">Premium</th>
+                <th className="py-2 pr-3 font-normal"></th>
+              </tr>
+            </thead>
+            {slots.map(f => (
+              <tbody key={f.slot.id} className="border-t border-gray-50">
+                {renderSlotRow(f)}
+                {renderLegRows(f)}
+              </tbody>
+            ))}
+          </table>
+        </div>
+      </section>
+    )
+  }
+
   return (
-    <div className="p-6 max-w-4xl mx-auto">
+    <div className="p-6 max-w-5xl mx-auto">
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-bold text-gray-900">WHEEL Strategy</h1>
-        <button onClick={() => setShowNewModal(true)} className="px-4 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700">
-          + New Wheel
-        </button>
+        <div className="flex gap-2">
+          <button onClick={() => setShowNewModal(true)} className="px-4 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700">
+            + New Wheel
+          </button>
+        </div>
       </div>
 
       {loading && <p className="text-gray-500 text-center py-12">Loading...</p>}
@@ -71,36 +207,14 @@ export function WheelDashboardPage() {
 
       {!loading && !error && sessions.length > 0 && (
         <>
-          {needsAction.length > 0 && (
-            <section className="mb-6">
-              <div className="flex items-center gap-2 mb-3">
-                <span className="text-sm font-bold text-amber-600">NEEDS ACTION</span>
-                <span className="bg-amber-100 text-amber-700 text-xs px-2 py-0.5 rounded-full font-medium">{needsAction.length}</span>
-              </div>
-              <div className="space-y-3">
-                {needsAction.map(s => (
-                  <WheelSessionCardV2 key={s.id} session={s} onResolve={setResolveSlotId} onLinkLeg={setLinkSlotId} onRefresh={load} />
-                ))}
-              </div>
-            </section>
-          )}
-          {monitoring.length > 0 && (
-            <section>
-              <div className="flex items-center gap-2 mb-3">
-                <span className="text-sm font-bold text-blue-600">MONITORING</span>
-                <span className="bg-blue-100 text-blue-700 text-xs px-2 py-0.5 rounded-full font-medium">{monitoring.length}</span>
-              </div>
-              <div className="space-y-3">
-                {monitoring.map(s => (
-                  <WheelSessionCardV2 key={s.id} session={s} onResolve={setResolveSlotId} onLinkLeg={setLinkSlotId} onRefresh={load} />
-                ))}
-              </div>
-            </section>
-          )}
+          {renderSection('NEEDS ACTION', 'text-amber-600', 'bg-amber-100', 'border-amber-300', needsAction)}
+          {renderSection('AWAITING CC', 'text-amber-600', 'bg-amber-50', 'border-amber-200', awaitingCC)}
+          {renderSection('AWAITING SOLD PUT', 'text-orange-600', 'bg-orange-50', 'border-orange-200', awaitingSP)}
+          {renderSection('ACTIVE', 'text-blue-600', 'bg-blue-50', 'border-blue-200', active)}
         </>
       )}
 
-      {showNewModal && <NewWheelModalV2 onClose={() => setShowNewModal(false)} onCreated={handleNewSession} />}
+      {showNewModal && <NewWheelModalV2 onClose={() => setShowNewModal(false)} onCreated={() => { setShowNewModal(false); load() }} />}
       {resolveSlotId && <ResolveModal slotId={resolveSlotId} ticker={resolveSlotTicker} onClose={() => setResolveSlotId(null)} onResolved={() => { setResolveSlotId(null); load() }} />}
       {linkSlotId && <LinkLegModalV2 slotId={linkSlotId} ticker={linkSlotTicker} slotStatus={linkSlotStatus} onClose={() => setLinkSlotId(null)} onLinked={() => { setLinkSlotId(null); load() }} />}
     </div>
