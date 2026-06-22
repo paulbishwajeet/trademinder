@@ -775,8 +775,8 @@ function applyWheelPillToRow(row) {
     if (pill) symbolDiv.appendChild(pill);
     return;
   }
-  // Also show wheel pill on stock rows by ticker match
-  if (info.ticker && wheelActiveSlots.some(s => s.ticker.toUpperCase() === info.ticker.toUpperCase())) {
+  // Show wheel pill on stock rows (non-option) by ticker match
+  if (!info.isOption && info.ticker && wheelActiveSlots.some(s => s.ticker.toUpperCase() === info.ticker.toUpperCase())) {
     const pill = renderWheelPillForTicker(info.ticker);
     if (pill) symbolDiv.appendChild(pill);
     return;
