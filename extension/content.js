@@ -41,6 +41,14 @@ let allActiveSessions = [];
 // timestamp (ms) when /api/sessions/active was last fetched; 0 = never
 let activeSessionsFetchedAt = 0;
 const ACTIVE_SESSIONS_TTL = 60_000; // re-fetch every 60 seconds
+// ── Ticker aliases (share classes that trade interchangeably) ──
+const TICKER_ALIASES = { GOOG: 'GOOGL', GOOGL: 'GOOG' };
+function tickerVariants(ticker) {
+  const t = ticker.toUpperCase();
+  const alias = TICKER_ALIASES[t];
+  return alias ? [t, alias] : [t];
+}
+
 // ── Wheel v2 slot data ──
 let wheelActiveSlots = [];
 let wheelSlotsFetchedAt = 0;
@@ -609,7 +617,8 @@ function applyRsiToRow(row, ticker) {
 }
 
 function renderWheelPillForTicker(ticker) {
-  const slots = wheelActiveSlots.filter(s => s.ticker.toUpperCase() === ticker.toUpperCase());
+  const variants = tickerVariants(ticker);
+  const slots = wheelActiveSlots.filter(s => variants.includes(s.ticker.toUpperCase()));
   if (slots.length === 0) return null;
 
   const parts = [];
@@ -775,8 +784,9 @@ function applyWheelPillToRow(row) {
     if (pill) symbolDiv.appendChild(pill);
     return;
   }
-  // Show wheel pill on stock rows (non-option) by ticker match
-  if (!info.isOption && info.ticker && wheelActiveSlots.some(s => s.ticker.toUpperCase() === info.ticker.toUpperCase())) {
+  // Show wheel pill on stock rows (non-option) by ticker match (with alias support)
+  const tickerVars = info.ticker ? tickerVariants(info.ticker) : [];
+  if (!info.isOption && tickerVars.length && wheelActiveSlots.some(s => tickerVars.includes(s.ticker.toUpperCase()))) {
     const pill = renderWheelPillForTicker(info.ticker);
     if (pill) symbolDiv.appendChild(pill);
     return;
