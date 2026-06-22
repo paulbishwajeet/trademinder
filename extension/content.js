@@ -41,6 +41,10 @@ let allActiveSessions = [];
 // timestamp (ms) when /api/sessions/active was last fetched; 0 = never
 let activeSessionsFetchedAt = 0;
 const ACTIVE_SESSIONS_TTL = 60_000; // re-fetch every 60 seconds
+// ── Wheel v2 slot data ──
+let wheelActiveSlots = [];
+let wheelSlotsFetchedAt = 0;
+const WHEEL_SLOTS_TTL = 60_000;
 // ticker (uppercase) → current price (number) | null (spread session price signal)
 const priceCache = new Map();
 // full_symbol||ticker (uppercase) → true: position is in E*TRADE but not backend
@@ -386,10 +390,10 @@ async function processVisibleRows() {
 
     if (toProcess.length === 0) return;
 
-    // Fire-and-forget: fetch all active sessions, then prices for spread sessions
-    fetchAllActiveSessions().then(async () => {
+    // Fire-and-forget: fetch all active sessions + wheel slots, then prices for spread sessions
+    Promise.all([fetchAllActiveSessions(), fetchWheelActiveSlots()]).then(async () => {
       await fetchPricesForSpreadSessions();
-      // Re-apply pills now that session/price data is available
+      // Re-apply pills now that session/price/wheel data is available
       document.querySelectorAll(ETRADE.positionRows).forEach(row => {
         applyWheelPillToRow(row);
       });
@@ -604,21 +608,22 @@ function applyRsiToRow(row, ticker) {
   pill.textContent = `RSI ${rsi.toFixed(1)}`;
 }
 
-function renderWheelPill(session) {
-  if (!session) return null;
-  const labels = {
-    put_open: 'WHL: Put Open',
-    shares_sitting: 'WHL: Sitting',
-    cc_open: 'WHL: CC Open',
-    called_away: 'WHL: ⚠ Action',
-  };
-  const label = labels[session.status];
-  if (!label) return null; // don't show pill for 'completed'
+function renderWheelPillForTicker(ticker) {
+  const slots = wheelActiveSlots.filter(s => s.ticker.toUpperCase() === ticker.toUpperCase());
+  if (slots.length === 0) return null;
 
-  const needsAction = session.status === 'called_away' || session.status === 'shares_sitting';
+  const parts = [];
+  if (slots.some(s => s.status === 'cc_active')) parts.push('CC');
+  if (slots.some(s => s.status === 'sold_put_active')) parts.push('SP');
+  if (slots.some(s => s.status === 'awaiting_cc') && !slots.some(s => s.status === 'cc_active')) parts.push('CC?');
+  if (slots.some(s => s.status === 'awaiting_sold_put') && !slots.some(s => s.status === 'sold_put_active')) parts.push('SP?');
+  const needsAction = slots.some(s => s.needs_action);
+  if (parts.length === 0 && !needsAction) return null;
+
+  const label = 'WHL: ' + (parts.length > 0 ? parts.join('+') : '') + (needsAction ? ' ⚠' : '');
   const pill = document.createElement('span');
   pill.className = 'tm-wheel-pill';
-  pill.textContent = label;
+  pill.textContent = label.trim();
   pill.style.cssText = [
     'display:inline-flex',
     'align-items:center',
@@ -632,6 +637,12 @@ function renderWheelPill(session) {
     `border:1px solid ${needsAction ? '#FCD34D' : '#93C5FD'}`,
   ].join(';');
   return pill;
+}
+
+function findWheelSlotForRow(info) {
+  if (!info?.fullSymbol) return null;
+  const sym = info.fullSymbol.toUpperCase();
+  return wheelActiveSlots.find(s => s.etrade_symbols.includes(sym)) || null;
 }
 
 function computePriceSignal(session) {
@@ -756,12 +767,25 @@ function applyWheelPillToRow(row) {
   symbolDiv.querySelector('.tm-category-pill')?.remove();
 
   const info = getRowInfo(row);
+
+  // Wheel v2: check slot-based wheel data first
+  const wheelSlot = findWheelSlotForRow(info);
+  if (wheelSlot) {
+    const pill = renderWheelPillForTicker(info.ticker);
+    if (pill) symbolDiv.appendChild(pill);
+    return;
+  }
+  // Also show wheel pill on stock rows by ticker match
+  if (info.ticker && wheelActiveSlots.some(s => s.ticker.toUpperCase() === info.ticker.toUpperCase())) {
+    const pill = renderWheelPillForTicker(info.ticker);
+    if (pill) symbolDiv.appendChild(pill);
+    return;
+  }
+
+  // Spread sessions (IC, PBWB) — still use old session system
   const session = findSessionForRow(info);
   if (session) {
-    if (session.strategy === 'WHEEL') {
-      const pill = renderWheelPill(session);
-      if (pill) symbolDiv.appendChild(pill);
-    } else {
+    if (session.strategy !== 'WHEEL') {
       const pill = renderStrategyPill(session);
       if (pill) symbolDiv.appendChild(pill);
     }
@@ -1300,6 +1324,18 @@ async function fetchAllActiveSessions(force = false) {
   }
 }
 
+async function fetchWheelActiveSlots(force = false) {
+  if (!force && wheelSlotsFetchedAt && (Date.now() - wheelSlotsFetchedAt < WHEEL_SLOTS_TTL)) return;
+  try {
+    const res = await fetch(`${tmApiUrl}/api/wheel/active-slots`, { signal: AbortSignal.timeout(5000) });
+    if (!res.ok) { wheelSlotsFetchedAt = Date.now(); return; }
+    wheelActiveSlots = await res.json();
+    wheelSlotsFetchedAt = Date.now();
+  } catch {
+    wheelSlotsFetchedAt = Date.now();
+  }
+}
+
 async function fetchPricesForSpreadSessions() {
   const spreadTickers = [...new Set(
     allActiveSessions
@@ -1828,8 +1864,8 @@ async function showAddTradeModal(info) {
       processedRows.forEach((val, key) => {
         if (val === cacheKey || val === info.ticker) processedRows.delete(key);
       });
-      // Refresh active sessions so the new/updated session's legs are indexed
-      await fetchAllActiveSessions(true);
+      // Refresh active sessions + wheel slots so the new/updated session's legs are indexed
+      await Promise.all([fetchAllActiveSessions(true), fetchWheelActiveSlots(true)]);
       processVisibleRows();
       closeModal();
 
@@ -2152,7 +2188,7 @@ async function showEditTradeModal(info) {
       processedRows.forEach((val, key) => {
         if (val === cacheKey || val === info.ticker) processedRows.delete(key);
       });
-      await fetchAllActiveSessions(true);
+      await Promise.all([fetchAllActiveSessions(true), fetchWheelActiveSlots(true)]);
       processVisibleRows();
       closeModal();
 
