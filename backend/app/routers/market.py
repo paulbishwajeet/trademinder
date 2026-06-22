@@ -13,6 +13,7 @@ from app.services.alert_engine import run as run_alert_engine
 from app.services.options_scanner import run_scan
 from app.services.price_fetcher import fetch_quote, fetch_rsi_batch, refresh_open_trades
 from app.services.technicals_fetcher import fetch_technicals
+from app.services.cc_signal import compute_cc_signal
 
 router = APIRouter(prefix="/api/market", tags=["market"])
 
@@ -75,3 +76,10 @@ async def get_technicals(ticker: str):
     loop = asyncio.get_running_loop()
     result = await loop.run_in_executor(None, fetch_technicals, ticker.upper())
     return result
+
+
+@router.get("/cc-signal/{ticker}")
+async def get_cc_signal(ticker: str):
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(None, compute_cc_signal, ticker.upper())
+    return JSONResponse(content=result)
