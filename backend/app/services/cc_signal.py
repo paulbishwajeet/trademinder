@@ -27,9 +27,11 @@ def compute_cc_signal(ticker: str) -> dict:
 
     try:
         result = _compute_fresh(ticker)
+        _cc_signal_cache[ticker] = (result, now)
+        return result
     except Exception as exc:
         log.exception("cc_signal failed for %s", ticker)
-        result = {
+        return {
             "ticker": ticker,
             "score": 0,
             "grade": "wait",
@@ -44,9 +46,6 @@ def compute_cc_signal(ticker: str) -> dict:
             "fetch_status": "error",
             "fetch_error": str(exc),
         }
-
-    _cc_signal_cache[ticker] = (result, now)
-    return result
 
 
 def _compute_fresh(ticker: str) -> dict:
