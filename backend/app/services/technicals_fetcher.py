@@ -1,8 +1,8 @@
 # backend/app/services/technicals_fetcher.py
-import yfinance as yf
 import pandas as pd
 
 from app.services.price_fetcher import _compute_rsi_14
+from app.services.schwab_client import get_schwab_client, SchwabAPIError
 
 
 def _compute_macd_weekly(close_w: pd.Series) -> dict[str, str]:
@@ -52,6 +52,7 @@ def _infer_sentiment(macd_signal: str, price: float, ma_50d: float | None, rsi_1
 
 
 def _get_next_earnings(ticker: str) -> str | None:
+    import yfinance as yf
     try:
         cal = yf.Ticker(ticker).calendar
         if not cal:
@@ -68,31 +69,22 @@ def _get_next_earnings(ticker: str) -> str | None:
 
 def fetch_technicals(ticker: str, return_closes: bool = False) -> dict | tuple[dict, pd.Series]:
     try:
-        df_d = yf.download(ticker, period="200d", interval="1d", progress=False, auto_adjust=True)
+        client = get_schwab_client()
+
+        df_d = client.get_price_history(ticker, "year", 1, "daily", 1)
         if df_d is None or df_d.empty:
             err = {"fetch_status": "error", "fetch_error": f"No daily data for {ticker}"}
-            if return_closes:
-                return err, pd.Series(dtype=float)
-            return err
+            return (err, pd.Series(dtype=float)) if return_closes else err
 
-        close_d = df_d["Close"]
-        if isinstance(close_d, pd.DataFrame):
-            close_d = close_d.iloc[:, 0]
-        close_d = close_d.dropna()
-
+        close_d = df_d["Close"].dropna()
         if len(close_d) < 2:
             err = {"fetch_status": "error", "fetch_error": f"Insufficient daily history for {ticker}"}
-            if return_closes:
-                return err, pd.Series(dtype=float)
-            return err
+            return (err, pd.Series(dtype=float)) if return_closes else err
 
-        df_w = yf.download(ticker, period="2y", interval="1wk", progress=False, auto_adjust=True)
+        df_w = client.get_price_history(ticker, "year", 2, "weekly", 1)
         close_w = pd.Series(dtype=float)
         if df_w is not None and not df_w.empty:
-            close_w = df_w["Close"]
-            if isinstance(close_w, pd.DataFrame):
-                close_w = close_w.iloc[:, 0]
-            close_w = close_w.dropna()
+            close_w = df_w["Close"].dropna()
 
         price = round(float(close_d.iloc[-1]), 2)
         prev_price = round(float(close_d.iloc[-2]), 2)
@@ -117,7 +109,11 @@ def fetch_technicals(ticker: str, return_closes: bool = False) -> dict | tuple[d
         b_mid = round(float(rolling_mean.iloc[-1]), 2) if len(close_d) >= 20 else None
         b_upper = round(float((rolling_mean + rolling_std * 2).iloc[-1]), 2) if len(close_d) >= 20 else None
         b_lower = round(float((rolling_mean - rolling_std * 2).iloc[-1]), 2) if len(close_d) >= 20 else None
-        b_pos = _bollinger_position(price, b_upper, b_mid, b_lower) if (b_upper is not None and b_mid is not None and b_lower is not None) else None
+        b_pos = (
+            _bollinger_position(price, b_upper, b_mid, b_lower)
+            if (b_upper is not None and b_mid is not None and b_lower is not None)
+            else None
+        )
 
         macd = _compute_macd_weekly(close_w)
         sentiment = _infer_sentiment(macd["macd_signal"], price, ma_50d, rsi_14)
@@ -144,11 +140,11 @@ def fetch_technicals(ticker: str, return_closes: bool = False) -> dict | tuple[d
             "fetch_status": "ok",
             "fetch_error": None,
         }
-        if return_closes:
-            return result, close_d
-        return result
+        return (result, close_d) if return_closes else result
+
+    except SchwabAPIError as exc:
+        err = {"fetch_status": "error", "fetch_error": str(exc)}
+        return (err, pd.Series(dtype=float)) if return_closes else err
     except Exception as exc:
         err = {"fetch_status": "error", "fetch_error": str(exc)}
-        if return_closes:
-            return err, pd.Series(dtype=float)
-        return err
+        return (err, pd.Series(dtype=float)) if return_closes else err
