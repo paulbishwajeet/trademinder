@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.trade import Trade
-from app.services.schwab_client import get_schwab_client, SchwabAPIError
+from app.services.schwab_client import get_schwab_client, SchwabAPIError  # noqa: F401
 
 
 def _compute_unrealized_pnl(trade: Trade, current_price: float) -> float | None:
@@ -55,7 +55,7 @@ def _fetch_prices_from_schwab(tickers: list[str]) -> dict[str, float]:
 async def fetch_quote(ticker: str) -> dict | None:
     """Fetch current price + day stats for a single ticker."""
     try:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         def _sync():
             client = get_schwab_client()
@@ -82,7 +82,12 @@ async def fetch_quote(ticker: str) -> dict | None:
 def _fetch_rsi_from_schwab(tickers: list[str]) -> dict[str, dict | None]:
     """Batch RSI fetch using Schwab price history — parallel per-ticker calls."""
     result: dict[str, dict | None] = {t: None for t in tickers}
-    client = get_schwab_client()
+    if not tickers:
+        return result
+    try:
+        client = get_schwab_client()
+    except Exception:
+        return result
 
     def fetch_one(ticker: str) -> tuple[str, dict | None]:
         try:
@@ -107,7 +112,7 @@ def _fetch_rsi_from_schwab(tickers: list[str]) -> dict[str, dict | None]:
 
 async def fetch_rsi_batch(tickers: list[str]) -> dict[str, dict | None]:
     """Async wrapper so the event loop is not blocked."""
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, _fetch_rsi_from_schwab, tickers)
 
 
