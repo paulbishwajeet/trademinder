@@ -5,22 +5,24 @@ One-time Schwab OAuth flow. Run before first use and any time before the
 7-day refresh token expires.
 
 Prerequisites:
-  1. Update Schwab developer portal callback URL to https://127.0.0.1:8765/callback
+  1. Set callback URL in Schwab developer portal to: https://127.0.0.1:8765/callback
   2. Set SCHWAB_APP_KEY, SCHWAB_APP_SECRET, DATABASE_URL in .env
   3. Run: python scripts/schwab_auth.py
+
+After login, the browser will show a connection error (expected — no HTTPS server
+running locally). Copy the full URL from the address bar and paste it when prompted.
 """
+import asyncio
 import base64
 import os
 import sys
 import urllib.parse
 import webbrowser
 from datetime import datetime, timedelta, timezone
-from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
-import asyncio
-
 import asyncpg
+import httpx
 from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).parent.parent / ".env")
@@ -32,27 +34,6 @@ REDIRECT_URI = "https://127.0.0.1:8765/callback"
 AUTH_URL = "https://api.schwabapi.com/v1/oauth/authorize"
 TOKEN_URL = "https://api.schwabapi.com/v1/oauth/token"
 
-_auth_code: str | None = None
-
-
-class _CallbackHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        global _auth_code
-        parsed = urllib.parse.urlparse(self.path)
-        params = urllib.parse.parse_qs(parsed.query)
-        if "code" in params:
-            _auth_code = params["code"][0]
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(b"Auth code captured. You can close this tab.")
-        else:
-            self.send_response(400)
-            self.end_headers()
-            self.wfile.write(b"Missing code param.")
-
-    def log_message(self, format, *args):
-        pass  # suppress request logging
-
 
 def main():
     params = urllib.parse.urlencode({
@@ -62,19 +43,23 @@ def main():
         "scope": "readonly",
     })
     url = f"{AUTH_URL}?{params}"
-    print(f"\nOpening browser to:\n{url}\n")
+    print(f"\nOpening browser to authorize TradeMinder...\n")
     webbrowser.open(url)
 
-    print("Waiting for callback on https://127.0.0.1:8765 ...")
-    server = HTTPServer(("127.0.0.1", 8765), _CallbackHandler)
-    server.handle_request()
+    print("After you log in, the browser will redirect to https://127.0.0.1:8765/callback")
+    print("and show a connection error. That is expected.")
+    print("\nCopy the FULL URL from the browser address bar and paste it here:")
+    redirected_url = input("> ").strip()
 
-    if not _auth_code:
-        print("ERROR: No auth code received.")
+    parsed = urllib.parse.urlparse(redirected_url)
+    params_map = urllib.parse.parse_qs(parsed.query)
+    if "code" not in params_map:
+        print("ERROR: No 'code' found in the URL. Make sure you copied the full redirect URL.")
         sys.exit(1)
 
-    print("Auth code received. Exchanging for tokens...")
-    import httpx
+    auth_code = params_map["code"][0]
+    print("\nAuth code received. Exchanging for tokens...")
+
     creds = base64.b64encode(f"{APP_KEY}:{APP_SECRET}".encode()).decode()
     resp = httpx.post(
         TOKEN_URL,
@@ -84,7 +69,7 @@ def main():
         },
         data={
             "grant_type": "authorization_code",
-            "code": _auth_code,
+            "code": auth_code,
             "redirect_uri": REDIRECT_URI,
         },
         timeout=15,
