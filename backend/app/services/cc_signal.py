@@ -8,11 +8,16 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-import yfinance as yf
 
 from app.services.price_fetcher import _compute_rsi_14
+from app.services.schwab_client import get_schwab_client
 
 log = logging.getLogger(__name__)
+
+# fetch_technicals is imported lazily inside _compute_fresh to avoid circular
+# imports, but we declare it here at module level so unit tests can patch it via
+# patch("app.services.cc_signal.fetch_technicals").
+fetch_technicals = None  # populated on first call or overridden by tests
 
 _cc_signal_cache: dict[str, tuple[dict, float]] = {}
 _CACHE_TTL = 14400  # 4 hours
@@ -49,7 +54,14 @@ def compute_cc_signal(ticker: str) -> dict:
 
 
 def _compute_fresh(ticker: str) -> dict:
-    from app.services.technicals_fetcher import fetch_technicals
+    import sys as _sys
+    # Check if fetch_technicals has been injected into this module's namespace
+    # (e.g. by a test mock via patch("app.services.cc_signal.fetch_technicals")).
+    # Fall back to a lazy import to avoid circular imports at module load time.
+    _ft = getattr(_sys.modules[__name__], "fetch_technicals", None)
+    if _ft is None:
+        from app.services.technicals_fetcher import fetch_technicals as _ft
+    fetch_technicals = _ft
 
     technicals, close_d = fetch_technicals(ticker, return_closes=True)
     if technicals.get("fetch_status") != "ok":
@@ -57,20 +69,24 @@ def _compute_fresh(ticker: str) -> dict:
     if close_d.empty:
         raise ValueError(f"No daily data for {ticker}")
 
-    # IV percentile + live price share one Ticker object to minimize API calls
-    t = yf.Ticker(ticker)
-    iv_percentile, atm_iv = _compute_iv_percentile_from_ticker(close_d, t)
+    client = get_schwab_client()
+
+    quotes = client.get_quotes([ticker])
+    quote = quotes.get(ticker, {})
     try:
-        live_price = float(t.fast_info.last_price)
+        live_price = float(quote.get("lastPrice", close_d.iloc[-1]))
     except Exception:
         live_price = float(close_d.iloc[-1])
+
+    chain = client.get_option_chain(ticker, contract_type="CALL")
+    iv_percentile, atm_iv = _compute_iv_percentile_from_chain(close_d, chain, ticker)
+
     prev_close = float(close_d.iloc[-1])
     technicals = dict(technicals)
     technicals["day_color"] = "green" if live_price > prev_close else "red"
     technicals["price_action"] = str(round(live_price, 2))
     spot = live_price
     score, grade, factors = _score_factors(technicals, iv_percentile, atm_iv, close_d)
-
     commentary_data = _get_llm_commentary(ticker, score, grade, factors, technicals, iv_percentile, spot)
 
     return {
@@ -90,7 +106,9 @@ def _compute_fresh(ticker: str) -> dict:
     }
 
 
-def _compute_iv_percentile_from_ticker(daily_closes: pd.Series, t: Any) -> tuple[float | None, float | None]:
+def _compute_iv_percentile_from_chain(
+    daily_closes: pd.Series, chain: dict, ticker: str = "?"
+) -> tuple[float | None, float | None]:
     try:
         log_returns = np.log(daily_closes / daily_closes.shift(1)).dropna()
         if len(log_returns) < 60:
@@ -100,14 +118,17 @@ def _compute_iv_percentile_from_ticker(daily_closes: pd.Series, t: Any) -> tuple
         if len(hv30) < 30:
             return None, None
 
-        expirations = t.options
-        if not expirations:
+        call_exp_map = chain.get("callExpDateMap", {})
+        if not call_exp_map:
             return None, None
 
+        spot = float(chain.get("underlyingPrice", 0))
+
         today = date.today()
-        best_exp = None
+        best_exp_key = None
         best_dist = float("inf")
-        for exp_str in expirations:
+        for exp_key in call_exp_map:
+            exp_str = exp_key.split(":")[0]
             exp_date = datetime.strptime(exp_str, "%Y-%m-%d").date()
             dte = (exp_date - today).days
             if dte < 14:
@@ -115,23 +136,18 @@ def _compute_iv_percentile_from_ticker(daily_closes: pd.Series, t: Any) -> tuple
             dist = abs(dte - 37)
             if dist < best_dist:
                 best_dist = dist
-                best_exp = exp_str
+                best_exp_key = exp_key
 
-        if best_exp is None:
+        if best_exp_key is None:
             return None, None
 
-        chain = t.option_chain(best_exp)
-        calls = chain.calls
-        if calls is None or calls.empty:
+        strikes = call_exp_map[best_exp_key]
+        best_strike_key = min(strikes.keys(), key=lambda s: abs(float(s) - spot))
+        atm_option = strikes[best_strike_key][0]
+        raw_iv = float(atm_option.get("volatility", 0))
+        if raw_iv <= 1.0:
             return None, None
-
-        spot = float(daily_closes.iloc[-1])
-        calls = calls.copy()
-        calls["dist"] = (calls["strike"] - spot).abs()
-        atm_row = calls.loc[calls["dist"].idxmin()]
-        atm_iv = float(atm_row["impliedVolatility"])
-        if atm_iv <= 0.01:
-            return None, None
+        atm_iv = raw_iv / 100.0
 
         pct = float((hv30 < atm_iv).sum()) / len(hv30) * 100
         return round(pct, 1), atm_iv

@@ -117,3 +117,78 @@ def test_momentum_exhaustion_factor_exists():
     momentum = next(f for f in factors if f["name"] == "Momentum Exhaustion")
     assert momentum["max"] == 10
     assert 0 <= momentum["points"] <= 10
+
+
+def test_compute_fresh_calls_schwab_for_quote_and_chain():
+    """_compute_fresh must use SchwabClient for live price + options chain."""
+    from unittest.mock import patch, MagicMock
+    import pandas as pd
+    import numpy as np
+    from datetime import date, timedelta
+
+    closes = _make_daily_closes(252)
+
+    mock_client = MagicMock()
+    mock_client.get_quotes.return_value = {"AAPL": {"lastPrice": 189.84}}
+
+    exp_date = (date.today() + timedelta(days=37)).strftime("%Y-%m-%d")
+    mock_client.get_option_chain.return_value = {
+        "underlyingPrice": 189.84,
+        "callExpDateMap": {
+            f"{exp_date}:37": {
+                "190.0": [{"volatility": 28.5}],
+            }
+        },
+    }
+
+    with patch("app.services.cc_signal.get_schwab_client", return_value=mock_client), \
+         patch("app.services.cc_signal.fetch_technicals") as mock_tech, \
+         patch("app.services.cc_signal._get_llm_commentary", return_value={"commentary": None, "strike_hint": None, "caution": None}):
+        mock_tech.return_value = (_make_technicals(), closes)
+        from app.services.cc_signal import _compute_fresh
+        result = _compute_fresh("AAPL")
+
+    assert result["fetch_status"] == "ok"
+    assert result["spot_price"] == 189.84
+    mock_client.get_quotes.assert_called_once_with(["AAPL"])
+    mock_client.get_option_chain.assert_called_once_with("AAPL", contract_type="CALL")
+
+
+def test_iv_percentile_from_chain_parses_atm_iv():
+    """_compute_iv_percentile_from_chain must divide Schwab volatility% by 100."""
+    from datetime import date, timedelta
+    import pandas as pd
+    import numpy as np
+    from app.services.cc_signal import _compute_iv_percentile_from_chain
+
+    closes = _make_daily_closes(252)
+    exp_date = (date.today() + timedelta(days=37)).strftime("%Y-%m-%d")
+    chain = {
+        "underlyingPrice": 100.0,
+        "callExpDateMap": {
+            f"{exp_date}:37": {
+                "100.0": [{"volatility": 35.0}],
+            }
+        },
+    }
+    iv_pct, atm_iv = _compute_iv_percentile_from_chain(closes, chain)
+    assert atm_iv is not None
+    assert 0.01 < atm_iv < 2.0  # 35% / 100 = 0.35
+
+
+def test_iv_percentile_from_chain_skips_expired_expirations():
+    """Expirations with DTE < 14 should be ignored."""
+    from datetime import date, timedelta
+    from app.services.cc_signal import _compute_iv_percentile_from_chain
+
+    closes = _make_daily_closes(252)
+    near_exp = (date.today() + timedelta(days=5)).strftime("%Y-%m-%d")
+    chain = {
+        "underlyingPrice": 100.0,
+        "callExpDateMap": {
+            f"{near_exp}:5": {"100.0": [{"volatility": 35.0}]},
+        },
+    }
+    iv_pct, atm_iv = _compute_iv_percentile_from_chain(closes, chain)
+    assert iv_pct is None
+    assert atm_iv is None
