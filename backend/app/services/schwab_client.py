@@ -122,7 +122,7 @@ class SchwabClient:
             new_access = data["access_token"]
             new_refresh = data.get("refresh_token", self._refresh_token)
             new_access_exp = now + timedelta(seconds=data["expires_in"])
-            new_refresh_exp = now + timedelta(days=7)
+            new_refresh_exp = self._refresh_expires_at
             self._save_tokens_to_db(new_access, new_refresh, new_access_exp, new_refresh_exp)
 
     def _get(self, path: str, params: dict) -> dict:

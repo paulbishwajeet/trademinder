@@ -1,7 +1,5 @@
 import pandas as pd
-import numpy as np
 import pytest
-from datetime import timezone
 from unittest.mock import patch, MagicMock
 
 from app.services.technicals_fetcher import (
