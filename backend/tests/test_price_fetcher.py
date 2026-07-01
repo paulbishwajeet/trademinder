@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.price_fetcher import (
     _compute_unrealized_pnl,
-    _fetch_prices_from_yfinance,
+    _fetch_prices_from_schwab,
     fetch_quote,
     refresh_open_trades,
 )
@@ -78,15 +78,13 @@ def test_pnl_null_for_stock():
     assert _compute_unrealized_pnl(trade, 185.0) is None
 
 
-# --- fetch_quote (mock yfinance) ---
+# --- fetch_quote (mock Schwab client) ---
 
 async def test_fetch_quote_success():
-    mock_info = MagicMock()
-    mock_info.last_price = 192.43
-    mock_info.previous_close = 194.04
+    mock_client = MagicMock()
+    mock_client.get_quotes.return_value = {"AAPL": {"lastPrice": 192.43, "closePrice": 194.04}}
 
-    with patch("app.services.price_fetcher.yf.Ticker") as mock_cls:
-        mock_cls.return_value.fast_info = mock_info
+    with patch("app.services.price_fetcher.get_schwab_client", return_value=mock_client):
         result = await fetch_quote("AAPL")
 
     assert result is not None
@@ -97,23 +95,27 @@ async def test_fetch_quote_success():
 
 
 async def test_fetch_quote_returns_none_when_price_missing():
-    mock_info = MagicMock()
-    mock_info.last_price = None
+    mock_client = MagicMock()
+    mock_client.get_quotes.return_value = {}
 
-    with patch("app.services.price_fetcher.yf.Ticker") as mock_cls:
-        mock_cls.return_value.fast_info = mock_info
+    with patch("app.services.price_fetcher.get_schwab_client", return_value=mock_client):
         result = await fetch_quote("INVALID")
 
     assert result is None
 
 
 async def test_fetch_quote_returns_none_on_exception():
-    with patch("app.services.price_fetcher.yf.Ticker", side_effect=Exception("network error")):
+    from app.services.schwab_client import SchwabAPIError
+    mock_client = MagicMock()
+    mock_client.get_quotes.side_effect = SchwabAPIError("network error")
+
+    with patch("app.services.price_fetcher.get_schwab_client", return_value=mock_client):
         result = await fetch_quote("AAPL")
+
     assert result is None
 
 
-# --- refresh_open_trades (mock _fetch_prices_from_yfinance) ---
+# --- refresh_open_trades (mock _fetch_prices_from_schwab) ---
 
 async def test_refresh_updates_trade_price(client: AsyncClient, db_session: AsyncSession):
     from datetime import date as dt
@@ -124,7 +126,7 @@ async def test_refresh_updates_trade_price(client: AsyncClient, db_session: Asyn
     })
     assert resp.status_code == 201
 
-    with patch("app.services.price_fetcher._fetch_prices_from_yfinance", return_value={"AAPL": 195.0}):
+    with patch("app.services.price_fetcher._fetch_prices_from_schwab", return_value={"AAPL": 195.0}):
         result = await refresh_open_trades(db_session)
 
     assert result["trades_updated"] == 1
@@ -142,7 +144,7 @@ async def test_refresh_skips_closed_trades(client: AsyncClient, db_session: Asyn
     trade_id = resp.json()["id"]
     await client.post(f"/api/trades/{trade_id}/close")
 
-    with patch("app.services.price_fetcher._fetch_prices_from_yfinance", return_value={"MSFT": 405.0}):
+    with patch("app.services.price_fetcher._fetch_prices_from_schwab", return_value={"MSFT": 405.0}):
         result = await refresh_open_trades(db_session)
 
     assert result["trades_updated"] == 0
@@ -156,7 +158,7 @@ async def test_refresh_records_error_for_missing_ticker(client: AsyncClient, db_
         "strike_price": "190.00", "premium": "3.50", "quantity": 1,
     })
 
-    with patch("app.services.price_fetcher._fetch_prices_from_yfinance", return_value={}):
+    with patch("app.services.price_fetcher._fetch_prices_from_schwab", return_value={}):
         result = await refresh_open_trades(db_session)
 
     assert result["trades_updated"] == 0
@@ -185,7 +187,7 @@ async def test_refresh_leaves_existing_price_unchanged_when_ticker_missing(clien
     await db_session.commit()
 
     # Now refresh with empty prices (ticker not found)
-    with patch("app.services.price_fetcher._fetch_prices_from_yfinance", return_value={}):
+    with patch("app.services.price_fetcher._fetch_prices_from_schwab", return_value={}):
         result = await refresh_open_trades(db_session)
 
     assert result["trades_updated"] == 0
@@ -195,43 +197,36 @@ async def test_refresh_leaves_existing_price_unchanged_when_ticker_missing(clien
     assert float(t.current_price) == 188.0
 
 
-# --- _fetch_one_rsi returns {rsi, price} dict ---
+# --- _fetch_rsi_from_schwab ---
+
+def test_fetch_rsi_from_schwab_returns_rsi_and_price():
+    from app.services.price_fetcher import _fetch_rsi_from_schwab
+
+    close_vals = [100.0 + i * 0.5 for i in range(45)]
+    idx = _pd.date_range(end=_pd.Timestamp.now(tz="UTC"), periods=45, freq="B")
+    mock_df = _pd.DataFrame(
+        {"Open": close_vals, "High": close_vals, "Low": close_vals, "Close": close_vals, "Volume": [1_000_000] * 45},
+        index=idx,
+    )
+
+    mock_client = MagicMock()
+    mock_client.get_price_history.return_value = mock_df
+
+    with patch("app.services.price_fetcher.get_schwab_client", return_value=mock_client):
+        result = _fetch_rsi_from_schwab(["AAPL"])
+
+    assert "AAPL" in result
+    assert result["AAPL"] is not None
+    assert set(result["AAPL"].keys()) == {"rsi", "price"}
 
 
-def _make_close_df(n: int = 30, start: float = 100.0) -> _pd.DataFrame:
-    """Minimal DataFrame mimicking yfinance single-ticker output (enough rows for RSI-14)."""
-    prices = [start + i * 0.5 for i in range(n)]
-    return _pd.DataFrame({"Close": prices, "Volume": [1_000_000] * n})
+def test_fetch_rsi_from_schwab_returns_none_on_empty_df():
+    from app.services.price_fetcher import _fetch_rsi_from_schwab
 
+    mock_client = MagicMock()
+    mock_client.get_price_history.return_value = _pd.DataFrame()
 
-def test_fetch_one_rsi_returns_dict_shape():
-    """Return must be (ticker, dict) with exactly {rsi, price}."""
-    from app.services.price_fetcher import _fetch_one_rsi
-    with patch("app.services.price_fetcher.yf.download", return_value=_make_close_df(30)):
-        ticker, result = _fetch_one_rsi("AAPL")
-    assert ticker == "AAPL"
-    assert isinstance(result, dict)
-    assert set(result.keys()) == {"rsi", "price"}
+    with patch("app.services.price_fetcher.get_schwab_client", return_value=mock_client):
+        result = _fetch_rsi_from_schwab(["BADTICKER"])
 
-
-def test_fetch_one_rsi_price_is_last_close():
-    from app.services.price_fetcher import _fetch_one_rsi
-    df = _make_close_df(30)
-    with patch("app.services.price_fetcher.yf.download", return_value=df):
-        _, result = _fetch_one_rsi("AAPL")
-    assert result["price"] == round(float(df["Close"].iloc[-1]), 2)
-
-
-def test_fetch_one_rsi_rsi_type():
-    from app.services.price_fetcher import _fetch_one_rsi
-    with patch("app.services.price_fetcher.yf.download", return_value=_make_close_df(30)):
-        _, result = _fetch_one_rsi("AAPL")
-    assert result["rsi"] is None or isinstance(result["rsi"], float)
-
-
-def test_fetch_one_rsi_empty_df_returns_none():
-    from app.services.price_fetcher import _fetch_one_rsi
-    with patch("app.services.price_fetcher.yf.download", return_value=_pd.DataFrame()):
-        ticker, result = _fetch_one_rsi("BADTICKER")
-    assert ticker == "BADTICKER"
-    assert result is None
+    assert result["BADTICKER"] is None
