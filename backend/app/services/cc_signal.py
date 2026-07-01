@@ -14,11 +14,6 @@ from app.services.schwab_client import get_schwab_client
 
 log = logging.getLogger(__name__)
 
-# fetch_technicals is imported lazily inside _compute_fresh to avoid circular
-# imports, but we declare it here at module level so unit tests can patch it via
-# patch("app.services.cc_signal.fetch_technicals").
-fetch_technicals = None  # populated on first call or overridden by tests
-
 _cc_signal_cache: dict[str, tuple[dict, float]] = {}
 _CACHE_TTL = 14400  # 4 hours
 
@@ -54,14 +49,7 @@ def compute_cc_signal(ticker: str) -> dict:
 
 
 def _compute_fresh(ticker: str) -> dict:
-    import sys as _sys
-    # Check if fetch_technicals has been injected into this module's namespace
-    # (e.g. by a test mock via patch("app.services.cc_signal.fetch_technicals")).
-    # Fall back to a lazy import to avoid circular imports at module load time.
-    _ft = getattr(_sys.modules[__name__], "fetch_technicals", None)
-    if _ft is None:
-        from app.services.technicals_fetcher import fetch_technicals as _ft
-    fetch_technicals = _ft
+    from app.services.technicals_fetcher import fetch_technicals
 
     technicals, close_d = fetch_technicals(ticker, return_closes=True)
     if technicals.get("fetch_status") != "ok":

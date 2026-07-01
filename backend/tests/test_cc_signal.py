@@ -142,7 +142,7 @@ def test_compute_fresh_calls_schwab_for_quote_and_chain():
     }
 
     with patch("app.services.cc_signal.get_schwab_client", return_value=mock_client), \
-         patch("app.services.cc_signal.fetch_technicals") as mock_tech, \
+         patch("app.services.technicals_fetcher.fetch_technicals") as mock_tech, \
          patch("app.services.cc_signal._get_llm_commentary", return_value={"commentary": None, "strike_hint": None, "caution": None}):
         mock_tech.return_value = (_make_technicals(), closes)
         from app.services.cc_signal import _compute_fresh
