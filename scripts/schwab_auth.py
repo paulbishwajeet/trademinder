@@ -9,21 +9,16 @@ Prerequisites:
   2. Set SCHWAB_APP_KEY, SCHWAB_APP_SECRET, DATABASE_URL in .env
   3. Run: python scripts/schwab_auth.py
 
-The script starts a local HTTPS server (self-signed cert) on port 8765 to capture
-the OAuth callback automatically. The browser will show a security warning when
-Schwab redirects — click Advanced → Proceed to complete the flow.
+After login, the browser will show a connection error at 127.0.0.1:8765 — that is
+expected. Copy the full URL from the address bar and paste it when prompted.
 """
 import asyncio
 import base64
 import os
-import ssl
-import subprocess
 import sys
-import tempfile
 import urllib.parse
 import webbrowser
 from datetime import datetime, timedelta, timezone
-from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 import asyncpg
@@ -39,43 +34,6 @@ REDIRECT_URI = "https://127.0.0.1:8765/callback"
 AUTH_URL = "https://api.schwabapi.com/v1/oauth/authorize"
 TOKEN_URL = "https://api.schwabapi.com/v1/oauth/token"
 
-_auth_code: str | None = None
-
-
-class _CallbackHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        global _auth_code
-        parsed = urllib.parse.urlparse(self.path)
-        params = urllib.parse.parse_qs(parsed.query)
-        if "code" in params:
-            _auth_code = params["code"][0]
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(b"<html><body><h2>Auth complete. You can close this tab.</h2></body></html>")
-        else:
-            self.send_response(400)
-            self.end_headers()
-            self.wfile.write(b"Missing code param.")
-
-    def log_message(self, format, *args):
-        pass  # suppress request logging
-
-
-def _generate_self_signed_cert(tmpdir: str) -> tuple[str, str]:
-    cert_file = os.path.join(tmpdir, "cert.pem")
-    key_file = os.path.join(tmpdir, "key.pem")
-    subprocess.run(
-        [
-            "openssl", "req", "-x509", "-newkey", "rsa:2048",
-            "-keyout", key_file, "-out", cert_file,
-            "-days", "1", "-nodes",
-            "-subj", "/CN=127.0.0.1",
-        ],
-        check=True,
-        capture_output=True,
-    )
-    return cert_file, key_file
-
 
 def main():
     params = urllib.parse.urlencode({
@@ -85,34 +43,23 @@ def main():
     })
     url = f"{AUTH_URL}?{params}"
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        try:
-            cert_file, key_file = _generate_self_signed_cert(tmpdir)
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            print("ERROR: openssl not found. Install it and try again.")
-            sys.exit(1)
+    print("\nOpening browser to authorize TradeMinder...")
+    print("Log in with your Schwab brokerage credentials.\n")
+    webbrowser.open(url)
 
-        ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        ssl_ctx.load_cert_chain(cert_file, key_file)
+    print("After login, the browser redirects to https://127.0.0.1:8765/callback")
+    print("and shows a connection error. That is expected.")
+    print("\nCopy the FULL URL from the browser address bar and paste it here:")
+    redirected_url = input("> ").strip()
 
-        server = HTTPServer(("127.0.0.1", 8765), _CallbackHandler)
-        server.socket = ssl_ctx.wrap_socket(server.socket, server_side=True)
-
-        print("\nStarted local HTTPS server on port 8765.")
-        print("Opening browser to authorize TradeMinder...\n")
-        print("NOTE: After login, the browser will redirect to localhost and show a")
-        print("security warning (self-signed cert). Click Advanced → Proceed to 127.0.0.1\n")
-        webbrowser.open(url)
-
-        print("Waiting for callback...")
-        server.handle_request()
-        server.server_close()
-
-    if not _auth_code:
-        print("ERROR: No auth code received.")
+    parsed = urllib.parse.urlparse(redirected_url)
+    params_map = urllib.parse.parse_qs(parsed.query)
+    if "code" not in params_map:
+        print("ERROR: No 'code' found in the URL. Make sure you copied the full redirect URL.")
         sys.exit(1)
 
-    print("Auth code received. Exchanging for tokens...")
+    auth_code = urllib.parse.unquote(params_map["code"][0])
+    print("\nAuth code received. Exchanging for tokens...")
 
     creds = base64.b64encode(f"{APP_KEY}:{APP_SECRET}".encode()).decode()
     resp = httpx.post(
@@ -123,7 +70,7 @@ def main():
         },
         data={
             "grant_type": "authorization_code",
-            "code": _auth_code,
+            "code": auth_code,
             "redirect_uri": REDIRECT_URI,
         },
         timeout=15,
