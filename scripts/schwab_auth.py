@@ -82,7 +82,6 @@ def main():
         "response_type": "code",
         "client_id": APP_KEY,
         "redirect_uri": REDIRECT_URI,
-        "scope": "readonly",
     })
     url = f"{AUTH_URL}?{params}"
 
