@@ -18,7 +18,9 @@ from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
-import psycopg2
+import asyncio
+
+import asyncpg
 from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).parent.parent / ".env")
@@ -98,22 +100,21 @@ def main():
     access_expires_at = now + timedelta(seconds=data["expires_in"])
     refresh_expires_at = now + timedelta(days=7)
 
-    sync_url = DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://")
-    conn = psycopg2.connect(sync_url)
-    cur = conn.cursor()
-    cur.execute("""
-        INSERT INTO schwab_tokens (id, access_token, refresh_token, access_expires_at, refresh_expires_at, updated_at)
-        VALUES (1, %s, %s, %s, %s, NOW())
-        ON CONFLICT (id) DO UPDATE SET
-            access_token = EXCLUDED.access_token,
-            refresh_token = EXCLUDED.refresh_token,
-            access_expires_at = EXCLUDED.access_expires_at,
-            refresh_expires_at = EXCLUDED.refresh_expires_at,
-            updated_at = NOW()
-    """, (access_token, refresh_token, access_expires_at, refresh_expires_at))
-    conn.commit()
-    cur.close()
-    conn.close()
+    async def _store():
+        conn = await asyncpg.connect(DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://"))
+        await conn.execute("""
+            INSERT INTO schwab_tokens (id, access_token, refresh_token, access_expires_at, refresh_expires_at, updated_at)
+            VALUES (1, $1, $2, $3, $4, NOW())
+            ON CONFLICT (id) DO UPDATE SET
+                access_token = EXCLUDED.access_token,
+                refresh_token = EXCLUDED.refresh_token,
+                access_expires_at = EXCLUDED.access_expires_at,
+                refresh_expires_at = EXCLUDED.refresh_expires_at,
+                updated_at = NOW()
+        """, access_token, refresh_token, access_expires_at, refresh_expires_at)
+        await conn.close()
+
+    asyncio.run(_store())
 
     print(f"\nTokens stored successfully.")
     print(f"  Access token expires:  {access_expires_at.strftime('%Y-%m-%d %H:%M UTC')}")
