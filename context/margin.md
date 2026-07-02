@@ -60,12 +60,14 @@ Pure client-side computation triggered by a single batch request to the existing
 | Spread obligation matching key | `ticker\|\|expiryLabel` (no qty) | Butterflies have short qty = 2× long qty; excluding qty from the key lets the algorithm match across asymmetric structures |
 | Spread obligation allocation order | Higher-strike long puts first (zero obligation), then lower-strike | Higher-strike long put assignment = profitable (sell at L > buy-at-K); allocating those first minimises obligation correctly |
 | `API_URL` constant | `''` (empty string) | All other pages use relative `/api` paths through the Vite proxy / nginx; hardcoded `http://localhost:5431` broke access from any non-localhost client |
+| RSI batch fetch strategy | Single `yf.download()` call for all tickers | Per-ticker parallel downloads (5 workers) triggered Yahoo Finance rate limiting (`YFRateLimitError`), returning null for every ticker and silently breaking weighted obligation |
 
 ## Open Questions / Blockers
 - [ ] Should `gainPct = 0` (no recorded entry premium) show as red or as `—`? Currently shows as red `0.0%` — could confuse a position with missing data for a losing trade.
 - [ ] Banner uses emoji spinner (`⏳`) — consider replacing with a CSS spinner for better screen-reader experience (`aria-hidden` on decorative emoji).
 - [ ] Liquid Coverage card lost the "Sufficient / Below 1:1" qualitative label — replaced by adjusted coverage %. Worth adding back as a second sub-line?
 - [ ] Call spread obligation is not tracked — Iron Condor call wing (e.g. short 764C / long 770C) does not appear in any obligation figure. If call-side risk tracking is desired, `parsePortfolioCSV` needs a parallel pass for short calls.
+- [ ] Even with batched `yf.download`, Yahoo Finance may still rate-limit if the endpoint is hit repeatedly in quick succession (e.g. rapid CSV re-uploads). Consider adding a short TTL cache (e.g. 60s) on `fetch_rsi_batch` results to avoid redundant calls.
 
 ## Progress Log
 - 2026-05-17 — Feature designed and specced (`docs/superpowers/specs/2026-05-17-margin-assignment-confidence-design.md`)
@@ -74,14 +76,18 @@ Pure client-side computation triggered by a single batch request to the existing
 - 2026-05-17 — Port reassignment across 10 files: frontend 5430, backend 5431, postgres 5432 (unchanged). Context files updated to match.
 - 2026-05-17 — `context/margin.md` created (this file); `context/_active.md` updated to point here.
 - 2026-06-02 — Fixed spread-aware obligation in `parsePortfolioCSV`: two-pass parser now matches long puts by `ticker||expiryLabel` (no qty), allocates higher-strike long puts first (zero obligation) then lower-strike ones. Handles Iron Condor (equal qty) and Put Butterfly (short qty = 2× long qty). Verified against real portfolio CSV: SPXW butterfly $4,566,000 → $3,000; total obligation $5,726,650 → $1,163,650. Also fixed `API_URL` constant from `http://localhost:5431` to `''` so market data fetch works from non-localhost clients.
+- 2026-06-22 — Fixed delta-based margin bug: confidence-adjusted weighted obligation was showing identical values to raw obligation. Root cause was `_fetch_rsi_from_yfinance` in `price_fetcher.py` using per-ticker parallel `yf.download()` calls (5 ThreadPoolExecutor workers), which triggered Yahoo Finance rate limiting (`YFRateLimitError`) on every ticker. All prices returned null → `assignmentProb` null → fallback `prob ?? 1` → weighted = raw. Fix: replaced parallel per-ticker downloads with a single batched `yf.download(all_tickers)` call. Verified working after backend restart.
 
 ## Current State (Resume Here)
-All spread-obligation and API-URL fixes are implemented and committed on branch `margin` (commit `4580f0c` — "Margin for spreads fixed"). The frontend build is clean (105 modules). The changes are not yet merged to `master`.
+Branch `bug/deltabasedmargin` has an uncommitted fix to `backend/app/services/price_fetcher.py`. The `_fetch_rsi_from_yfinance` function was rewritten from parallel per-ticker `yf.download()` calls (via `ThreadPoolExecutor`) to a single batched `yf.download(all_tickers, group_by="ticker")` call. This avoids Yahoo Finance rate limiting that was causing all prices to return null, which broke the delta-based weighted obligation calculation (every position fell back to `prob = 1`, making weighted obligation identical to raw obligation).
 
-**What was changed in `frontend/src/pages/MarginDashboardPage.tsx`:**
-1. `ShortPut` interface gained `longStrike: number | null`
-2. `parsePortfolioCSV` is now two-pass: Pass 1 builds `longPutsByExpiry` (Map keyed `ticker||expiryLabel`, values are `{strike, qty}[]` sorted desc). Pass 2 allocates long puts to each short put — higher-strike first (zero obligation), then lower-strike (spread width × covered qty × 100), remainder naked.
-3. Position table sub-label shows `$744/$749 Put Spread` when `longStrike` is set.
-4. `API_URL` constant changed from `'http://localhost:5431'` to `''` so fetch uses the Vite/nginx proxy.
+**How weighted obligation actually works (for reference):**
+- IV comes from the CSV (column 14), stock price comes from `/api/market/rsi` endpoint
+- `bsPutAssignmentProb(price, strike, DTE/365, IV)` computes `N(-d1)` (Black-Scholes put delta = assignment probability)
+- `weightedObligation = obligation × prob`
+- RSI is display-only (colored pill in position table) — not used in the calculation
 
-**Next action:** Decide whether to merge `margin` into `master` (or open a PR). Run `superpowers:finishing-a-development-branch` or manually: `git checkout master && git merge margin`.
+**What changed this session:**
+- `backend/app/services/price_fetcher.py` — `_fetch_rsi_from_yfinance()` rewritten: single batched `yf.download()` with MultiIndex DataFrame handling for multi-ticker responses. `_fetch_one_rsi()` still exists (unused by batch path, kept for potential single-ticker use).
+
+**Next action:** Commit the `price_fetcher.py` fix on this branch, then decide whether to merge into `master` or open a PR.

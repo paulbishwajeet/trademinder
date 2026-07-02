@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from app.models.category import Category
     from app.models.signal import TechnicalSignal
     from app.models.trade_session import TradeSession
+    from app.models.wheel_slot_leg import WheelSlotLeg
 
 
 class Trade(Base):
@@ -66,6 +67,11 @@ class Trade(Base):
         "TradeSession",
         back_populates="legs",
         foreign_keys=[session_id],
+    )
+    wheel_slot_legs: Mapped[list["WheelSlotLeg"]] = relationship(
+        "WheelSlotLeg",
+        back_populates="trade",
+        cascade="all, delete-orphan",
     )
 
     __table_args__ = (

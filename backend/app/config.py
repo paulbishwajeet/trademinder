@@ -7,6 +7,8 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://trademinder:password@localhost:5432/trademinder"
     secret_key: str = "changeme"
     anthropic_api_key: str = ""
+    schwab_app_key: str = ""
+    schwab_app_secret: str = ""
 
     alert_engine_interval_minutes: int = 15
     market_hours_start: str = "09:30"

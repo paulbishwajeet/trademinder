@@ -1,6 +1,5 @@
 # backend/app/services/price_fetcher.py
 import asyncio
-import yfinance as yf
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -9,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.trade import Trade
+from app.services.schwab_client import get_schwab_client, SchwabAPIError  # noqa: F401
 
 
 def _compute_unrealized_pnl(trade: Trade, current_price: float) -> float | None:
@@ -23,63 +23,6 @@ def _compute_unrealized_pnl(trade: Trade, current_price: float) -> float | None:
     if trade.type == "Sell" and trade.strategy in ("Call", "CoveredCall"):
         return round((premium - max(current_price - strike, 0)) * qty * 100, 2)
     return None
-
-
-# Tickers that yfinance does not recognise as stocks — map to their index symbols.
-# The returned dict uses the *original* ticker as key so callers stay unaware.
-_YF_ALIASES: dict[str, str] = {
-    "SPX":  "^GSPC",
-    "SPXW": "^GSPC",
-    "XSP":  "^XSP",
-    "NDX":  "^NDX",
-    "RUT":  "^RUT",
-    "VIX":  "^VIX",
-}
-
-
-def _resolve(ticker: str) -> str:
-    """Return the yfinance symbol for a ticker, applying index aliases."""
-    return _YF_ALIASES.get(ticker.upper(), ticker)
-
-
-def _fetch_prices_from_yfinance(tickers: list[str]) -> dict[str, float]:
-    """Batch-fetch last prices. Extracted for testability."""
-    try:
-        # Build alias map so we can look up by yf symbol and key results by original ticker
-        alias_map = {_resolve(t): t for t in tickers}  # yf_symbol → original ticker
-        yf_tickers = list(alias_map.keys())
-        data = yf.Tickers(" ".join(yf_tickers)).history(period="1d", interval="1m")
-        if data.empty:
-            return {}
-        close = data["Close"]
-        prices: dict[str, float] = {}
-        for yf_sym, orig in alias_map.items():
-            if yf_sym in close.columns:
-                series = close[yf_sym].dropna()
-                if not series.empty:
-                    prices[orig] = float(series.iloc[-1])
-        return prices
-    except Exception:
-        return {}
-
-
-async def fetch_quote(ticker: str) -> dict | None:
-    """Fetch current price + day stats for a single ticker."""
-    try:
-        fast_info = yf.Ticker(_resolve(ticker)).fast_info
-        price = fast_info.last_price
-        if price is None:
-            return None
-        prev_close = fast_info.previous_close
-        change_pct = round((price - prev_close) / prev_close * 100, 2) if prev_close else None
-        return {
-            "ticker": ticker,
-            "price": round(float(price), 2),
-            "change_pct": change_pct,
-            "last_updated": datetime.now(timezone.utc).isoformat(),
-        }
-    except Exception:
-        return None
 
 
 def _compute_rsi_14(close: pd.Series) -> float | None:
@@ -99,31 +42,78 @@ def _compute_rsi_14(close: pd.Series) -> float | None:
     return round(100 - (100 / (1 + rs)), 2)
 
 
-def _fetch_one_rsi(ticker: str) -> tuple[str, dict | None]:
+def _fetch_prices_from_schwab(tickers: list[str]) -> dict[str, float]:
+    """Batch-fetch last prices via Schwab quotes API."""
     try:
-        df = yf.download(_resolve(ticker), period="45d", interval="1d", progress=False, auto_adjust=True)
-        if df is None or df.empty:
-            return ticker, None
-        close = df["Close"]
-        if isinstance(close, pd.DataFrame):
-            close = close.iloc[:, 0]
-        price = round(float(close.iloc[-1]), 2)
-        rsi = _compute_rsi_14(close)
-        return ticker, {"rsi": rsi, "price": price}
+        client = get_schwab_client()
+        quotes = client.get_quotes(tickers)
+        return {t: float(q["lastPrice"]) for t, q in quotes.items() if "lastPrice" in q}
     except Exception:
-        return ticker, None
+        return {}
 
 
-def _fetch_rsi_from_yfinance(tickers: list[str]) -> dict[str, dict | None]:
-    """Parallel RSI fetch — 5 workers keeps yfinance from throttling."""
-    with ThreadPoolExecutor(max_workers=5) as ex:
-        return dict(ex.map(_fetch_one_rsi, tickers))
+async def fetch_quote(ticker: str) -> dict | None:
+    """Fetch current price + day stats for a single ticker."""
+    try:
+        loop = asyncio.get_running_loop()
+
+        def _sync():
+            client = get_schwab_client()
+            return client.get_quotes([ticker]).get(ticker)
+
+        quote = await loop.run_in_executor(None, _sync)
+        if quote is None:
+            return None
+        price = quote.get("lastPrice")
+        if price is None:
+            return None
+        prev_close = quote.get("closePrice")
+        change_pct = round((float(price) - float(prev_close)) / float(prev_close) * 100, 2) if prev_close else None
+        return {
+            "ticker": ticker,
+            "price": round(float(price), 2),
+            "change_pct": change_pct,
+            "last_updated": datetime.now(timezone.utc).isoformat(),
+        }
+    except Exception:
+        return None
+
+
+def _fetch_rsi_from_schwab(tickers: list[str]) -> dict[str, dict | None]:
+    """Batch RSI fetch using Schwab price history — parallel per-ticker calls."""
+    result: dict[str, dict | None] = {t: None for t in tickers}
+    if not tickers:
+        return result
+    try:
+        client = get_schwab_client()
+    except Exception:
+        return result
+
+    def fetch_one(ticker: str) -> tuple[str, dict | None]:
+        try:
+            df = client.get_price_history(ticker, "month", 2, "daily", 1)
+            if df is None or df.empty:
+                return ticker, None
+            close = df["Close"].dropna()
+            if close.empty:
+                return ticker, None
+            price = round(float(close.iloc[-1]), 2)
+            rsi = _compute_rsi_14(close)
+            return ticker, {"rsi": rsi, "price": price}
+        except Exception:
+            return ticker, None
+
+    with ThreadPoolExecutor(max_workers=min(len(tickers), 10)) as executor:
+        pairs = list(executor.map(fetch_one, tickers))
+    for ticker, data in pairs:
+        result[ticker] = data
+    return result
 
 
 async def fetch_rsi_batch(tickers: list[str]) -> dict[str, dict | None]:
     """Async wrapper so the event loop is not blocked."""
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, _fetch_rsi_from_yfinance, tickers)
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, _fetch_rsi_from_schwab, tickers)
 
 
 async def refresh_open_trades(db: AsyncSession) -> dict:
@@ -136,7 +126,7 @@ async def refresh_open_trades(db: AsyncSession) -> dict:
         return {"trades_updated": 0, "tickers_fetched": 0, "errors": []}
 
     tickers = list({t.ticker for t in trades})
-    prices = _fetch_prices_from_yfinance(tickers)
+    prices = _fetch_prices_from_schwab(tickers)
 
     errors: list[str] = []
     now = datetime.now(timezone.utc)

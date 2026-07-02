@@ -10,14 +10,28 @@ from app.services.technicals_fetcher import (
 )
 
 
-def _daily(n: int = 200, start: float = 100.0, step: float = 0.25) -> pd.DataFrame:
-    close = pd.Series([start + i * step for i in range(n)])
-    return pd.DataFrame({"Close": close})
+def _make_daily_df(n: int = 200, base: float = 100.0, step: float = 0.25) -> pd.DataFrame:
+    close = [base + i * step for i in range(n)]
+    idx = pd.date_range(end=pd.Timestamp.now(tz="UTC"), periods=n, freq="B")
+    return pd.DataFrame(
+        {"Open": close, "High": close, "Low": close, "Close": close, "Volume": [1_000_000] * n},
+        index=idx,
+    )
 
 
-def _weekly(n: int = 60, start: float = 95.0, step: float = 0.5) -> pd.DataFrame:
-    close = pd.Series([start + i * step for i in range(n)])
-    return pd.DataFrame({"Close": close})
+def _make_weekly_df(n: int = 60, base: float = 95.0, step: float = 0.5) -> pd.DataFrame:
+    close = [base + i * step for i in range(n)]
+    idx = pd.date_range(end=pd.Timestamp.now(tz="UTC"), periods=n, freq="W")
+    return pd.DataFrame(
+        {"Open": close, "High": close, "Low": close, "Close": close, "Volume": [500_000] * n},
+        index=idx,
+    )
+
+
+def _mock_client(daily_df, weekly_df):
+    client = MagicMock()
+    client.get_price_history.side_effect = [daily_df, weekly_df]
+    return client
 
 
 # --- unit tests for helpers ---
@@ -80,13 +94,10 @@ def test_macd_weekly_insufficient_data():
 # --- integration: fetch_technicals ---
 
 def test_fetch_technicals_success():
-    mock_calendar = {"Earnings Date": ["2026-08-15"]}
-
-    with patch("app.services.technicals_fetcher.yf.download") as mock_dl, \
-         patch("app.services.technicals_fetcher.yf.Ticker") as mock_ticker:
-        mock_dl.side_effect = [_daily(200), _weekly(60)]
-        mock_ticker.return_value.calendar = mock_calendar
-
+    mock_client = _mock_client(_make_daily_df(200), _make_weekly_df(60))
+    with patch("app.services.technicals_fetcher.get_schwab_client", return_value=mock_client), \
+         patch("yfinance.Ticker") as mock_ticker:
+        mock_ticker.return_value.calendar = {"Earnings Date": ["2026-08-15"]}
         result = fetch_technicals("AAPL")
 
     assert result["fetch_status"] == "ok"
@@ -103,8 +114,9 @@ def test_fetch_technicals_success():
 
 
 def test_fetch_technicals_empty_daily_data():
-    with patch("app.services.technicals_fetcher.yf.download") as mock_dl:
-        mock_dl.return_value = pd.DataFrame()
+    mock_client = MagicMock()
+    mock_client.get_price_history.return_value = pd.DataFrame()
+    with patch("app.services.technicals_fetcher.get_schwab_client", return_value=mock_client):
         result = fetch_technicals("INVALID")
 
     assert result["fetch_status"] == "error"
@@ -112,27 +124,31 @@ def test_fetch_technicals_empty_daily_data():
 
 
 def test_fetch_technicals_insufficient_daily_rows():
-    with patch("app.services.technicals_fetcher.yf.download") as mock_dl:
-        mock_dl.side_effect = [_daily(1), _weekly(60)]
+    mock_client = _mock_client(_make_daily_df(1), _make_weekly_df(60))
+    with patch("app.services.technicals_fetcher.get_schwab_client", return_value=mock_client):
         result = fetch_technicals("AAPL")
 
     assert result["fetch_status"] == "error"
 
 
 def test_fetch_technicals_no_ma200_when_insufficient_history():
-    with patch("app.services.technicals_fetcher.yf.download") as mock_dl, \
-         patch("app.services.technicals_fetcher.yf.Ticker") as mock_ticker:
-        mock_dl.side_effect = [_daily(60), _weekly(60)]
+    mock_client = _mock_client(_make_daily_df(60), _make_weekly_df(60))
+    with patch("app.services.technicals_fetcher.get_schwab_client", return_value=mock_client), \
+         patch("yfinance.Ticker") as mock_ticker:
         mock_ticker.return_value.calendar = {}
         result = fetch_technicals("AAPL")
 
     assert result["fetch_status"] == "ok"
-    assert result["ma_200d"] is None   # only 60 bars
-    assert result["ma_50d"] is not None  # 60 >= 50
+    assert result["ma_200d"] is None
+    assert result["ma_50d"] is not None
 
 
-def test_fetch_technicals_exception_returns_error():
-    with patch("app.services.technicals_fetcher.yf.download", side_effect=RuntimeError("timeout")):
+def test_fetch_technicals_schwab_error_returns_error():
+    from app.services.schwab_client import SchwabAPIError
+    mock_client = MagicMock()
+    mock_client.get_price_history.side_effect = SchwabAPIError("network error")
+    with patch("app.services.technicals_fetcher.get_schwab_client", return_value=mock_client):
         result = fetch_technicals("AAPL")
+
     assert result["fetch_status"] == "error"
-    assert "timeout" in result["fetch_error"]
+    assert "network error" in result["fetch_error"]
