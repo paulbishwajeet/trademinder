@@ -8,7 +8,6 @@ import pytest
 def _make_client():
     from app.services.schwab_client import SchwabClient
     client = SchwabClient("key", "secret", "postgresql://user:pass@localhost/test")
-    client._Session = MagicMock()
     return client
 
 
@@ -94,12 +93,24 @@ def test_token_refresh_called_when_access_token_expired():
         "expires_in": 1800,
     }
 
-    mock_session_ctx = MagicMock()
-    mock_session_ctx.__enter__ = MagicMock(return_value=mock_session_ctx)
-    mock_session_ctx.__exit__ = MagicMock(return_value=False)
-    client._Session.return_value = mock_session_ctx
+    mock_conn = MagicMock()
+    mock_conn.execute = MagicMock(return_value=None)
+    mock_conn.close = MagicMock(return_value=None)
 
-    with patch("app.services.schwab_client.httpx.post", return_value=refresh_resp):
+    async def mock_connect(*args, **kwargs):
+        return mock_conn
+
+    async def mock_execute(*args, **kwargs):
+        pass
+
+    async def mock_close():
+        pass
+
+    mock_conn.execute = mock_execute
+    mock_conn.close = mock_close
+
+    with patch("app.services.schwab_client.httpx.post", return_value=refresh_resp), \
+         patch("app.services.schwab_client.asyncpg.connect", side_effect=mock_connect):
         client._ensure_valid_token()
 
     assert client._access_token == "new_tok"
@@ -148,13 +159,19 @@ def test_schwab_alias_maps_spx():
 
 def test_get_quotes_no_tokens_raises():
     from app.services.schwab_client import SchwabClient, SchwabAPIError
+
     client = SchwabClient("key", "secret", "postgresql://user:pass@localhost/test")
 
-    mock_session_ctx = MagicMock()
-    mock_session_ctx.__enter__ = MagicMock(return_value=mock_session_ctx)
-    mock_session_ctx.__exit__ = MagicMock(return_value=False)
-    mock_session_ctx.execute.return_value.fetchone.return_value = None
-    client._Session = MagicMock(return_value=mock_session_ctx)
+    async def mock_connect(*args, **kwargs):
+        conn = MagicMock()
+        async def fetchrow(*a, **kw):
+            return None
+        async def close():
+            pass
+        conn.fetchrow = fetchrow
+        conn.close = close
+        return conn
 
-    with pytest.raises(SchwabAPIError, match="No Schwab tokens"):
-        client.get_quotes(["AAPL"])
+    with patch("app.services.schwab_client.asyncpg.connect", side_effect=mock_connect):
+        with pytest.raises(SchwabAPIError, match="No Schwab tokens"):
+            client.get_quotes(["AAPL"])

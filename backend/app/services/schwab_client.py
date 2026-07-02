@@ -1,14 +1,14 @@
 # backend/app/services/schwab_client.py
+import asyncio
 import base64
 import logging
 import threading
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+import asyncpg
 import httpx
 import pandas as pd
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker
 
 from app.config import settings
 
@@ -36,34 +36,32 @@ class SchwabClient:
         self._app_key = app_key
         self._app_secret = app_secret
         self._lock = threading.Lock()
-
-        self._sync_url = database_url.replace("postgresql+asyncpg://", "postgresql://")
-        self._Session: Optional[sessionmaker] = None  # lazy-initialized on first DB access
+        self._db_url = database_url.replace("postgresql+asyncpg://", "postgresql://")
 
         self._access_token: Optional[str] = None
         self._access_expires_at: Optional[datetime] = None
         self._refresh_token: Optional[str] = None
         self._refresh_expires_at: Optional[datetime] = None
 
-    def _get_session(self) -> sessionmaker:
-        if self._Session is None:
-            engine = create_engine(self._sync_url, pool_pre_ping=True)
-            self._Session = sessionmaker(engine)
-        return self._Session
-
     def _load_tokens_from_db(self) -> None:
-        with self._get_session()() as session:
-            row = session.execute(
-                text("SELECT access_token, refresh_token, access_expires_at, refresh_expires_at FROM schwab_tokens WHERE id = 1")
-            ).fetchone()
-            if row is None:
-                raise SchwabAPIError("No Schwab tokens in DB. Run: python scripts/schwab_auth.py")
-            self._access_token = row.access_token
-            self._refresh_token = row.refresh_token
-            aex = row.access_expires_at
-            rex = row.refresh_expires_at
-            self._access_expires_at = aex if aex.tzinfo else aex.replace(tzinfo=timezone.utc)
-            self._refresh_expires_at = rex if rex.tzinfo else rex.replace(tzinfo=timezone.utc)
+        async def _fetch():
+            conn = await asyncpg.connect(self._db_url)
+            try:
+                return await conn.fetchrow(
+                    "SELECT access_token, refresh_token, access_expires_at, refresh_expires_at FROM schwab_tokens WHERE id = 1"
+                )
+            finally:
+                await conn.close()
+
+        row = asyncio.run(_fetch())
+        if row is None:
+            raise SchwabAPIError("No Schwab tokens in DB. Run: python scripts/schwab_auth.py")
+        self._access_token = row["access_token"]
+        self._refresh_token = row["refresh_token"]
+        aex = row["access_expires_at"]
+        rex = row["refresh_expires_at"]
+        self._access_expires_at = aex if aex.tzinfo else aex.replace(tzinfo=timezone.utc)
+        self._refresh_expires_at = rex if rex.tzinfo else rex.replace(tzinfo=timezone.utc)
 
     def _save_tokens_to_db(
         self,
@@ -72,18 +70,21 @@ class SchwabClient:
         access_expires_at: datetime,
         refresh_expires_at: datetime,
     ) -> None:
-        with self._get_session()() as session:
-            session.execute(
-                text("""
+        async def _store():
+            conn = await asyncpg.connect(self._db_url)
+            try:
+                await conn.execute("""
                     INSERT INTO schwab_tokens (id, access_token, refresh_token, access_expires_at, refresh_expires_at, updated_at)
-                    VALUES (1, :at, :rt, :aex, :rex, NOW())
+                    VALUES (1, $1, $2, $3, $4, NOW())
                     ON CONFLICT (id) DO UPDATE SET
-                        access_token = :at, refresh_token = :rt,
-                        access_expires_at = :aex, refresh_expires_at = :rex, updated_at = NOW()
-                """),
-                {"at": access_token, "rt": refresh_token, "aex": access_expires_at, "rex": refresh_expires_at},
-            )
-            session.commit()
+                        access_token = EXCLUDED.access_token, refresh_token = EXCLUDED.refresh_token,
+                        access_expires_at = EXCLUDED.access_expires_at, refresh_expires_at = EXCLUDED.refresh_expires_at,
+                        updated_at = NOW()
+                """, access_token, refresh_token, access_expires_at, refresh_expires_at)
+            finally:
+                await conn.close()
+
+        asyncio.run(_store())
         self._access_token = access_token
         self._refresh_token = refresh_token
         self._access_expires_at = access_expires_at
