@@ -1,7 +1,6 @@
 # backend/app/services/schwab_client.py
 import base64
 import logging
-import os
 import threading
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -10,6 +9,8 @@ import httpx
 import pandas as pd
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
+
+from app.config import settings
 
 log = logging.getLogger(__name__)
 
@@ -209,10 +210,7 @@ def get_schwab_client() -> SchwabClient:
     if _client is None:
         with _client_lock:
             if _client is None:
-                app_key = os.environ.get("SCHWAB_APP_KEY", "")
-                app_secret = os.environ.get("SCHWAB_APP_SECRET", "")
-                database_url = os.environ.get("DATABASE_URL", "")
-                if not app_key or not app_secret:
+                if not settings.schwab_app_key or not settings.schwab_app_secret:
                     raise SchwabAPIError("SCHWAB_APP_KEY and SCHWAB_APP_SECRET must be set in environment")
-                _client = SchwabClient(app_key, app_secret, database_url)
+                _client = SchwabClient(settings.schwab_app_key, settings.schwab_app_secret, settings.database_url)
     return _client
