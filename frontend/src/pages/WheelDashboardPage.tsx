@@ -42,6 +42,7 @@ export function WheelDashboardPage() {
   const [expandedSlot, setExpandedSlot] = useState<string | null>(null)
   const [signals, setSignals] = useState<Record<string, CCSignalResult | 'loading' | 'error'>>({})
   const [signalDetail, setSignalDetail] = useState<string | null>(null)
+  const [signalsFetching, setSignalsFetching] = useState(false)
 
   async function load() {
     setLoading(true)
@@ -59,17 +60,31 @@ export function WheelDashboardPage() {
 
   useEffect(() => { load() }, [])
 
-  useEffect(() => {
+  async function loadSignals(force = false) {
     if (sessions.length === 0) return
     const tickers = [...new Set(sessions.map(s => s.ticker))]
-    tickers.forEach(ticker => {
-      if (signals[ticker]) return
-      setSignals(prev => ({ ...prev, [ticker]: 'loading' }))
-      ccSignalApi.get(ticker)
-        .then(result => setSignals(prev => ({ ...prev, [ticker]: result })))
-        .catch(() => setSignals(prev => ({ ...prev, [ticker]: 'error' })))
-    })
-  }, [sessions])
+    if (force) {
+      setSignalsFetching(true)
+      tickers.forEach(ticker => setSignals(prev => ({ ...prev, [ticker]: 'loading' })))
+    } else {
+      tickers.forEach(ticker => {
+        if (signals[ticker]) return
+        setSignals(prev => ({ ...prev, [ticker]: 'loading' }))
+      })
+    }
+    await Promise.allSettled(
+      tickers
+        .filter(ticker => force || !signals[ticker])
+        .map(ticker =>
+          ccSignalApi.get(ticker, force)
+            .then(result => setSignals(prev => ({ ...prev, [ticker]: result })))
+            .catch(() => setSignals(prev => ({ ...prev, [ticker]: 'error' })))
+        )
+    )
+    if (force) setSignalsFetching(false)
+  }
+
+  useEffect(() => { loadSignals() }, [sessions])
 
   const allSlots = flattenSlots(sessions)
   const needsAction = allSlots.filter(f => f.slot.needs_action)
@@ -270,6 +285,13 @@ export function WheelDashboardPage() {
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-bold text-gray-900">WHEEL Strategy</h1>
         <div className="flex gap-2">
+          <button
+            onClick={() => loadSignals(true)}
+            disabled={signalsFetching || sessions.length === 0}
+            className="px-4 py-2 bg-gray-100 text-gray-700 rounded text-sm hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {signalsFetching ? 'Fetching…' : 'Fetch Signals'}
+          </button>
           <button onClick={() => setShowNewModal(true)} className="px-4 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700">
             + New Wheel
           </button>

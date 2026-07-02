@@ -65,6 +65,6 @@ export const wheelApi = {
 }
 
 export const ccSignalApi = {
-  get: (ticker: string) =>
-    apiFetch<CCSignalResult>(`/market/cc-signal/${encodeURIComponent(ticker)}`),
+  get: (ticker: string, refresh = false) =>
+    apiFetch<CCSignalResult>(`/market/cc-signal/${encodeURIComponent(ticker)}${refresh ? '?refresh=true' : ''}`),
 }

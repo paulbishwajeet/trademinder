@@ -79,7 +79,7 @@ async def get_technicals(ticker: str):
 
 
 @router.get("/cc-signal/{ticker}")
-async def get_cc_signal(ticker: str):
+async def get_cc_signal(ticker: str, refresh: bool = False):
     loop = asyncio.get_running_loop()
-    result = await loop.run_in_executor(None, compute_cc_signal, ticker.upper())
+    result = await loop.run_in_executor(None, compute_cc_signal, ticker.upper(), refresh)
     return JSONResponse(content=result)

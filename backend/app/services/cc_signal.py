@@ -18,11 +18,11 @@ _cc_signal_cache: dict[str, tuple[dict, float]] = {}
 _CACHE_TTL = 14400  # 4 hours
 
 
-def compute_cc_signal(ticker: str) -> dict:
+def compute_cc_signal(ticker: str, force: bool = False) -> dict:
     ticker = ticker.upper()
     now = time.time()
     cached = _cc_signal_cache.get(ticker)
-    if cached and (now - cached[1]) < _CACHE_TTL:
+    if not force and cached and (now - cached[1]) < _CACHE_TTL:
         return cached[0]
 
     try:
