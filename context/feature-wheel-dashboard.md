@@ -1,6 +1,6 @@
 # Feature: WHEEL Strategy Dashboard v2
-**Status:** Implementation Complete — on branch `feature/wheelv2`, user testing in progress
-**Branch:** feature/wheelv2
+**Status:** Active development — feature/sp-signal merged to develop 2026-07-09
+**Branch:** develop (feature/sp-signal merged)
 **Created:** 2026-05-31 (v1), **Redesigned:** 2026-06-22 (v2)
 
 ## Goal
@@ -61,15 +61,16 @@ A slot-based WHEEL strategy system that supports multi-contract parallel wheels 
 ### Schwab Integration (added 2026-07-01)
 - `backend/app/models/schwab_token.py` — SchwabToken ORM model (single row id=1)
 - `backend/alembic/versions/009_schwab_tokens.py` — migration creating `schwab_tokens` table
-- `backend/app/services/schwab_client.py` — SchwabClient: asyncpg token storage, httpx calls to Schwab REST API, singleton with thread-safe refresh
+- `backend/app/services/schwab_client.py` — SchwabClient: asyncpg token storage, httpx calls to Schwab REST API, singleton with thread-safe refresh; `get_option_chain` now accepts `strike_count` param; read timeout bumped to 30s
 - `scripts/schwab_auth.py` — one-time OAuth CLI (paste-URL flow, port 8765 callback, asyncpg upsert)
 - `backend/app/services/technicals_fetcher.py` — rewritten to use Schwab price history
-- `backend/app/services/cc_signal.py` — rewritten to use Schwab quotes + options chain; added `force` param to `compute_cc_signal`
+- `backend/app/services/cc_signal.py` — combined CC+SP signal in one function (`compute_combined_signal`); `fetch_option_mid` for P&L lookup; `_option_chain_cache` with 5-min TTL
 - `backend/app/services/price_fetcher.py` — rewritten to use Schwab batch quotes + price history
-- `backend/app/routers/market.py` — cc-signal endpoint now accepts `?refresh=true`
+- `backend/app/routers/market.py` — `/cc-signal`, `/sp-signal`, `/combined-signal`, `/option-price` endpoints
 - `backend/app/config.py` — added `schwab_app_key` / `schwab_app_secret` fields
-- `frontend/src/api/wheel.ts` — `ccSignalApi.get()` now accepts optional `refresh` param
-- `frontend/src/pages/WheelDashboardPage.tsx` — CC Signal auto-fetches on page load; "Fetch Signals" button force-refreshes
+- `frontend/src/api/wheel.ts` — `ccSignalApi`, `spSignalApi`, `combinedSignalApi`, `optionPriceApi`
+- `frontend/src/pages/WheelDashboardPage.tsx` — CC+SP signal badges, P&L% column, active leg info under ticker, overflow-x-auto table
+- `frontend/src/types/index.ts` — added `OptionPriceResult` interface
 
 ### Docs
 - `docs/superpowers/specs/2026-07-01-schwab-api-design.md` — Schwab integration design spec
@@ -110,6 +111,10 @@ awaiting_sold_put ──sell put──→ sold_put_active ──expire OTM──
 | yfinance for earnings | Kept `_get_next_earnings()` on yfinance | Schwab doesn't provide earnings calendar; yfinance still works for this single use case |
 | CC Signal fetch strategy | Auto-fetch on page load (from cache), "Fetch Signals" button force-refreshes | Page load is instant from cache; button gives user control over when to hit Schwab for fresh data |
 | `refresh_expires_at` on access-token refresh | Preserve existing DB value, do not recompute | Schwab refresh token has fixed 7-day life from original auth — each access-token refresh does NOT extend it |
+| CC+SP combined into one endpoint | `compute_combined_signal` → `GET /combined-signal/{ticker}` | Prevents double Schwab API calls when loading both badges per ticker |
+| `contractType=ALL` avoided for large ETFs | Two separate CALL+PUT calls with `strikeCount=30` instead | QQQ with ALL returns a response too large for Schwab's gateway (502 TooBigBody) |
+| Option P&L expiry tolerance | Match chain expiry keys within ±3 days of stored date | Trades entered from India (IST) have expiry stored as Thursday; Schwab uses Friday — 1-day offset is common |
+| P&L% cache | 5-min TTL on option chain per ticker+contract_type | P&L needs fresher data than signals (4h); same chain reused for multiple legs on same ticker |
 
 
 | Decision | Chosen | Reason |
@@ -126,10 +131,12 @@ awaiting_sold_put ──sell put──→ sold_put_active ──expire OTM──
 | Old trade_sessions preserved | Not dropped or modified | IC and PBWB spread strategies still use it; zero-risk migration |
 
 ## Open Questions / Blockers
-- [ ] **Schwab refresh token expires 2026-07-09** — re-run `python scripts/schwab_auth.py` before that date. The backend logs a warning when within 24h of expiry.
+- [ ] **Schwab refresh token expires ~2026-07-16** — re-run `python scripts/schwab_auth.py` before then (token was re-issued 2026-07-09). Backend logs a warning within 24h of expiry.
 - [ ] **`test_prefetch_still_501` is broken on master** — stale test for a removed `/api/market/prefetch` stub route. Should be deleted before next merge to keep test suite green.
-- [ ] **CC Signal under token refresh** — not yet tested whether `_ensure_valid_token()` correctly refreshes the access token mid-session (token was fresh during all testing). Will surface naturally after ~30 min of use.
-- [ ] **Schwab options chain for non-optionable tickers** — `get_option_chain` will raise `SchwabAPIError` for tickers with no options. `cc_signal.py` catches this and returns `fetch_status: error`, but the Signal column just shows `—`. Acceptable but could show a clearer label.
+- [ ] **CC Signal under token refresh** — not yet tested whether `_ensure_valid_token()` correctly refreshes the access token mid-session. Will surface naturally after ~30 min of use.
+- [ ] **Schwab options chain for non-optionable tickers** — `get_option_chain` raises `SchwabAPIError` for tickers with no options; signal column shows `—`. Acceptable but could show a clearer label.
+- [ ] **P&L% for deep OTM/ITM strikes** — `strikeCount=60` in `fetch_option_mid` is centered on ATM. A strike far OTM (e.g. from a big move since entry) might fall outside the 60 returned; P&L would show `—`. Could increase to 100 or use Schwab `range=ALL` with date filter if this becomes an issue.
+- [ ] **Trade expiry timezone bug** — trades entered from India (IST) are stored with expiry one day early due to UTC conversion in the frontend. The ±3 day tolerance in `fetch_option_mid` works around this but the root cause (date-only fields being converted through UTC) should be fixed in the trade entry form.
 
 
 - [ ] **Automated `needs_action` detection** — currently manual. Could watch for trade closures (via extension sync or a background job) and auto-set `needs_action=true` when a linked leg's trade gets closed. Deferred.
@@ -146,20 +153,18 @@ awaiting_sold_put ──sell put──→ sold_put_active ──expire OTM──
 - 2026-06-18 — v1 LinkLegModal, extension 60s TTL refresh
 - 2026-06-22 — **v2 complete redesign**: new slot-based data model (WheelSession/WheelSlot/WheelSlotLeg/WheelPremiumLog), alembic migration 008, full CRUD + resolve router with 25 tests, frontend rewrite with 7 new components, extension pills from `/api/wheel/active-slots`, old WHEEL sessions cleared from DB, compact status-grouped dashboard layout. Bugs fixed: stock-only pill fallback, GOOG/GOOGL alias.
 - 2026-07-01 to 2026-07-02 — **Schwab API integration**: replaced yfinance with Schwab REST API for technicals, CC signal, and price fetching. Added `SchwabToken` model + migration 009, `SchwabClient` service (asyncpg token storage, httpx calls), one-time OAuth CLI script (`scripts/schwab_auth.py`). Rewrote `technicals_fetcher.py`, `cc_signal.py`, `price_fetcher.py` to use Schwab. Added `?refresh=true` param to CC signal endpoint for cache-busting. CC Signal column now auto-fetches on page load; "Fetch Signals" button force-refreshes from Schwab. OAuth flow verified working end-to-end with real Schwab brokerage credentials.
+- 2026-07-09 — **SP signal + combined endpoint + P&L% column**: Added SP (Sold Put) signal scoring as mirror of CC scoring. Merged CC+SP fetch into `compute_combined_signal` (one Schwab call set per ticker instead of two). Added `fetch_option_mid` with 5-min cached option chain lookup and ±3-day expiry tolerance to handle Thu/Fri date offset. New P&L% column in Active section shows `(premium - current_mid) / premium` colored green/red; fetched alongside signals on "Fetch Signals" button. Active leg info (expiry, strike, CC/SP) shown under ticker symbol. Table uses `overflow-x-auto` + `whitespace-nowrap` for 10-column layout. Fixed QQQ 502 overflow by switching from `contractType=ALL` to separate CALL+PUT calls with `strikeCount=30`. Merged to `develop`.
 
 ## Current State (Resume Here)
-Branch `feature/wheelv2`, HEAD at `48fa6b8`. 176 backend tests pass, 1 pre-existing failure (`test_prefetch_still_501` — stale test on master too, unrelated to this work). TypeScript compiles clean. Migrations 008 (wheel v2) and 009 (schwab_tokens) applied to local PostgreSQL.
+`develop` branch, HEAD at `d31c10f`. All work from `feature/sp-signal` is merged. TypeScript compiles clean. Backend Python syntax verified. Schwab token was re-issued 2026-07-09 (expires ~2026-07-16).
 
-**Schwab integration is live and verified:**
-- `scripts/schwab_auth.py` uses paste-URL OAuth flow (browser redirects to `https://127.0.0.1:8765/callback`, user copies URL into terminal). Tokens stored in `schwab_tokens` table (id=1). Token expires 2026-07-09 — re-run auth script before then.
-- Backend reads `SCHWAB_APP_KEY` / `SCHWAB_APP_SECRET` from `.env` via pydantic `Settings` (NOT `os.environ`). Start backend with plain `uvicorn app.main:app --reload --port 5431` from `backend/` dir — no manual exports needed.
-- `technicals_fetcher`, `cc_signal`, `price_fetcher` all use Schwab. yfinance kept only for earnings dates in `_get_next_earnings`.
-- CC Signal column auto-fetches on page load (hits 4-hour cache). "Fetch Signals" button calls `?refresh=true` to bypass cache and pull fresh Schwab data.
+**Wheel dashboard is live with:**
+- Four status-grouped sections: Needs Action, Awaiting CC, Awaiting Sold Put, Active
+- CC Signal + SP Signal badges (grade + score) in every section, fetched via `GET /combined-signal/{ticker}` (4h cache, "Fetch Signals" button force-refreshes)
+- Active section only: P&L% column (green = profit, red = loss) fetched live via `GET /option-price/{ticker}?strike=&expiry=&contract_type=` (5-min cache) alongside signals
+- Active leg info (expiry date, strike, CC/SP label) shown under ticker in smaller font
+- Table is horizontally scrollable (`overflow-x-auto`) with `whitespace-nowrap` — 10 columns total
 
-**What has NOT been tested yet:**
-- Resolve flow (OTM/ITM/buyback/roll) — endpoints pass tests but not yet exercised in browser
-- Multi-contract slot behavior (e.g. 2-contract CC called away)
-- Premium log display and totals in the expanded slot view
-- CC Signal and technicals under a real access-token refresh cycle (token was fresh during testing)
+**Known data quirk:** trades entered from India have expiry stored one day early (timezone UTC conversion). `fetch_option_mid` handles this with ±3 day tolerance when matching Schwab chain expiry keys. The underlying date entry bug in the frontend is not yet fixed.
 
-**Next action:** Merge `feature/wheelv2` to `master` (run `superpowers:finishing-a-development-branch`). Then run `alembic upgrade head` on prod DB to apply migrations 008 and 009.
+**Next action:** Merge `develop` → `master` when ready to ship. No pending code changes. If P&L% still shows `—` for any active trade after Fetch Signals, check backend log for `option_price` warnings — the strike may be outside the 60-strike window or the expiry is expired/unresolved.
