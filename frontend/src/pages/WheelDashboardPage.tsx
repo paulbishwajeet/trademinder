@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import type { WheelSessionDetail, WheelSessionSummary, WheelSlotDetail, CCSignalResult } from '../types'
-import { wheelApi, ccSignalApi } from '../api/wheel'
+import { wheelApi, ccSignalApi, spSignalApi } from '../api/wheel'
 import { NewWheelModalV2 } from '../components/Wheel/NewWheelModalV2'
 import { AddSlotModal } from '../components/Wheel/AddSlotModal'
 import { ResolveModal } from '../components/Wheel/ResolveModal'
@@ -41,6 +41,7 @@ export function WheelDashboardPage() {
   const [linkSlotId, setLinkSlotId] = useState<string | null>(null)
   const [expandedSlot, setExpandedSlot] = useState<string | null>(null)
   const [signals, setSignals] = useState<Record<string, CCSignalResult | 'loading' | 'error'>>({})
+  const [spSignals, setSpSignals] = useState<Record<string, CCSignalResult | 'loading' | 'error'>>({})
   const [signalDetail, setSignalDetail] = useState<string | null>(null)
   const [signalsFetching, setSignalsFetching] = useState(false)
 
@@ -65,22 +66,30 @@ export function WheelDashboardPage() {
     const tickers = [...new Set(sessions.map(s => s.ticker))]
     if (force) {
       setSignalsFetching(true)
-      tickers.forEach(ticker => setSignals(prev => ({ ...prev, [ticker]: 'loading' })))
+      tickers.forEach(ticker => {
+        setSignals(prev => ({ ...prev, [ticker]: 'loading' }))
+        setSpSignals(prev => ({ ...prev, [ticker]: 'loading' }))
+      })
     } else {
       tickers.forEach(ticker => {
-        if (signals[ticker]) return
-        setSignals(prev => ({ ...prev, [ticker]: 'loading' }))
+        if (!signals[ticker]) setSignals(prev => ({ ...prev, [ticker]: 'loading' }))
+        if (!spSignals[ticker]) setSpSignals(prev => ({ ...prev, [ticker]: 'loading' }))
       })
     }
-    await Promise.allSettled(
-      tickers
-        .filter(ticker => force || !signals[ticker])
-        .map(ticker =>
-          ccSignalApi.get(ticker, force)
-            .then(result => setSignals(prev => ({ ...prev, [ticker]: result })))
-            .catch(() => setSignals(prev => ({ ...prev, [ticker]: 'error' })))
-        )
-    )
+    const tickersToFetch = tickers.filter(ticker => force || !signals[ticker])
+    const tickersToFetchSp = tickers.filter(ticker => force || !spSignals[ticker])
+    await Promise.allSettled([
+      ...tickersToFetch.map(ticker =>
+        ccSignalApi.get(ticker, force)
+          .then(result => setSignals(prev => ({ ...prev, [ticker]: result })))
+          .catch(() => setSignals(prev => ({ ...prev, [ticker]: 'error' })))
+      ),
+      ...tickersToFetchSp.map(ticker =>
+        spSignalApi.get(ticker, force)
+          .then(result => setSpSignals(prev => ({ ...prev, [ticker]: result })))
+          .catch(() => setSpSignals(prev => ({ ...prev, [ticker]: 'error' })))
+      ),
+    ])
     if (force) setSignalsFetching(false)
   }
 
@@ -113,15 +122,16 @@ export function WheelDashboardPage() {
     return parts.join(' · ') || '—'
   }
 
-  function renderSignalBadge(ticker: string) {
-    const sig = signals[ticker]
+  function renderSignalBadge(ticker: string, sigMap: Record<string, CCSignalResult | 'loading' | 'error'>, type: 'CC' | 'SP') {
+    const sig = sigMap[ticker]
+    const detailKey = `${ticker}-${type}`
     if (sig === 'loading') return <span className="text-xs text-gray-400 animate-pulse">...</span>
     if (sig === 'error' || !sig) return <span className="text-xs text-gray-300" title="Signal unavailable">&mdash;</span>
     return (
       <button
-        onClick={() => setSignalDetail(signalDetail === ticker ? null : ticker)}
+        onClick={() => setSignalDetail(signalDetail === detailKey ? null : detailKey)}
         className={`text-xs font-medium px-2 py-0.5 rounded-full border ${GRADE_COLORS[sig.grade] ?? GRADE_COLORS.wait} hover:opacity-80`}
-        title={sig.commentary ?? `Score: ${sig.score}`}
+        title={`Score: ${sig.score}`}
       >
         {sig.grade === 'wait' ? 'Wait' : `${sig.grade.charAt(0).toUpperCase() + sig.grade.slice(1)} ${sig.score}`}
       </button>
@@ -129,14 +139,20 @@ export function WheelDashboardPage() {
   }
 
   function renderSignalDetailRow(ticker: string) {
-    if (signalDetail !== ticker) return null
-    const sig = signals[ticker]
+    const ccKey = `${ticker}-CC`
+    const spKey = `${ticker}-SP`
+    const isCC = signalDetail === ccKey
+    const isSP = signalDetail === spKey
+    if (!isCC && !isSP) return null
+    const sig = isCC ? signals[ticker] : spSignals[ticker]
+    const label = isCC ? 'CC Signal' : 'SP Signal'
     if (!sig || sig === 'loading' || sig === 'error') return null
 
     return (
       <tr key={`${ticker}-signal-detail`}>
-        <td colSpan={8} className="py-3 px-4 bg-gray-50 border-t border-gray-200">
+        <td colSpan={9} className="py-3 px-4 bg-gray-50 border-t border-gray-200">
           <div className="space-y-2 text-xs">
+            <p className="font-medium text-gray-500 mb-1">{label} breakdown</p>
             <div className="grid grid-cols-2 gap-x-6 gap-y-1">
               {sig.factors.map(f => (
                 <div key={f.name} className="flex justify-between">
@@ -190,7 +206,8 @@ export function WheelDashboardPage() {
         <td className="py-2 pr-3 text-xs text-gray-500">{activeLegInfo(slot)}</td>
         <td className="py-2 pr-3 text-xs text-gray-400">R{slot.rotation_number}</td>
         <td className="py-2 pr-3 text-xs font-medium text-green-600">${slot.total_premium}</td>
-        <td className="py-2 pr-3">{renderSignalBadge(ticker)}</td>
+        <td className="py-2 pr-3">{renderSignalBadge(ticker, signals, 'CC')}</td>
+        <td className="py-2 pr-3">{renderSignalBadge(ticker, spSignals, 'SP')}</td>
         <td className="py-2 text-right">
           <div className="flex items-center gap-1 justify-end">
             {(slot.status === 'cc_active' || slot.status === 'sold_put_active' || slot.needs_action) && (
@@ -222,7 +239,7 @@ export function WheelDashboardPage() {
     if (currentLegs.length === 0) {
       return (
         <tr key={`${f.slot.id}-legs`}>
-          <td colSpan={8} className="py-1 pl-8 text-xs text-gray-400 italic">No legs in current rotation.</td>
+          <td colSpan={9} className="py-1 pl-8 text-xs text-gray-400 italic">No legs in current rotation.</td>
         </tr>
       )
     }
@@ -235,7 +252,7 @@ export function WheelDashboardPage() {
           {leg.trade_expiry_date ?? '—'}{leg.trade_premium != null ? ` · $${leg.trade_premium}` : ''}
         </td>
         <td className="py-1 pr-3 text-xs text-gray-400 capitalize">{leg.trade_status}</td>
-        <td colSpan={3} className="py-1 text-xs text-right">
+        <td colSpan={4} className="py-1 text-xs text-right">
           <Link to={`/trades/${leg.trade_id}`} className="text-blue-500 hover:underline">view</Link>
         </td>
       </tr>
@@ -260,7 +277,8 @@ export function WheelDashboardPage() {
                 <th className="py-2 pr-3 font-normal">Active Leg</th>
                 <th className="py-2 pr-3 font-normal">Rot</th>
                 <th className="py-2 pr-3 font-normal">Premium</th>
-                <th className="py-2 pr-3 font-normal">Signal</th>
+                <th className="py-2 pr-3 font-normal">CC Signal</th>
+                <th className="py-2 pr-3 font-normal">SP Signal</th>
                 <th className="py-2 pr-3 font-normal"></th>
               </tr>
             </thead>

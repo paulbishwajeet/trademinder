@@ -68,3 +68,8 @@ export const ccSignalApi = {
   get: (ticker: string, refresh = false) =>
     apiFetch<CCSignalResult>(`/market/cc-signal/${encodeURIComponent(ticker)}${refresh ? '?refresh=true' : ''}`),
 }
+
+export const spSignalApi = {
+  get: (ticker: string, refresh = false) =>
+    apiFetch<CCSignalResult>(`/market/sp-signal/${encodeURIComponent(ticker)}${refresh ? '?refresh=true' : ''}`),
+}

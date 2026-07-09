@@ -15,6 +15,7 @@ from app.services.schwab_client import get_schwab_client
 log = logging.getLogger(__name__)
 
 _cc_signal_cache: dict[str, tuple[dict, float]] = {}
+_sp_signal_cache: dict[str, tuple[dict, float]] = {}
 _CACHE_TTL = 14400  # 4 hours
 
 
@@ -94,8 +95,83 @@ def _compute_fresh(ticker: str) -> dict:
     }
 
 
+def compute_sp_signal(ticker: str, force: bool = False) -> dict:
+    ticker = ticker.upper()
+    now = time.time()
+    cached = _sp_signal_cache.get(ticker)
+    if not force and cached and (now - cached[1]) < _CACHE_TTL:
+        return cached[0]
+
+    try:
+        result = _compute_sp_fresh(ticker)
+        _sp_signal_cache[ticker] = (result, now)
+        return result
+    except Exception as exc:
+        log.exception("sp_signal failed for %s", ticker)
+        return {
+            "ticker": ticker,
+            "score": 0,
+            "grade": "wait",
+            "iv_percentile": None,
+            "atm_iv": None,
+            "spot_price": None,
+            "factors": [],
+            "commentary": None,
+            "strike_hint": None,
+            "caution": None,
+            "cached_at": datetime.now(timezone.utc).isoformat(),
+            "fetch_status": "error",
+            "fetch_error": str(exc),
+        }
+
+
+def _compute_sp_fresh(ticker: str) -> dict:
+    from app.services.technicals_fetcher import fetch_technicals
+
+    technicals, close_d = fetch_technicals(ticker, return_closes=True)
+    if technicals.get("fetch_status") != "ok":
+        raise ValueError(f"Technicals fetch failed: {technicals.get('fetch_error')}")
+    if close_d.empty:
+        raise ValueError(f"No daily data for {ticker}")
+
+    client = get_schwab_client()
+
+    quotes = client.get_quotes([ticker])
+    quote = quotes.get(ticker, {})
+    try:
+        live_price = float(quote.get("lastPrice", close_d.iloc[-1]))
+    except Exception:
+        live_price = float(close_d.iloc[-1])
+
+    chain = client.get_option_chain(ticker, contract_type="PUT")
+    iv_percentile, atm_iv = _compute_iv_percentile_from_chain(close_d, chain, ticker, contract_type="PUT")
+
+    prev_close = float(close_d.iloc[-1])
+    technicals = dict(technicals)
+    technicals["day_color"] = "green" if live_price > prev_close else "red"
+    technicals["price_action"] = str(round(live_price, 2))
+    spot = live_price
+    score, grade, factors = _score_sp_factors(technicals, iv_percentile, atm_iv, close_d)
+
+    return {
+        "ticker": ticker,
+        "score": score,
+        "grade": grade,
+        "iv_percentile": round(iv_percentile, 1) if iv_percentile is not None else None,
+        "atm_iv": round(atm_iv, 4) if atm_iv is not None else None,
+        "spot_price": round(spot, 2),
+        "factors": factors,
+        "commentary": None,
+        "strike_hint": None,
+        "caution": None,
+        "cached_at": datetime.now(timezone.utc).isoformat(),
+        "fetch_status": "ok",
+        "fetch_error": None,
+    }
+
+
 def _compute_iv_percentile_from_chain(
-    daily_closes: pd.Series, chain: dict, ticker: str = "?"
+    daily_closes: pd.Series, chain: dict, ticker: str = "?", contract_type: str = "CALL"
 ) -> tuple[float | None, float | None]:
     try:
         log_returns = np.log(daily_closes / daily_closes.shift(1)).dropna()
@@ -106,7 +182,8 @@ def _compute_iv_percentile_from_chain(
         if len(hv30) < 30:
             return None, None
 
-        call_exp_map = chain.get("callExpDateMap", {})
+        exp_map_key = "putExpDateMap" if contract_type == "PUT" else "callExpDateMap"
+        call_exp_map = chain.get(exp_map_key, {})
         if not call_exp_map:
             return None, None
 
@@ -276,6 +353,158 @@ def _score_factors(
             total = round(total * 100 / max_possible)
 
     # Grade with IV override
+    iv_override = iv_pts >= 20
+    if iv_override:
+        if total >= 60:
+            grade = "strong"
+        elif total >= 40:
+            grade = "moderate"
+        elif total >= 20:
+            grade = "weak"
+        else:
+            grade = "wait"
+    else:
+        if total >= 70:
+            grade = "strong"
+        elif total >= 50:
+            grade = "moderate"
+        elif total >= 30:
+            grade = "weak"
+        else:
+            grade = "wait"
+
+    return total, grade, factors
+
+
+def _score_sp_factors(
+    technicals: dict,
+    iv_percentile: float | None,
+    atm_iv: float | None,
+    daily_closes: pd.Series,
+) -> tuple[int, str, list[dict]]:
+    factors: list[dict] = []
+
+    # 1. IV Percentile (25 pts) — same as CC: high IV = more premium regardless of direction
+    iv_pts = 0
+    iv_detail = "N/A"
+    if iv_percentile is not None:
+        if iv_percentile >= 80:
+            iv_pts = 25
+        elif iv_percentile >= 60:
+            iv_pts = 20
+        elif iv_percentile >= 50:
+            iv_pts = 15
+        elif iv_percentile >= 40:
+            iv_pts = 10
+        elif iv_percentile >= 30:
+            iv_pts = 5
+        iv_detail = f"{iv_percentile:.0f}th percentile (52-week)"
+    factors.append({"name": "IV Percentile", "points": iv_pts, "max": 25, "detail": iv_detail})
+
+    # 2. RSI Oversold (15 pts) — opposite of CC: low RSI = stock beaten down = safer put level
+    rsi = technicals.get("rsi_14")
+    rsi_pts = 0
+    rsi_detail = "N/A"
+    if rsi is not None:
+        rsi = float(rsi)
+        if rsi <= 25:
+            rsi_pts = 15
+        elif rsi <= 30:
+            rsi_pts = 12
+        elif rsi <= 35:
+            rsi_pts = 8
+        elif rsi <= 40:
+            rsi_pts = 4
+        rsi_detail = f"RSI {rsi:.1f}"
+    factors.append({"name": "RSI Oversold", "points": rsi_pts, "max": 15, "detail": rsi_detail})
+
+    # 3. Bollinger Position (15 pts) — opposite of CC: near/below lower band = oversold
+    bb_pos = technicals.get("bollinger_position")
+    bb_map = {"below_lower": 15, "near_lower": 12, "mid": 5, "near_upper": 0, "above_upper": 0}
+    bb_pts = bb_map.get(bb_pos, 0)
+    bb_labels = {
+        "above_upper": "Above upper band",
+        "near_upper": "Near upper band",
+        "mid": "Mid band",
+        "near_lower": "Near lower band",
+        "below_lower": "Below lower band",
+    }
+    factors.append({"name": "Bollinger Position", "points": bb_pts, "max": 15, "detail": bb_labels.get(bb_pos, str(bb_pos))})
+
+    # 4. MACD (10 pts) — bullish = stock recovering = put less likely to go ITM
+    macd = technicals.get("macd_signal", "neutral")
+    macd_map = {"bullish": 10, "neutral": 7, "bearish": 3}
+    macd_pts = macd_map.get(macd, 0)
+    macd_notes = technicals.get("macd_notes", "")
+    factors.append({"name": "MACD Trend", "points": macd_pts, "max": 10, "detail": f"{macd.capitalize()}, {macd_notes}"})
+
+    # 5. Red Day (5 pts) — stock is down today = put premium elevated, potential bounce
+    day = technicals.get("day_color", "green")
+    day_pts = 5 if day == "red" else 2
+    factors.append({"name": "Red Day", "points": day_pts, "max": 5, "detail": day.capitalize()})
+
+    # 6. Price below 50MA (10 pts) — stock in a dip = more premium, selling put at discount level
+    ma50_pos = technicals.get("price_vs_ma50")
+    ma50_pts = 10 if ma50_pos == "below" else 4
+    price_str = technicals.get("price_action", "?")
+    ma50_val = technicals.get("ma_50d", "?")
+    factors.append({"name": "Price < 50MA", "points": ma50_pts, "max": 10, "detail": f"${price_str} vs ${ma50_val}"})
+
+    # 7. Earnings Distance (10 pts) — same as CC: avoid earnings
+    next_earn = technicals.get("next_earnings_date")
+    earn_pts = 10
+    earn_detail = "No earnings date found"
+    if next_earn:
+        try:
+            earn_date = date.fromisoformat(str(next_earn)[:10])
+            days_to_earn = (earn_date - date.today()).days
+            if days_to_earn <= 7:
+                earn_pts = 0
+            elif days_to_earn <= 14:
+                earn_pts = 3
+            elif days_to_earn <= 21:
+                earn_pts = 7
+            else:
+                earn_pts = 10
+            earn_detail = f"{days_to_earn} days to earnings"
+        except (ValueError, TypeError):
+            pass
+    factors.append({"name": "Earnings Distance", "points": earn_pts, "max": 10, "detail": earn_detail})
+
+    # 8. Momentum Recovery (10 pts) — RSI was below 35 recently and is now rising = floor forming
+    mom_pts = 0
+    mom_detail = "No recent oversold"
+    if len(daily_closes) >= 20:
+        rsi_series = []
+        for i in range(6):
+            offset = len(daily_closes) - 1 - i
+            if offset < 14:
+                break
+            sub = daily_closes.iloc[: offset + 1]
+            rsi_val = _compute_rsi_14(sub)
+            if rsi_val is not None:
+                rsi_series.append(rsi_val)
+
+        if len(rsi_series) >= 2:
+            was_oversold = any(r < 35 for r in rsi_series)
+            if was_oversold:
+                current_rsi = rsi_series[0]
+                oldest_rsi = rsi_series[-1]
+                if current_rsi > oldest_rsi:
+                    mom_pts = 10
+                    mom_detail = f"RSI recovering from {oldest_rsi:.1f} to {current_rsi:.1f}"
+                else:
+                    mom_pts = 5
+                    mom_detail = "RSI < 35 recently but not yet recovering"
+    factors.append({"name": "Momentum Recovery", "points": mom_pts, "max": 10, "detail": mom_detail})
+
+    total = sum(f["points"] for f in factors)
+
+    if iv_percentile is None:
+        max_possible = sum(f["max"] for f in factors if f["name"] != "IV Percentile")
+        if max_possible > 0:
+            total = round(total * 100 / max_possible)
+
     iv_override = iv_pts >= 20
     if iv_override:
         if total >= 60:
