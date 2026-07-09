@@ -123,7 +123,20 @@ export function WheelDashboardPage() {
   const needsAction = allSlots.filter(f => f.slot.needs_action)
   const awaitingCC = allSlots.filter(f => f.slot.status === 'awaiting_cc' && !f.slot.needs_action)
   const awaitingSP = allSlots.filter(f => f.slot.status === 'awaiting_sold_put' && !f.slot.needs_action)
-  const active = allSlots.filter(f => (f.slot.status === 'cc_active' || f.slot.status === 'sold_put_active') && !f.slot.needs_action)
+  const active = allSlots
+    .filter(f => (f.slot.status === 'cc_active' || f.slot.status === 'sold_put_active') && !f.slot.needs_action)
+    .sort((a, b) => {
+      const legExpiry = (f: FlatSlot) => {
+        const legs = f.slot.legs.filter(l => l.rotation_number === f.slot.rotation_number && l.trade_status === 'open' && l.leg_role !== 'stock')
+        return legs[legs.length - 1]?.trade_expiry_date ?? null
+      }
+      const ea = legExpiry(a)
+      const eb = legExpiry(b)
+      if (!ea && !eb) return 0
+      if (!ea) return 1
+      if (!eb) return -1
+      return ea < eb ? -1 : ea > eb ? 1 : 0
+    })
   const emptyWheels = sessions.filter(s => s.slots.length === 0)
 
   const resolveSlotTicker = resolveSlotId
