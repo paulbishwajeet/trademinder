@@ -239,6 +239,14 @@ export interface WheelActiveSlot {
   etrade_symbols: string[]
 }
 
+export interface OptionPriceResult {
+  bid: number
+  ask: number
+  mid: number
+  fetch_status: string
+  fetch_error: string | null
+}
+
 // ── CC Sell Signal types ────────────────────────────────────────
 
 export interface CCSignalFactor {

@@ -133,7 +133,7 @@ class SchwabClient:
             f"{SCHWAB_API_BASE}{path}",
             headers={"Authorization": f"Bearer {self._access_token}"},
             params=params,
-            timeout=15,
+            timeout=30,
         )
         if resp.status_code != 200:
             raise SchwabAPIError(f"Schwab API {resp.status_code}: {resp.text[:200]}")
@@ -188,6 +188,7 @@ class SchwabClient:
         contract_type: str = "CALL",
         from_date: Optional[str] = None,
         to_date: Optional[str] = None,
+        strike_count: Optional[int] = None,
     ) -> dict:
         """Returns raw Schwab options chain response."""
         params: dict = {
@@ -199,6 +200,8 @@ class SchwabClient:
             params["fromDate"] = from_date
         if to_date:
             params["toDate"] = to_date
+        if strike_count is not None:
+            params["strikeCount"] = strike_count
         return self._get("/marketdata/v1/chains", params)
 
 

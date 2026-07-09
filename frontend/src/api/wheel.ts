@@ -1,7 +1,7 @@
 import { apiFetch } from './client'
 import type {
   WheelSessionSummary, WheelSessionDetail, WheelSlotDetail,
-  WheelSlotLegItem, WheelActiveSlot, CCSignalResult,
+  WheelSlotLegItem, WheelActiveSlot, CCSignalResult, OptionPriceResult,
 } from '../types'
 
 export interface WheelSessionCreate {
@@ -77,4 +77,11 @@ export const spSignalApi = {
 export const combinedSignalApi = {
   get: (ticker: string, refresh = false) =>
     apiFetch<{ cc: CCSignalResult; sp: CCSignalResult }>(`/market/combined-signal/${encodeURIComponent(ticker)}${refresh ? '?refresh=true' : ''}`),
+}
+
+export const optionPriceApi = {
+  get: (ticker: string, strike: number, expiry: string, contractType: string) => {
+    const qs = new URLSearchParams({ strike: String(strike), expiry, contract_type: contractType })
+    return apiFetch<OptionPriceResult>(`/market/option-price/${encodeURIComponent(ticker)}?${qs}`)
+  },
 }

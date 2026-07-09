@@ -3,7 +3,7 @@ import logging
 import math
 import os
 import time
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 import numpy as np
@@ -15,7 +15,66 @@ from app.services.schwab_client import get_schwab_client
 log = logging.getLogger(__name__)
 
 _combined_signal_cache: dict[str, tuple[dict, float]] = {}
-_CACHE_TTL = 14400  # 4 hours
+_option_chain_cache: dict[str, tuple[dict, float]] = {}
+_CACHE_TTL = 14400       # 4 hours
+_OPTION_CHAIN_TTL = 300  # 5 minutes
+
+
+def fetch_option_mid(ticker: str, strike: float, expiry_str: str, contract_type: str) -> dict:
+    """Return current bid/ask/mid for a specific option contract.
+
+    expiry_str is the date stored in the trade (may be Thursday when Schwab uses Friday).
+    We find the closest expiry key within ±3 days to handle that convention difference.
+    """
+    cache_key = f"{ticker}-{contract_type.upper()}"
+    now = time.time()
+    cached = _option_chain_cache.get(cache_key)
+    if cached and (now - cached[1]) < _OPTION_CHAIN_TTL:
+        chain = cached[0]
+    else:
+        client = get_schwab_client()
+        to_date = (date.today() + timedelta(days=90)).isoformat()
+        chain = client.get_option_chain(
+            ticker,
+            contract_type=contract_type.upper(),
+            to_date=to_date,
+            strike_count=60,
+        )
+        _option_chain_cache[cache_key] = (chain, now)
+
+    exp_map_key = "putExpDateMap" if contract_type.upper() == "PUT" else "callExpDateMap"
+    exp_map = chain.get(exp_map_key, {})
+
+    # Find the closest expiry key within ±3 days — handles Thu vs Fri convention
+    target = date.fromisoformat(expiry_str)
+    matching_key = None
+    best_delta = float("inf")
+    for k in exp_map:
+        k_date = date.fromisoformat(k.split(":")[0])
+        delta = abs((k_date - target).days)
+        if delta <= 3 and delta < best_delta:
+            best_delta = delta
+            matching_key = k
+
+    if not matching_key:
+        log.warning("option_price %s: no expiry near %s (available: %s)", ticker, expiry_str, [k.split(":")[0] for k in exp_map.keys()])
+        return {"fetch_status": "error", "fetch_error": f"No chain data for expiry {expiry_str}"}
+
+    strikes = exp_map[matching_key]
+    if not strikes:
+        log.warning("option_price %s: empty strikes at %s", ticker, matching_key)
+        return {"fetch_status": "error", "fetch_error": "Empty strikes in chain"}
+
+    strike_key = min(strikes.keys(), key=lambda s: abs(float(s) - strike))
+    if abs(float(strike_key) - strike) > 2.0:
+        log.warning("option_price %s: strike %.2f not found near %s (closest=%.2f)", ticker, strike, matching_key, float(strike_key))
+        return {"fetch_status": "error", "fetch_error": f"No option found near strike {strike}"}
+
+    option = strikes[strike_key][0]
+    bid = float(option.get("bid", 0))
+    ask = float(option.get("ask", 0))
+    mid = round((bid + ask) / 2, 4)
+    return {"bid": bid, "ask": ask, "mid": mid, "fetch_status": "ok", "fetch_error": None}
 
 
 def _make_error_signal(ticker: str, exc: Exception) -> dict:
@@ -80,8 +139,9 @@ def _compute_combined_fresh(ticker: str) -> dict:
     except Exception:
         live_price = float(close_d.iloc[-1])
 
-    # One call with contractType=ALL returns both callExpDateMap and putExpDateMap
-    chain = client.get_option_chain(ticker, contract_type="ALL")
+    # Two focused calls with strikeCount avoids 502 overflow on large ETFs (QQQ etc.)
+    call_chain = client.get_option_chain(ticker, contract_type="CALL", strike_count=30)
+    put_chain = client.get_option_chain(ticker, contract_type="PUT", strike_count=30)
 
     prev_close = float(close_d.iloc[-1])
     technicals = dict(technicals)
@@ -90,11 +150,11 @@ def _compute_combined_fresh(ticker: str) -> dict:
     spot = live_price
     cached_at = datetime.now(timezone.utc).isoformat()
 
-    cc_iv_pct, cc_atm_iv = _compute_iv_percentile_from_chain(close_d, chain, ticker, contract_type="CALL")
+    cc_iv_pct, cc_atm_iv = _compute_iv_percentile_from_chain(close_d, call_chain, ticker, contract_type="CALL")
     cc_score, cc_grade, cc_factors = _score_factors(technicals, cc_iv_pct, cc_atm_iv, close_d)
     commentary_data = _get_llm_commentary(ticker, cc_score, cc_grade, cc_factors, technicals, cc_iv_pct, spot)
 
-    sp_iv_pct, sp_atm_iv = _compute_iv_percentile_from_chain(close_d, chain, ticker, contract_type="PUT")
+    sp_iv_pct, sp_atm_iv = _compute_iv_percentile_from_chain(close_d, put_chain, ticker, contract_type="PUT")
     sp_score, sp_grade, sp_factors = _score_sp_factors(technicals, sp_iv_pct, sp_atm_iv, close_d)
 
     return {
