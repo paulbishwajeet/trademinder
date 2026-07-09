@@ -13,7 +13,7 @@ from app.services.alert_engine import run as run_alert_engine
 from app.services.options_scanner import run_scan
 from app.services.price_fetcher import fetch_quote, fetch_rsi_batch, refresh_open_trades
 from app.services.technicals_fetcher import fetch_technicals
-from app.services.cc_signal import compute_cc_signal, compute_sp_signal
+from app.services.cc_signal import compute_cc_signal, compute_combined_signal, compute_sp_signal
 
 router = APIRouter(prefix="/api/market", tags=["market"])
 
@@ -89,4 +89,11 @@ async def get_cc_signal(ticker: str, refresh: bool = False):
 async def get_sp_signal(ticker: str, refresh: bool = False):
     loop = asyncio.get_running_loop()
     result = await loop.run_in_executor(None, compute_sp_signal, ticker.upper(), refresh)
+    return JSONResponse(content=result)
+
+
+@router.get("/combined-signal/{ticker}")
+async def get_combined_signal(ticker: str, refresh: bool = False):
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(None, compute_combined_signal, ticker.upper(), refresh)
     return JSONResponse(content=result)

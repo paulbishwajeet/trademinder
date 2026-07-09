@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import type { WheelSessionDetail, WheelSessionSummary, WheelSlotDetail, CCSignalResult } from '../types'
-import { wheelApi, ccSignalApi, spSignalApi } from '../api/wheel'
+import { wheelApi, combinedSignalApi } from '../api/wheel'
 import { NewWheelModalV2 } from '../components/Wheel/NewWheelModalV2'
 import { AddSlotModal } from '../components/Wheel/AddSlotModal'
 import { ResolveModal } from '../components/Wheel/ResolveModal'
@@ -77,19 +77,19 @@ export function WheelDashboardPage() {
       })
     }
     const tickersToFetch = tickers.filter(ticker => force || !signals[ticker])
-    const tickersToFetchSp = tickers.filter(ticker => force || !spSignals[ticker])
-    await Promise.allSettled([
-      ...tickersToFetch.map(ticker =>
-        ccSignalApi.get(ticker, force)
-          .then(result => setSignals(prev => ({ ...prev, [ticker]: result })))
-          .catch(() => setSignals(prev => ({ ...prev, [ticker]: 'error' })))
-      ),
-      ...tickersToFetchSp.map(ticker =>
-        spSignalApi.get(ticker, force)
-          .then(result => setSpSignals(prev => ({ ...prev, [ticker]: result })))
-          .catch(() => setSpSignals(prev => ({ ...prev, [ticker]: 'error' })))
-      ),
-    ])
+    await Promise.allSettled(
+      tickersToFetch.map(ticker =>
+        combinedSignalApi.get(ticker, force)
+          .then(result => {
+            setSignals(prev => ({ ...prev, [ticker]: result.cc }))
+            setSpSignals(prev => ({ ...prev, [ticker]: result.sp }))
+          })
+          .catch(() => {
+            setSignals(prev => ({ ...prev, [ticker]: 'error' }))
+            setSpSignals(prev => ({ ...prev, [ticker]: 'error' }))
+          })
+      )
+    )
     if (force) setSignalsFetching(false)
   }
 
@@ -120,6 +120,20 @@ export function WheelDashboardPage() {
     if (leg.trade_expiry_date) parts.push(`exp ${leg.trade_expiry_date}`)
     if (leg.trade_premium != null) parts.push(`$${leg.trade_premium} prem`)
     return parts.join(' · ') || '—'
+  }
+
+  function activeLegSummary(slot: WheelSlotDetail): string | null {
+    const leg = slot.legs.find(l => l.rotation_number === slot.rotation_number && l.trade_status === 'open' && l.leg_role !== 'stock')
+    if (!leg) return null
+    const parts: string[] = []
+    if (leg.trade_expiry_date) {
+      const [y, m, d] = leg.trade_expiry_date.split('-')
+      parts.push(`${parseInt(m)}/${parseInt(d)}/${y.slice(2)}`)
+    }
+    if (leg.trade_strike_price != null) parts.push(`$${leg.trade_strike_price}`)
+    if (leg.leg_role === 'covered_call') parts.push('CC')
+    else if (leg.leg_role === 'sold_put') parts.push('SP')
+    return parts.length ? parts.join(' ') : null
   }
 
   function renderSignalBadge(ticker: string, sigMap: Record<string, CCSignalResult | 'loading' | 'error'>, type: 'CC' | 'SP') {
@@ -191,7 +205,12 @@ export function WheelDashboardPage() {
 
     return (
       <tr key={slot.id} className="group">
-        <td className="py-2 pr-3 font-bold text-gray-900">{ticker}</td>
+        <td className="py-2 pr-3">
+          <span className="font-bold text-gray-900">{ticker}</span>
+          {activeLegSummary(slot) && (
+            <div className="text-xs text-gray-400 font-normal leading-tight">{activeLegSummary(slot)}</div>
+          )}
+        </td>
         <td className="py-2 pr-3 text-gray-500 text-xs">{slot.contracts}x100</td>
         <td className="py-2 pr-3">
           <span className={`text-xs font-medium px-2 py-0.5 rounded-full text-white ${

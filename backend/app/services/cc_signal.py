@@ -14,159 +14,120 @@ from app.services.schwab_client import get_schwab_client
 
 log = logging.getLogger(__name__)
 
-_cc_signal_cache: dict[str, tuple[dict, float]] = {}
-_sp_signal_cache: dict[str, tuple[dict, float]] = {}
+_combined_signal_cache: dict[str, tuple[dict, float]] = {}
 _CACHE_TTL = 14400  # 4 hours
 
 
-def compute_cc_signal(ticker: str, force: bool = False) -> dict:
-    ticker = ticker.upper()
-    now = time.time()
-    cached = _cc_signal_cache.get(ticker)
-    if not force and cached and (now - cached[1]) < _CACHE_TTL:
-        return cached[0]
-
-    try:
-        result = _compute_fresh(ticker)
-        _cc_signal_cache[ticker] = (result, now)
-        return result
-    except Exception as exc:
-        log.exception("cc_signal failed for %s", ticker)
-        return {
-            "ticker": ticker,
-            "score": 0,
-            "grade": "wait",
-            "iv_percentile": None,
-            "atm_iv": None,
-            "spot_price": None,
-            "factors": [],
-            "commentary": None,
-            "strike_hint": None,
-            "caution": None,
-            "cached_at": datetime.now(timezone.utc).isoformat(),
-            "fetch_status": "error",
-            "fetch_error": str(exc),
-        }
-
-
-def _compute_fresh(ticker: str) -> dict:
-    from app.services.technicals_fetcher import fetch_technicals
-
-    technicals, close_d = fetch_technicals(ticker, return_closes=True)
-    if technicals.get("fetch_status") != "ok":
-        raise ValueError(f"Technicals fetch failed: {technicals.get('fetch_error')}")
-    if close_d.empty:
-        raise ValueError(f"No daily data for {ticker}")
-
-    client = get_schwab_client()
-
-    quotes = client.get_quotes([ticker])
-    quote = quotes.get(ticker, {})
-    try:
-        live_price = float(quote.get("lastPrice", close_d.iloc[-1]))
-    except Exception:
-        live_price = float(close_d.iloc[-1])
-
-    chain = client.get_option_chain(ticker, contract_type="CALL")
-    iv_percentile, atm_iv = _compute_iv_percentile_from_chain(close_d, chain, ticker)
-
-    prev_close = float(close_d.iloc[-1])
-    technicals = dict(technicals)
-    technicals["day_color"] = "green" if live_price > prev_close else "red"
-    technicals["price_action"] = str(round(live_price, 2))
-    spot = live_price
-    score, grade, factors = _score_factors(technicals, iv_percentile, atm_iv, close_d)
-    commentary_data = _get_llm_commentary(ticker, score, grade, factors, technicals, iv_percentile, spot)
-
+def _make_error_signal(ticker: str, exc: Exception) -> dict:
     return {
         "ticker": ticker,
-        "score": score,
-        "grade": grade,
-        "iv_percentile": round(iv_percentile, 1) if iv_percentile is not None else None,
-        "atm_iv": round(atm_iv, 4) if atm_iv is not None else None,
-        "spot_price": round(spot, 2),
-        "factors": factors,
-        "commentary": commentary_data.get("commentary"),
-        "strike_hint": commentary_data.get("strike_hint"),
-        "caution": commentary_data.get("caution"),
-        "cached_at": datetime.now(timezone.utc).isoformat(),
-        "fetch_status": "ok",
-        "fetch_error": None,
-    }
-
-
-def compute_sp_signal(ticker: str, force: bool = False) -> dict:
-    ticker = ticker.upper()
-    now = time.time()
-    cached = _sp_signal_cache.get(ticker)
-    if not force and cached and (now - cached[1]) < _CACHE_TTL:
-        return cached[0]
-
-    try:
-        result = _compute_sp_fresh(ticker)
-        _sp_signal_cache[ticker] = (result, now)
-        return result
-    except Exception as exc:
-        log.exception("sp_signal failed for %s", ticker)
-        return {
-            "ticker": ticker,
-            "score": 0,
-            "grade": "wait",
-            "iv_percentile": None,
-            "atm_iv": None,
-            "spot_price": None,
-            "factors": [],
-            "commentary": None,
-            "strike_hint": None,
-            "caution": None,
-            "cached_at": datetime.now(timezone.utc).isoformat(),
-            "fetch_status": "error",
-            "fetch_error": str(exc),
-        }
-
-
-def _compute_sp_fresh(ticker: str) -> dict:
-    from app.services.technicals_fetcher import fetch_technicals
-
-    technicals, close_d = fetch_technicals(ticker, return_closes=True)
-    if technicals.get("fetch_status") != "ok":
-        raise ValueError(f"Technicals fetch failed: {technicals.get('fetch_error')}")
-    if close_d.empty:
-        raise ValueError(f"No daily data for {ticker}")
-
-    client = get_schwab_client()
-
-    quotes = client.get_quotes([ticker])
-    quote = quotes.get(ticker, {})
-    try:
-        live_price = float(quote.get("lastPrice", close_d.iloc[-1]))
-    except Exception:
-        live_price = float(close_d.iloc[-1])
-
-    chain = client.get_option_chain(ticker, contract_type="PUT")
-    iv_percentile, atm_iv = _compute_iv_percentile_from_chain(close_d, chain, ticker, contract_type="PUT")
-
-    prev_close = float(close_d.iloc[-1])
-    technicals = dict(technicals)
-    technicals["day_color"] = "green" if live_price > prev_close else "red"
-    technicals["price_action"] = str(round(live_price, 2))
-    spot = live_price
-    score, grade, factors = _score_sp_factors(technicals, iv_percentile, atm_iv, close_d)
-
-    return {
-        "ticker": ticker,
-        "score": score,
-        "grade": grade,
-        "iv_percentile": round(iv_percentile, 1) if iv_percentile is not None else None,
-        "atm_iv": round(atm_iv, 4) if atm_iv is not None else None,
-        "spot_price": round(spot, 2),
-        "factors": factors,
+        "score": 0,
+        "grade": "wait",
+        "iv_percentile": None,
+        "atm_iv": None,
+        "spot_price": None,
+        "factors": [],
         "commentary": None,
         "strike_hint": None,
         "caution": None,
         "cached_at": datetime.now(timezone.utc).isoformat(),
-        "fetch_status": "ok",
-        "fetch_error": None,
+        "fetch_status": "error",
+        "fetch_error": str(exc),
+    }
+
+
+def compute_combined_signal(ticker: str, force: bool = False) -> dict:
+    """Fetch technicals + quotes + ALL options chain once; return {"cc": ..., "sp": ...}."""
+    ticker = ticker.upper()
+    now = time.time()
+    cached = _combined_signal_cache.get(ticker)
+    if not force and cached and (now - cached[1]) < _CACHE_TTL:
+        return cached[0]
+
+    try:
+        result = _compute_combined_fresh(ticker)
+        _combined_signal_cache[ticker] = (result, now)
+        return result
+    except Exception as exc:
+        log.exception("combined_signal failed for %s", ticker)
+        err = _make_error_signal(ticker, exc)
+        return {"cc": err, "sp": err}
+
+
+def compute_cc_signal(ticker: str, force: bool = False) -> dict:
+    return compute_combined_signal(ticker, force)["cc"]
+
+
+def compute_sp_signal(ticker: str, force: bool = False) -> dict:
+    return compute_combined_signal(ticker, force)["sp"]
+
+
+def _compute_combined_fresh(ticker: str) -> dict:
+    from app.services.technicals_fetcher import fetch_technicals
+
+    technicals, close_d = fetch_technicals(ticker, return_closes=True)
+    if technicals.get("fetch_status") != "ok":
+        raise ValueError(f"Technicals fetch failed: {technicals.get('fetch_error')}")
+    if close_d.empty:
+        raise ValueError(f"No daily data for {ticker}")
+
+    client = get_schwab_client()
+
+    quotes = client.get_quotes([ticker])
+    quote = quotes.get(ticker, {})
+    try:
+        live_price = float(quote.get("lastPrice", close_d.iloc[-1]))
+    except Exception:
+        live_price = float(close_d.iloc[-1])
+
+    # One call with contractType=ALL returns both callExpDateMap and putExpDateMap
+    chain = client.get_option_chain(ticker, contract_type="ALL")
+
+    prev_close = float(close_d.iloc[-1])
+    technicals = dict(technicals)
+    technicals["day_color"] = "green" if live_price > prev_close else "red"
+    technicals["price_action"] = str(round(live_price, 2))
+    spot = live_price
+    cached_at = datetime.now(timezone.utc).isoformat()
+
+    cc_iv_pct, cc_atm_iv = _compute_iv_percentile_from_chain(close_d, chain, ticker, contract_type="CALL")
+    cc_score, cc_grade, cc_factors = _score_factors(technicals, cc_iv_pct, cc_atm_iv, close_d)
+    commentary_data = _get_llm_commentary(ticker, cc_score, cc_grade, cc_factors, technicals, cc_iv_pct, spot)
+
+    sp_iv_pct, sp_atm_iv = _compute_iv_percentile_from_chain(close_d, chain, ticker, contract_type="PUT")
+    sp_score, sp_grade, sp_factors = _score_sp_factors(technicals, sp_iv_pct, sp_atm_iv, close_d)
+
+    return {
+        "cc": {
+            "ticker": ticker,
+            "score": cc_score,
+            "grade": cc_grade,
+            "iv_percentile": round(cc_iv_pct, 1) if cc_iv_pct is not None else None,
+            "atm_iv": round(cc_atm_iv, 4) if cc_atm_iv is not None else None,
+            "spot_price": round(spot, 2),
+            "factors": cc_factors,
+            "commentary": commentary_data.get("commentary"),
+            "strike_hint": commentary_data.get("strike_hint"),
+            "caution": commentary_data.get("caution"),
+            "cached_at": cached_at,
+            "fetch_status": "ok",
+            "fetch_error": None,
+        },
+        "sp": {
+            "ticker": ticker,
+            "score": sp_score,
+            "grade": sp_grade,
+            "iv_percentile": round(sp_iv_pct, 1) if sp_iv_pct is not None else None,
+            "atm_iv": round(sp_atm_iv, 4) if sp_atm_iv is not None else None,
+            "spot_price": round(spot, 2),
+            "factors": sp_factors,
+            "commentary": None,
+            "strike_hint": None,
+            "caution": None,
+            "cached_at": cached_at,
+            "fetch_status": "ok",
+            "fetch_error": None,
+        },
     }
 
 
