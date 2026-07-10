@@ -75,8 +75,15 @@ export const spSignalApi = {
 }
 
 export const combinedSignalApi = {
-  get: (ticker: string, refresh = false) =>
-    apiFetch<{ cc: CCSignalResult; sp: CCSignalResult }>(`/market/combined-signal/${encodeURIComponent(ticker)}${refresh ? '?refresh=true' : ''}`),
+  get: (ticker: string, refresh = false, dte?: number) => {
+    const params = new URLSearchParams()
+    if (refresh) params.set('refresh', 'true')
+    if (dte != null) params.set('dte', String(dte))
+    const qs = params.toString()
+    return apiFetch<{ cc: CCSignalResult; sp: CCSignalResult }>(
+      `/market/combined-signal/${encodeURIComponent(ticker)}${qs ? `?${qs}` : ''}`
+    )
+  },
 }
 
 export const optionPriceApi = {

@@ -1,6 +1,7 @@
 # backend/app/routers/market.py
 import asyncio
 from functools import partial
+from typing import Optional
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -93,9 +94,14 @@ async def get_sp_signal(ticker: str, refresh: bool = False):
 
 
 @router.get("/combined-signal/{ticker}")
-async def get_combined_signal(ticker: str, refresh: bool = False):
+async def get_combined_signal(
+    ticker: str,
+    refresh: bool = False,
+    dte: int = Query(None, description="Contract DTE for Bollinger lookback selection"),
+):
     loop = asyncio.get_running_loop()
-    result = await loop.run_in_executor(None, compute_combined_signal, ticker.upper(), refresh)
+    fn = partial(compute_combined_signal, ticker.upper(), refresh, dte)
+    result = await loop.run_in_executor(None, fn)
     return JSONResponse(content=result)
 
 
