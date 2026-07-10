@@ -405,10 +405,11 @@ def _score_factors(
     macd_notes = technicals.get("macd_notes", "")
     factors.append({"name": "MACD Consolidation", "points": macd_pts, "max": 10, "detail": f"{macd.capitalize()}, {macd_notes}"})
 
-    # 5. Red Day (5 pts) — stock pulled back today = more buffer before call strike. Green = 0.
+    # 5. Green Day (5 pts) — sell calls into strength: stock up today = higher effective strike,
+    #    more premium available at a safer OTM level. Red day = stock dipped, calls are cheaper.
     day = technicals.get("day_color", "red")
-    day_pts = 5 if day == "red" else 0
-    factors.append({"name": "Red Day", "points": day_pts, "max": 5, "detail": day.capitalize()})
+    day_pts = 5 if day == "green" else 0
+    factors.append({"name": "Green Day", "points": day_pts, "max": 5, "detail": day.capitalize()})
 
     # 6. Price > 50MA (10 pts) — want quality stocks above their long-term trend; give small credit below
     ma50_pos = technicals.get("price_vs_ma50")
@@ -578,10 +579,11 @@ def _score_sp_factors(
     macd_notes = technicals.get("macd_notes", "")
     factors.append({"name": "MACD Trend", "points": macd_pts, "max": 10, "detail": f"{macd.capitalize()}, {macd_notes}"})
 
-    # 5. Green Day (5 pts) — stock up today = moving away from put strike = safer. Red day = 0.
+    # 5. Red Day (5 pts) — sell puts into weakness: stock down today = IV spiked = richer premium
+    #    at a lower/safer strike. "Buy the dip" timing — if the dip is noise, put expires OTM.
     day = technicals.get("day_color", "red")
-    day_pts = 5 if day == "green" else 0
-    factors.append({"name": "Green Day", "points": day_pts, "max": 5, "detail": day.capitalize()})
+    day_pts = 5 if day == "red" else 0
+    factors.append({"name": "Red Day", "points": day_pts, "max": 5, "detail": day.capitalize()})
 
     # 6. Price > 50MA (10 pts) — above 50MA = uptrend intact = put much safer OTM (flipped from dip-buying logic)
     ma50_pos = technicals.get("price_vs_ma50")
