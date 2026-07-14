@@ -342,7 +342,7 @@ def _score_factors(
 ) -> tuple[int, str, list[dict]]:
     factors: list[dict] = []
 
-    # 1. IV Percentile (25 pts)
+    # 1. IV Percentile (25 pts) — high IV = richer premiums; avoid thin-premium environments (<20%).
     iv_pts = 0
     iv_detail = "N/A"
     if iv_percentile is not None:
@@ -350,41 +350,45 @@ def _score_factors(
             iv_pts = 25
         elif iv_percentile >= 60:
             iv_pts = 20
-        elif iv_percentile >= 50:
-            iv_pts = 15
         elif iv_percentile >= 40:
-            iv_pts = 10
-        elif iv_percentile >= 30:
+            iv_pts = 12
+        elif iv_percentile >= 20:
             iv_pts = 5
+        # <20%: 0 pts — premiums too thin
         iv_detail = f"{iv_percentile:.0f}th percentile (52-week)"
     factors.append({"name": "IV Percentile", "points": iv_pts, "max": 25, "detail": iv_detail})
 
-    # 2. RSI Zone (10 pts) — CC sweet spot is 45-60: stock is neutral, NOT in a momentum run.
-    #    RSI > 70 = squeeze = high probability stock blows through call strike.
-    #    RSI 35-45 = dipped = call is very safe OTM (stock pulled back from strike).
+    # 2. Daily RSI Momentum (15 pts) — overbought / high-momentum = ideal CC entry.
+    #    High RSI = elevated premium + mean reversion potential = call likely expires OTM.
+    #    Low RSI = stock may rally sharply from here = assignment risk or weak premium.
     rsi = technicals.get("rsi_14")
     rsi_pts = 0
     rsi_detail = "N/A"
     if rsi is not None:
         rsi = float(rsi)
-        if 45 <= rsi <= 60:
-            rsi_pts = 10   # sweet spot: neutral, not in a parabolic move
-        elif 35 <= rsi < 45:
-            rsi_pts = 8    # dipped — call strike is comfortably above current price
-        elif 60 < rsi <= 70:
-            rsi_pts = 5    # elevated, upward momentum = some risk
-        elif rsi < 35:
-            rsi_pts = 3    # oversold — call safe but holding a declining stock
-        else:              # rsi > 70: momentum run — high risk of being called away
-            rsi_pts = 2
+        if rsi >= 65:
+            rsi_pts = 15   # overbought — mean reversion likely, call expires OTM
+        elif rsi >= 55:
+            rsi_pts = 10   # strong momentum but not overextended
+        elif rsi >= 45:
+            rsi_pts = 6    # neutral — decent premium, no clear directional edge
+        else:              # <45: oversold/weak — stock may rally hard
+            rsi_pts = 1
         rsi_detail = f"RSI {rsi:.1f}"
-    factors.append({"name": "RSI Zone", "points": rsi_pts, "max": 10, "detail": rsi_detail})
+    factors.append({"name": "RSI Momentum", "points": rsi_pts, "max": 15, "detail": rsi_detail})
 
-    # 3. Bollinger Position (10 pts) — near upper band = natural resistance above your call strike.
-    #    Lookback: 20-day for weekly contracts (DTE ≤ 10), 50-day for monthly (DTE > 10, default).
+    # 3. Bollinger Bands Position (15 pts) — at/near/above upper band = stock overextended,
+    #    pullback likely = call expires OTM. Near lower band = upward momentum risk.
+    #    Lookback: 20-day for weekly (DTE ≤ 10), 50-day for monthly (DTE > 10, default).
     bb_window = 20 if (dte is not None and dte <= 10) else 50
     bb_pos = _bollinger_pos_from_closes(daily_closes, bb_window) or technicals.get("bollinger_position")
-    bb_map = {"near_upper": 10, "mid": 5, "above_upper": 3, "near_lower": 2, "below_lower": 0}
+    bb_map = {
+        "above_upper": 15,  # above upper band — extended, pullback very likely
+        "near_upper": 15,   # near upper band — same signal
+        "mid": 6,           # at middle band — neutral
+        "near_lower": 2,    # near lower band — upward momentum risk
+        "below_lower": 0,   # below lower band — avoid (likely to bounce hard)
+    }
     bb_pts = bb_map.get(bb_pos, 0)
     bb_labels = {
         "above_upper": "Above upper band",
@@ -394,54 +398,62 @@ def _score_factors(
         "below_lower": "Below lower band",
     }
     bb_label = bb_labels.get(bb_pos, str(bb_pos))
-    factors.append({"name": "Bollinger Position", "points": bb_pts, "max": 10, "detail": f"{bb_label} ({bb_window}d)"})
+    factors.append({"name": "Bollinger Position", "points": bb_pts, "max": 15, "detail": f"{bb_label} ({bb_window}d)"})
 
-    # 4. MACD Consolidation (10 pts) — neutral weekly MACD = stock is range-bound = call burns safely.
-    #    Bullish MACD = uptrend = stock may run through call strike. 0 pts — don't sell CC into momentum.
-    #    Bearish MACD = stock declining = call very safe (but holding a loser). Some credit.
+    # 4. Weekly MACD Trend (10 pts) — mildly bullish or neutral is ideal for CC:
+    #    stock has some premium but isn't in a runaway uptrend that would blow through the call.
+    #    Strongly bullish = assignment risk. Bearish = call safe but holding a declining stock.
     macd = technicals.get("macd_signal", "neutral")
-    macd_map = {"neutral": 10, "bearish": 5, "bullish": 0}
+    macd_map = {"bullish": 10, "neutral": 7, "bearish": 2}
     macd_pts = macd_map.get(macd, 0)
     macd_notes = technicals.get("macd_notes", "")
-    factors.append({"name": "MACD Consolidation", "points": macd_pts, "max": 10, "detail": f"{macd.capitalize()}, {macd_notes}"})
+    factors.append({"name": "MACD Trend", "points": macd_pts, "max": 10, "detail": f"{macd.capitalize()}, {macd_notes}"})
 
-    # 5. Green Day (5 pts) — sell calls into strength: stock up today = higher effective strike,
-    #    more premium available at a safer OTM level. Red day = stock dipped, calls are cheaper.
-    day = technicals.get("day_color", "red")
-    day_pts = 5 if day == "green" else 0
-    factors.append({"name": "Green Day", "points": day_pts, "max": 5, "detail": day.capitalize()})
+    # 5. Day Color (5 pts) — sell calls into pullbacks: red day = IV spike + stock below strike.
+    #    Green day = strong momentum, higher assignment risk.
+    #    Use % change from prev close: <-0.5% red, ±0.5% neutral, >+0.5% green.
+    day_pts = 3  # default neutral
+    day_detail = "N/A"
+    try:
+        live_price = float(technicals.get("price_action") or 0)
+        prev_close = float(daily_closes.iloc[-1]) if not daily_closes.empty else 0
+        pct_chg = (live_price - prev_close) / prev_close * 100 if prev_close else 0
+        if pct_chg < -0.5:
+            day_pts = 5
+            day_detail = f"Red ({pct_chg:+.1f}%)"
+        elif pct_chg <= 0.5:
+            day_pts = 3
+            day_detail = f"Neutral ({pct_chg:+.1f}%)"
+        else:
+            day_pts = 1
+            day_detail = f"Green ({pct_chg:+.1f}%)"
+    except (ValueError, TypeError):
+        day_detail = technicals.get("day_color", "N/A").capitalize()
+    factors.append({"name": "Day Color", "points": day_pts, "max": 5, "detail": day_detail})
 
-    # 6. Price > 50MA (10 pts) — want quality stocks above their long-term trend; give small credit below
+    # 6. Price Action + Key Moving Averages (15 pts) — above both MAs with overextension = ideal:
+    #    stock is stretched, natural ceiling near call strike. Clean uptrend = assignment risk.
     ma50_pos = technicals.get("price_vs_ma50")
-    ma50_pts = 10 if ma50_pos == "above" else 2
+    ma200_pos = technicals.get("price_vs_ma200")
     price_str = technicals.get("price_action", "?")
     ma50_val = technicals.get("ma_50d", "?")
-    factors.append({"name": "Price > 50MA", "points": ma50_pts, "max": 10, "detail": f"${price_str} vs ${ma50_val}"})
+    ma200_val = technicals.get("ma_200d", "?")
+    if ma50_pos == "above" and ma200_pos == "above":
+        ma_pts = 15
+        ma_detail = f"${price_str} above 50MA (${ma50_val}) + 200MA (${ma200_val})"
+    elif ma50_pos == "above" or ma200_pos == "above":
+        ma_pts = 10
+        above_which = "50MA" if ma50_pos == "above" else "200MA"
+        ma_detail = f"${price_str} above {above_which}, near other"
+    else:
+        ma_pts = 2
+        ma_detail = f"${price_str} below 50MA (${ma50_val}) + 200MA (${ma200_val})"
+    factors.append({"name": "Price vs MAs", "points": ma_pts, "max": 15, "detail": ma_detail})
 
-    # 7. Earnings Distance (10 pts)
-    next_earn = technicals.get("next_earnings_date")
-    earn_pts = 10
-    earn_detail = "No earnings date found"
-    if next_earn:
-        try:
-            earn_date = date.fromisoformat(str(next_earn)[:10])
-            days_to_earn = (earn_date - date.today()).days
-            if days_to_earn <= 7:
-                earn_pts = 0
-            elif days_to_earn <= 14:
-                earn_pts = 3
-            elif days_to_earn <= 21:
-                earn_pts = 7
-            else:
-                earn_pts = 10
-            earn_detail = f"{days_to_earn} days to earnings"
-        except (ValueError, TypeError):
-            pass
-    factors.append({"name": "Earnings Distance", "points": earn_pts, "max": 10, "detail": earn_detail})
-
-    # 8. Momentum Exhaustion (10 pts)
+    # 7. Momentum Exhaustion (10 pts) — RSI rolling over from highs = momentum fading,
+    #    call very likely expires OTM. Strong continued upside = stock may run through strike.
     mom_pts = 0
-    mom_detail = "No recent overbought"
+    mom_detail = "Insufficient data"
     if len(daily_closes) >= 20:
         rsi_series = []
         for i in range(6):
@@ -454,52 +466,77 @@ def _score_factors(
                 rsi_series.append(rsi_val)
 
         if len(rsi_series) >= 2:
-            was_elevated = any(r > 65 for r in rsi_series)
-            if was_elevated:
-                current_rsi = rsi_series[0]
-                oldest_rsi = rsi_series[-1]
-                if current_rsi < oldest_rsi:
-                    mom_pts = 10
-                    mom_detail = f"RSI declining from {oldest_rsi:.1f} to {current_rsi:.1f}"
-                else:
-                    mom_pts = 5
-                    mom_detail = "RSI > 65 recently but not declining"
+            current_rsi = rsi_series[0]
+            oldest_rsi = rsi_series[-1]
+            was_elevated = any(r > 60 for r in rsi_series)
+
+            if was_elevated and current_rsi < oldest_rsi:
+                # Rolling over from highs — momentum fading, ideal CC setup
+                mom_pts = 10
+                mom_detail = f"RSI rolling over: {oldest_rsi:.1f} → {current_rsi:.1f}"
+            elif was_elevated and current_rsi >= oldest_rsi:
+                # Elevated but not yet declining — early signs of slowing
+                mom_pts = 6
+                mom_detail = f"RSI elevated ({current_rsi:.1f}), not yet rolling over"
+            elif current_rsi > oldest_rsi and current_rsi > 55:
+                # Rising strongly from lower levels — assignment risk
+                mom_pts = 1
+                mom_detail = f"RSI rising strongly: {oldest_rsi:.1f} → {current_rsi:.1f}"
+            else:
+                # Weak / neutral momentum — call safe but stock not ideal for wheel
+                mom_pts = 3
+                mom_detail = f"RSI neutral/weak ({current_rsi:.1f})"
     factors.append({"name": "Momentum Exhaustion", "points": mom_pts, "max": 10, "detail": mom_detail})
 
-    # 9. Strike Safety (10 pts) — how far OTM is the ~0.30 delta call at nearest monthly expiry?
-    #    A more OTM 0.30δ option means more buffer before the call goes ITM.
+    # 8. Strike Safety / Resistance (10 pts) — OTM% of ~0.30 delta call.
+    #    Bonus if call strike is near the 3-month high (natural resistance = stock stalled there before).
     ss_pts = 0
+    ss_detail = "No chain data"
     if strike_otm_pct is not None:
-        if strike_otm_pct >= 10:
+        call_strike_approx = float(technicals.get("price_action") or 0) * (1 + strike_otm_pct / 100)
+        three_month_high = float(daily_closes.iloc[-63:].max()) if len(daily_closes) >= 63 else None
+        # Resistance present = call strike at or below the recent 3M high (stock has stalled there)
+        has_resistance = (
+            three_month_high is not None
+            and call_strike_approx > 0
+            and call_strike_approx <= three_month_high * 1.03
+        )
+
+        if strike_otm_pct >= 5 and has_resistance:
             ss_pts = 10
-        elif strike_otm_pct >= 7:
-            ss_pts = 8
+            ss_detail = f"0.30δ call {strike_otm_pct:.1f}% OTM, resistance at ${three_month_high:.0f} ✓"
         elif strike_otm_pct >= 5:
-            ss_pts = 6
+            ss_pts = 8
+            ss_detail = f"0.30δ call {strike_otm_pct:.1f}% OTM (no recent resistance)"
         elif strike_otm_pct >= 3:
+            res_note = f", resistance at ${three_month_high:.0f}" if three_month_high else ""
+            ss_pts = 7
+            ss_detail = f"0.30δ call {strike_otm_pct:.1f}% OTM{res_note}"
+        elif strike_otm_pct >= 0:
             ss_pts = 3
-        ss_detail = f"0.30δ call is {strike_otm_pct:.1f}% OTM"
-    else:
-        ss_detail = "No chain data"
+            ss_detail = f"0.30δ call {strike_otm_pct:.1f}% OTM (low cushion)"
+        else:
+            ss_pts = 0
+            ss_detail = f"0.30δ call is ITM ({strike_otm_pct:.1f}%)"
     factors.append({"name": "Strike Safety", "points": ss_pts, "max": 10, "detail": ss_detail})
 
     total = sum(f["points"] for f in factors)
 
-    # IV fallback normalization
+    # IV fallback normalization: if IV unavailable, scale non-IV/non-Strike score to 100
     if iv_percentile is None:
         max_possible = sum(f["max"] for f in factors if f["name"] not in ("IV Percentile", "Strike Safety"))
         if max_possible > 0:
             total = round(total * 100 / max_possible)
 
-    # IV already contributes 20-25 raw pts — no override needed; use uniform thresholds
-    if total >= 75:
-        grade = "strong"
-    elif total >= 55:
-        grade = "moderate"
-    elif total >= 35:
-        grade = "weak"
+    # Grade thresholds (factor weights sum to 105; thresholds target ~80/70/60%)
+    if total >= 80:
+        grade = "strong"    # excellent — high conviction
+    elif total >= 70:
+        grade = "moderate"  # good — proceed with smaller size
+    elif total >= 60:
+        grade = "weak"      # marginal — only with high IV or other strong factors
     else:
-        grade = "wait"
+        grade = "wait"      # avoid
 
     return total, grade, factors
 
@@ -514,7 +551,7 @@ def _score_sp_factors(
 ) -> tuple[int, str, list[dict]]:
     factors: list[dict] = []
 
-    # 1. IV Percentile (25 pts) — same as CC: high IV = more premium regardless of direction
+    # 1. IV Percentile (25 pts) — high IV = richer premiums; avoid thin-premium environments (<20%).
     iv_pts = 0
     iv_detail = "N/A"
     if iv_percentile is not None:
@@ -522,44 +559,56 @@ def _score_sp_factors(
             iv_pts = 25
         elif iv_percentile >= 60:
             iv_pts = 20
-        elif iv_percentile >= 50:
-            iv_pts = 15
         elif iv_percentile >= 40:
-            iv_pts = 10
-        elif iv_percentile >= 30:
+            iv_pts = 12
+        elif iv_percentile >= 20:
             iv_pts = 5
+        # <20%: 0 pts — thin premiums, avoid for wheel income
         iv_detail = f"{iv_percentile:.0f}th percentile (52-week)"
     factors.append({"name": "IV Percentile", "points": iv_pts, "max": 25, "detail": iv_detail})
 
-    # 2. RSI Momentum (10 pts) — SP sweet spot is 60-70: stock has upward momentum but not exhausted.
-    #    RSI 45-60 = neutral, acceptable but stock has no clear upward bias (put more risk).
-    #    RSI < 35 = freefall — put will go ITM.
+    # 2. Daily RSI Momentum (15 pts) — oversold/neutral with potential bounce is the SP sweet spot.
+    #    RSI 25-45: stock pulled back (richer put premium), potential bounce keeps put OTM.
+    #    RSI >70 or <25: overbought reversal risk / extreme downtrend — avoid.
+    #    Bonus: +2 pts if RSI is rising (3-day trend), capped at 15.
     rsi = technicals.get("rsi_14")
     rsi_pts = 0
     rsi_detail = "N/A"
+    rsi_rising = False
     if rsi is not None:
         rsi = float(rsi)
-        if 60 <= rsi <= 70:
-            rsi_pts = 10   # sweet spot: bullish momentum, stock moving away from put strike
-        elif 70 < rsi <= 80:
-            rsi_pts = 7    # extended/overbought but put is very safe OTM
-        elif 45 <= rsi < 60:
-            rsi_pts = 7    # neutral — no clear directional bias, put OK but not ideal
-        elif 35 <= rsi < 45:
-            rsi_pts = 3    # dipping — stock declining toward put strike
-        elif rsi > 80:
-            rsi_pts = 4    # extreme overbought — put safe but mean reversion risk
-        else:              # rsi < 35: freefall
-            rsi_pts = 0
+        if 25 <= rsi <= 45:
+            rsi_pts = 15   # oversold, potential bounce — ideal put-selling zone
+        elif 45 < rsi <= 55:
+            rsi_pts = 10   # neutral, building momentum
+        elif 55 < rsi <= 70:
+            rsi_pts = 5    # uptrending, put is safely OTM but less premium
+        else:              # >70 or <25: overbought reversal / extreme downtrend
+            rsi_pts = 2
         rsi_detail = f"RSI {rsi:.1f}"
-    factors.append({"name": "RSI Momentum", "points": rsi_pts, "max": 10, "detail": rsi_detail})
 
-    # 3. Bollinger Position (10 pts) — mid band is ideal: put is comfortably below current price.
-    #    Near upper = stock at resistance, may pull back toward put strike.
-    #    Lookback: 20-day for weekly contracts (DTE ≤ 10), 50-day for monthly (DTE > 10, default).
+        # Rising RSI bonus (+2, capped at max)
+        if len(daily_closes) >= 17:
+            rsi_3d_ago = _compute_rsi_14(daily_closes.iloc[:-3])
+            if rsi_3d_ago is not None and rsi > rsi_3d_ago:
+                rsi_rising = True
+                rsi_pts = min(15, rsi_pts + 2)
+                rsi_detail += " (↑ rising +2)"
+    factors.append({"name": "RSI Momentum", "points": rsi_pts, "max": 15, "detail": rsi_detail})
+
+    # 3. Bollinger Bands Position (15 pts) — price near/below lower band signals oversold /
+    #    mean-reversion potential: stock bounces, put expires OTM.
+    #    Near upper band = pullback risk toward put strike.
+    #    Lookback: 20-day for weekly (DTE ≤ 10), 50-day for monthly (DTE > 10, default).
     bb_window = 20 if (dte is not None and dte <= 10) else 50
     bb_pos = _bollinger_pos_from_closes(daily_closes, bb_window) or technicals.get("bollinger_position")
-    bb_map = {"mid": 10, "near_lower": 5, "near_upper": 3, "above_upper": 2, "below_lower": 0}
+    bb_map = {
+        "below_lower": 15,  # at/below lower band — oversold, high bounce potential
+        "near_lower": 15,   # near lower band — same signal
+        "mid": 7,           # at middle band — neutral
+        "near_upper": 2,    # near upper band — pullback risk toward put
+        "above_upper": 0,   # extended above upper band — avoid
+    }
     bb_pts = bb_map.get(bb_pos, 0)
     bb_labels = {
         "above_upper": "Above upper band",
@@ -569,53 +618,60 @@ def _score_sp_factors(
         "below_lower": "Below lower band",
     }
     bb_label = bb_labels.get(bb_pos, str(bb_pos))
-    factors.append({"name": "Bollinger Position", "points": bb_pts, "max": 10, "detail": f"{bb_label} ({bb_window}d)"})
+    factors.append({"name": "Bollinger Position", "points": bb_pts, "max": 15, "detail": f"{bb_label} ({bb_window}d)"})
 
-    # 4. MACD Trend (10 pts) — only bullish MACD scores: stock needs upward momentum for put to expire OTM.
-    #    Neutral = no directional edge = 0 pts. Don't sell puts into a drifting or declining stock.
+    # 4. Weekly MACD Trend (10 pts) — higher-timeframe confirmation.
+    #    Bullish/expanding = uptrend support = put safer. Neutral = range-bound = acceptable.
+    #    Bearish = downtrend = high assignment risk.
     macd = technicals.get("macd_signal", "neutral")
-    macd_map = {"bullish": 10, "neutral": 0, "bearish": 0}
+    macd_map = {"bullish": 10, "neutral": 6, "bearish": 1}
     macd_pts = macd_map.get(macd, 0)
     macd_notes = technicals.get("macd_notes", "")
     factors.append({"name": "MACD Trend", "points": macd_pts, "max": 10, "detail": f"{macd.capitalize()}, {macd_notes}"})
 
-    # 5. Red Day (5 pts) — sell puts into weakness: stock down today = IV spiked = richer premium
-    #    at a lower/safer strike. "Buy the dip" timing — if the dip is noise, put expires OTM.
-    day = technicals.get("day_color", "red")
-    day_pts = 5 if day == "red" else 0
-    factors.append({"name": "Red Day", "points": day_pts, "max": 5, "detail": day.capitalize()})
+    # 5. Day Color (5 pts) — stock moving up = put is further OTM = safer.
+    #    Use % change from prev close: >+0.5% green, ±0.5% neutral, <-0.5% red.
+    day_pts = 3  # default neutral
+    day_detail = "N/A"
+    try:
+        live_price = float(technicals.get("price_action") or 0)
+        prev_close = float(daily_closes.iloc[-1]) if not daily_closes.empty else 0
+        pct_chg = (live_price - prev_close) / prev_close * 100 if prev_close else 0
+        if pct_chg > 0.5:
+            day_pts = 5
+            day_detail = f"Green ({pct_chg:+.1f}%)"
+        elif pct_chg >= -0.5:
+            day_pts = 3
+            day_detail = f"Neutral ({pct_chg:+.1f}%)"
+        else:
+            day_pts = 1
+            day_detail = f"Red ({pct_chg:+.1f}%)"
+    except (ValueError, TypeError):
+        day_detail = technicals.get("day_color", "N/A").capitalize()
+    factors.append({"name": "Day Color", "points": day_pts, "max": 5, "detail": day_detail})
 
-    # 6. Price > 50MA (10 pts) — above 50MA = uptrend intact = put much safer OTM (flipped from dip-buying logic)
+    # 6. Price Action + Key Moving Averages (15 pts) — bullish structure above 50MA + 200MA
+    #    = uptrend intact = put safely OTM. Below key MAs = downtrend = assignment risk.
     ma50_pos = technicals.get("price_vs_ma50")
-    ma50_pts = 10 if ma50_pos == "above" else 2
+    ma200_pos = technicals.get("price_vs_ma200")
     price_str = technicals.get("price_action", "?")
     ma50_val = technicals.get("ma_50d", "?")
-    factors.append({"name": "Price > 50MA", "points": ma50_pts, "max": 10, "detail": f"${price_str} vs ${ma50_val}"})
+    ma200_val = technicals.get("ma_200d", "?")
+    if ma50_pos == "above" and ma200_pos == "above":
+        ma_pts = 15
+        ma_detail = f"${price_str} above 50MA (${ma50_val}) + 200MA (${ma200_val})"
+    elif ma50_pos == "above" or ma200_pos == "above":
+        ma_pts = 10
+        above_which = "50MA" if ma50_pos == "above" else "200MA"
+        ma_detail = f"${price_str} above {above_which}, testing other"
+    else:
+        ma_pts = 3
+        ma_detail = f"${price_str} below 50MA (${ma50_val}) + 200MA (${ma200_val})"
+    factors.append({"name": "Price vs MAs", "points": ma_pts, "max": 15, "detail": ma_detail})
 
-    # 7. Earnings Distance (10 pts) — same as CC: avoid earnings
-    next_earn = technicals.get("next_earnings_date")
-    earn_pts = 10
-    earn_detail = "No earnings date found"
-    if next_earn:
-        try:
-            earn_date = date.fromisoformat(str(next_earn)[:10])
-            days_to_earn = (earn_date - date.today()).days
-            if days_to_earn <= 7:
-                earn_pts = 0
-            elif days_to_earn <= 14:
-                earn_pts = 3
-            elif days_to_earn <= 21:
-                earn_pts = 7
-            else:
-                earn_pts = 10
-            earn_detail = f"{days_to_earn} days to earnings"
-        except (ValueError, TypeError):
-            pass
-    factors.append({"name": "Earnings Distance", "points": earn_pts, "max": 10, "detail": earn_detail})
-
-    # 8. Momentum Initiation (10 pts) — Did RSI cross above 45 from below, and did it hold?
-    #    Symmetric to CC's Momentum Exhaustion: SP rewards RSI crossing UP through 45 with persistence.
-    #    Single-candle crossing (RSI just hit 45 today) only earns partial credit to avoid noise.
+    # 7. Momentum Initiation (10 pts) — RSI crossing above 45 from below with persistence.
+    #    Signals uptrend beginning = put very likely stays OTM.
+    #    "Always above" (no recent dip below 45 in window) treated as borderline without confirmation.
     mom_pts = 0
     mom_detail = "Insufficient data"
     if len(daily_closes) >= 20:
@@ -633,7 +689,6 @@ def _score_sp_factors(
             current_rsi = rsi_series[0]
             was_below_45 = any(r < 45 for r in rsi_series[1:])
 
-            # Count consecutive closes ≥ 45 from most recent
             consecutive_above = 0
             for r in rsi_series:
                 if r >= 45:
@@ -641,74 +696,71 @@ def _score_sp_factors(
                 else:
                     break
 
-            if consecutive_above >= 5:
-                # Sustained uptrend — well-established momentum
+            if consecutive_above >= 2 and was_below_45:
+                # Confirmed cross with persistence — clear initiation signal
+                mom_pts = 10
+                mom_detail = f"RSI initiation confirmed (held {consecutive_above} days, {current_rsi:.1f})"
+            elif consecutive_above >= 5:
+                # Sustained well above 45 — established uptrend
                 mom_pts = 10
                 mom_detail = f"RSI sustained ≥45 ({consecutive_above} days, {current_rsi:.1f})"
-            elif consecutive_above >= 2 and was_below_45:
-                # Confirmed initiation: crossed above 45 and held for 2+ days
-                mom_pts = 10
-                mom_detail = f"RSI momentum initiation confirmed ({current_rsi:.1f})"
-            elif consecutive_above == 1 and was_below_45:
-                # Fresh crossing — not yet confirmed; require 1 more close above 45
-                mom_pts = 5
-                mom_detail = f"RSI crossed above 45 ({current_rsi:.1f}), unconfirmed"
-            elif consecutive_above >= 2:
-                # Consistently above 45 but no prior crossing in window (always healthy)
-                mom_pts = 8
-                mom_detail = f"RSI healthy ({consecutive_above} consecutive days, {current_rsi:.1f})"
+            elif consecutive_above >= 1:
+                # Fresh cross or always-above without recent confirmation: borderline
+                mom_pts = 6
+                mom_detail = f"RSI borderline / early cross ({current_rsi:.1f})"
             else:
                 mom_pts = 0
-                mom_detail = f"RSI below 45 ({current_rsi:.1f})"
+                mom_detail = f"RSI below 45 or fading ({current_rsi:.1f})"
     factors.append({"name": "Momentum Initiation", "points": mom_pts, "max": 10, "detail": mom_detail})
 
-    # 9. Strike Safety / Support Check (10 pts) — how far OTM is the ~0.30 delta put?
-    #    Also penalises if the put strike sits above the 3-month low (stock has traded there recently).
+    # 8. Strike Safety / Support (10 pts) — OTM distance of ~0.30 delta put + historical support.
+    #    "Recently tested" = put strike above 3-month low (stock traded near strike lately).
     ss_pts = 0
+    ss_detail = "No chain data"
     if strike_otm_pct is not None:
-        if strike_otm_pct >= 15:
-            ss_pts = 10
-        elif strike_otm_pct >= 10:
-            ss_pts = 8
-        elif strike_otm_pct >= 7:
-            ss_pts = 5
-        elif strike_otm_pct >= 5:
-            ss_pts = 3
-        # else ss_pts = 0 (near ATM)
-
-        # Support safety check (Point 5): is the put strike below the 3-month low?
-        put_strike_approx = float(technicals.get("price_action", 0) or 0) * (1 - strike_otm_pct / 100)
+        put_strike_approx = float(technicals.get("price_action") or 0) * (1 - strike_otm_pct / 100)
         three_month_low = float(daily_closes.iloc[-63:].min()) if len(daily_closes) >= 63 else None
+        recently_tested = (
+            three_month_low is not None
+            and put_strike_approx > 0
+            and put_strike_approx > three_month_low
+        )
 
-        if three_month_low and put_strike_approx > 0:
-            if put_strike_approx > three_month_low:
-                # Stock has traded at or below the put strike in the last 3 months — dock pts
-                ss_pts = max(0, ss_pts - 3)
-                ss_detail = f"0.30δ put is {strike_otm_pct:.1f}% OTM (above 3M low ${three_month_low:.0f} — caution)"
+        if strike_otm_pct >= 10 and not recently_tested:
+            ss_pts = 10
+            lbl = f"${three_month_low:.0f}" if three_month_low else "N/A"
+            ss_detail = f"0.30δ put {strike_otm_pct:.1f}% OTM, below 3M low ${lbl} ✓"
+        elif strike_otm_pct >= 10:
+            ss_pts = 7
+            ss_detail = f"0.30δ put {strike_otm_pct:.1f}% OTM (3M low ${three_month_low:.0f} caution)"
+        elif strike_otm_pct >= 5:
+            ss_pts = 7 if not recently_tested else 4
+            if recently_tested:
+                ss_detail = f"0.30δ put {strike_otm_pct:.1f}% OTM (recently tested)"
             else:
-                ss_detail = f"0.30δ put is {strike_otm_pct:.1f}% OTM, below 3M low ${three_month_low:.0f} ✓"
+                ss_detail = f"0.30δ put {strike_otm_pct:.1f}% OTM + support"
         else:
-            ss_detail = f"0.30δ put is {strike_otm_pct:.1f}% OTM"
-    else:
-        ss_detail = "No chain data"
+            ss_pts = 3
+            ss_detail = f"0.30δ put {strike_otm_pct:.1f}% OTM (tight, assignment risk)"
     factors.append({"name": "Strike Safety", "points": ss_pts, "max": 10, "detail": ss_detail})
 
     total = sum(f["points"] for f in factors)
 
+    # IV fallback normalization: if IV unavailable, scale non-IV/non-Strike score to 100
     if iv_percentile is None:
         max_possible = sum(f["max"] for f in factors if f["name"] not in ("IV Percentile", "Strike Safety"))
         if max_possible > 0:
             total = round(total * 100 / max_possible)
 
-    # IV already contributes 20-25 raw pts — no override needed; use uniform thresholds
-    if total >= 75:
-        grade = "strong"
-    elif total >= 55:
-        grade = "moderate"
-    elif total >= 35:
-        grade = "weak"
+    # Grade thresholds per scoring guide (factor weights sum to 105; thresholds target ~80/70/60%)
+    if total >= 80:
+        grade = "strong"    # excellent — high conviction
+    elif total >= 70:
+        grade = "moderate"  # good — proceed with smaller size
+    elif total >= 60:
+        grade = "weak"      # marginal — only with high IV or other strong factors
     else:
-        grade = "wait"
+        grade = "wait"      # avoid
 
     return total, grade, factors
 
