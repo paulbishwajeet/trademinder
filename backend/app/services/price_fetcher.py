@@ -1,5 +1,6 @@
 # backend/app/services/price_fetcher.py
 import asyncio
+import logging
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -9,6 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.trade import Trade
 from app.services.schwab_client import get_schwab_client, SchwabAPIError  # noqa: F401
+
+log = logging.getLogger(__name__)
 
 
 def _compute_unrealized_pnl(trade: Trade, current_price: float) -> float | None:
@@ -59,13 +62,17 @@ async def fetch_quote(ticker: str) -> dict | None:
 
         def _sync():
             client = get_schwab_client()
-            return client.get_quotes([ticker]).get(ticker)
+            raw = client.get_quotes([ticker])
+            log.debug("fetch_quote %s raw=%s", ticker, raw)
+            return raw.get(ticker)
 
         quote = await loop.run_in_executor(None, _sync)
         if quote is None:
+            log.warning("fetch_quote %s: no quote returned from Schwab", ticker)
             return None
-        price = quote.get("lastPrice")
+        price = quote.get("lastPrice") or quote.get("mark")
         if price is None:
+            log.warning("fetch_quote %s: no lastPrice or mark in quote keys=%s", ticker, list(quote.keys()))
             return None
         prev_close = quote.get("closePrice")
         change_pct = round((float(price) - float(prev_close)) / float(prev_close) * 100, 2) if prev_close else None
@@ -76,6 +83,7 @@ async def fetch_quote(ticker: str) -> dict | None:
             "last_updated": datetime.now(timezone.utc).isoformat(),
         }
     except Exception:
+        log.exception("fetch_quote %s failed", ticker)
         return None
 
 

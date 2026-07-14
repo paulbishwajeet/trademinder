@@ -18,12 +18,12 @@ SCHWAB_API_BASE = "https://api.schwabapi.com"
 SCHWAB_TOKEN_URL = f"{SCHWAB_API_BASE}/v1/oauth/token"
 
 _SCHWAB_ALIASES: dict[str, str] = {
-    "SPX":  "$SPX.X",
-    "SPXW": "$SPX.X",
-    "XSP":  "$XSP.X",
-    "NDX":  "$NDX.X",
-    "RUT":  "$RUT.X",
-    "VIX":  "$VIX.X",
+    "SPX":  "$SPX",
+    "SPXW": "$SPX",
+    "XSP":  "$XSP",
+    "NDX":  "$NDX",
+    "RUT":  "$RUT",
+    "VIX":  "$VIX",
 }
 
 
