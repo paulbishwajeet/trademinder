@@ -57,7 +57,6 @@ const WHEEL_SLOTS_TTL = 60_000;
 const priceCache = new Map();
 // full_symbol||ticker (uppercase) → true: position is in E*TRADE but not backend
 const reconcileCache = new Map();
-let lastReconcileKey = '';
 // all base tickers seen while processing rows (for batch RSI fetch)
 const seenTickers = new Set();
 let isProcessing = false;
@@ -436,11 +435,6 @@ async function processVisibleRows() {
         applyWheelPillToRow(row);
       });
     });
-
-    // Fire-and-forget: reconcile all visible positions against backend
-    if (rows.length > 0) {
-      fireReconcile(rows);
-    }
 
     // Apply cached status immediately; collect what needs a fetch
     const needsFetch = [];
@@ -861,10 +855,6 @@ async function fireReconcile(rows) {
   });
 
   if (positions.length === 0) return;
-
-  const posKey = keys.slice().sort().join(',');
-  if (posKey === lastReconcileKey) return;
-  lastReconcileKey = posKey;
 
   try {
     const resp = await bgFetch(`${tmApiUrl}/api/positions/reconcile`, {
