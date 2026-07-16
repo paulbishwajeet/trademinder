@@ -854,7 +854,7 @@ async function fireReconcile(rows) {
     });
   });
 
-  if (positions.length === 0) return;
+  if (positions.length === 0) return null;
 
   try {
     const resp = await bgFetch(`${tmApiUrl}/api/positions/reconcile`, {
@@ -863,7 +863,7 @@ async function fireReconcile(rows) {
       body: JSON.stringify({ positions }),
       signal: AbortSignal.timeout(5000),
     });
-    if (!resp.ok) return;
+    if (!resp.ok) return null;
     const data = await resp.json();
 
     reconcileCache.clear();
@@ -875,10 +875,13 @@ async function fireReconcile(rows) {
       const info = getRowInfo(row);
       if (info) applyReconcilePillToRow(row, info);
     });
+
+    return data;
   } catch (err) {
     if (err.name !== 'AbortError') {
       console.debug('TradeMinder: reconcile failed', err.message);
     }
+    return null;
   }
 }
 
