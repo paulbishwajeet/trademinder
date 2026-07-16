@@ -1436,7 +1436,8 @@ function insertFilterToolbar() {
 function insertReconcileButton() {
   if (document.getElementById('tm-reconcile-btn')) return;
 
-  const target = document.querySelector('.PortfoliosFilters---customize-view---Ln4bT');
+  const targets = document.querySelectorAll('.PortfoliosFilters---customize-view---Ln4bT');
+  const target = Array.from(targets).find(el => el.offsetParent !== null);
   if (!target?.parentNode) {
     setTimeout(insertReconcileButton, 500);
     return;
