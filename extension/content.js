@@ -1433,6 +1433,49 @@ function insertFilterToolbar() {
   gridRoot.parentNode.insertBefore(toolbar, gridRoot);
 }
 
+function insertReconcileButton() {
+  if (document.getElementById('tm-reconcile-btn')) return;
+
+  const target = document.querySelector('.PortfoliosFilters---customize-view---Ln4bT');
+  if (!target?.parentNode) {
+    setTimeout(insertReconcileButton, 500);
+    return;
+  }
+
+  const wrap = document.createElement('div');
+  wrap.id = 'tm-reconcile-btn-wrap';
+  wrap.style.cssText = 'display:inline-block;margin-right:8px;';
+
+  const btn = document.createElement('button');
+  btn.id = 'tm-reconcile-btn';
+  btn.className = 'btn-block btn-link';
+  btn.type = 'button';
+  btn.textContent = '🔄 Reconcile';
+
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    btn.textContent = '⏳ Reconciling…';
+
+    const rows = document.querySelectorAll(ETRADE.positionRows);
+    const data = await fireReconcile(rows);
+
+    if (data === null) {
+      btn.textContent = '✗ Failed';
+    } else {
+      const n = (data.unmatched_etrade || []).length;
+      btn.textContent = n === 0 ? '✓ All matched' : `⚠ ${n} unmatched`;
+    }
+
+    setTimeout(() => {
+      btn.disabled = false;
+      btn.textContent = '🔄 Reconcile';
+    }, 2000);
+  });
+
+  wrap.appendChild(btn);
+  target.parentNode.insertBefore(wrap, target);
+}
+
 function makeFilterBtn(label, filterValue) {
   const btn = document.createElement('button');
   btn.className = 'tm-filter-btn';
@@ -2247,6 +2290,7 @@ function startObserver() {
   // Grid is in the DOM — safe to insert toolbar now.
   // The guard inside insertFilterToolbar prevents duplicate insertion on retries.
   insertFilterToolbar();
+  insertReconcileButton();
 
   processVisibleRows();
 
