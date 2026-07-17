@@ -205,6 +205,8 @@ async def reconcile_positions(
     for trade in all_open_trades:
         if trade.id in matched_ids:
             trade.last_etrade_seen = now
+        elif trade.last_etrade_seen is not None:
+            trade.last_etrade_seen = now - timedelta(days=2)
     await db.commit()
 
     stale_threshold = now - timedelta(days=1)

@@ -91,10 +91,10 @@ async def test_reconcile_stale_trade_in_stale_backend(
     assert trade_id in stale_ids
 
 
-async def test_reconcile_recently_seen_not_stale(
+async def test_reconcile_recently_seen_unmatched_is_now_immediately_stale(
     client: AsyncClient, db_session: AsyncSession
 ):
-    """Trade seen within the last hour is not stale even if absent from snapshot."""
+    """Trade seen within the last hour IS now immediately stale when absent from snapshot."""
     from sqlalchemy import select
     from app.models.trade import Trade
 
@@ -112,7 +112,33 @@ async def test_reconcile_recently_seen_not_stale(
     assert resp.status_code == 200
     data = resp.json()
     stale_ids = [item["id"] for item in data["stale_backend"]]
-    assert trade_id not in stale_ids
+    assert trade_id in stale_ids
+
+
+async def test_reconcile_unmatched_seen_trade_immediately_stale(
+    client: AsyncClient, db_session: AsyncSession
+):
+    """Previously-seen trade absent from snapshot → immediately in stale_backend."""
+    from sqlalchemy import select
+    from app.models.trade import Trade
+
+    create_resp = await client.post("/api/trades", json=STOCK_TRADE)
+    trade_id = create_resp.json()["id"]
+
+    # Simulate a recent prior reconcile (1 hour ago)
+    result = await db_session.execute(select(Trade).where(Trade.id == trade_id))
+    trade = result.scalar_one()
+    trade.last_etrade_seen = datetime.now(timezone.utc) - timedelta(hours=1)
+    await db_session.commit()
+
+    # Reconcile without AAPL in snapshot
+    resp = await client.post(RECONCILE_URL, json={
+        "positions": [{"ticker": "TSLA", "full_symbol": None, "type": "Stock"}]
+    })
+    assert resp.status_code == 200
+    data = resp.json()
+    stale_ids = [item["id"] for item in data["stale_backend"]]
+    assert trade_id in stale_ids
 
 
 async def test_reconcile_never_seen_not_stale(client: AsyncClient):
