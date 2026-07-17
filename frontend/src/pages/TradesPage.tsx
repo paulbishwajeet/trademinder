@@ -43,7 +43,7 @@ export function TradesPage() {
     load()
   }
 
-  const staleCount = trades.filter(isStale).length
+  const staleCount = trades.filter(t => t.status === 'open' && isStale(t)).length
 
   return (
     <div className="p-6">
