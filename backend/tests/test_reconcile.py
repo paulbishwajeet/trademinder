@@ -94,7 +94,7 @@ async def test_reconcile_stale_trade_in_stale_backend(
 async def test_reconcile_recently_seen_unmatched_is_now_immediately_stale(
     client: AsyncClient, db_session: AsyncSession
 ):
-    """Trade seen within the last hour IS now immediately stale when absent from snapshot."""
+    """Trade seen within last hour is immediately stale when its ticker is in snapshot but doesn't match."""
     from sqlalchemy import select
     from app.models.trade import Trade
 
@@ -106,8 +106,9 @@ async def test_reconcile_recently_seen_unmatched_is_now_immediately_stale(
     trade.last_etrade_seen = datetime.now(timezone.utc) - timedelta(hours=1)
     await db_session.commit()
 
+    # AAPL is in the snapshot but as a Call option — won't match the Stock trade
     resp = await client.post(RECONCILE_URL, json={
-        "positions": [{"ticker": "TSLA", "full_symbol": None, "type": "Stock"}]
+        "positions": [{"ticker": "AAPL", "full_symbol": "AAPL--261219C00200000", "type": "Call", "strike": 200.0, "expiry": "2026-12-19"}]
     })
     assert resp.status_code == 200
     data = resp.json()
@@ -118,27 +119,61 @@ async def test_reconcile_recently_seen_unmatched_is_now_immediately_stale(
 async def test_reconcile_unmatched_seen_trade_immediately_stale(
     client: AsyncClient, db_session: AsyncSession
 ):
-    """Previously-seen trade absent from snapshot → immediately in stale_backend."""
+    """Previously-seen trade is immediately stale when its ticker appears in snapshot but doesn't match."""
     from sqlalchemy import select
     from app.models.trade import Trade
 
     create_resp = await client.post("/api/trades", json=STOCK_TRADE)
     trade_id = create_resp.json()["id"]
 
-    # Simulate a recent prior reconcile (1 hour ago)
     result = await db_session.execute(select(Trade).where(Trade.id == trade_id))
     trade = result.scalar_one()
     trade.last_etrade_seen = datetime.now(timezone.utc) - timedelta(hours=1)
     await db_session.commit()
 
-    # Reconcile without AAPL in snapshot
+    # AAPL is in the snapshot but as a Put option — won't match the Stock trade
     resp = await client.post(RECONCILE_URL, json={
-        "positions": [{"ticker": "TSLA", "full_symbol": None, "type": "Stock"}]
+        "positions": [{"ticker": "AAPL", "full_symbol": "AAPL--261219P00150000", "type": "Put", "strike": 150.0, "expiry": "2026-12-19"}]
     })
     assert resp.status_code == 200
     data = resp.json()
     stale_ids = [item["id"] for item in data["stale_backend"]]
     assert trade_id in stale_ids
+
+
+async def test_reconcile_ticker_not_in_snapshot_not_backdated(
+    client: AsyncClient, db_session: AsyncSession
+):
+    """Trade whose ticker wasn't in the snapshot at all must NOT be backdated.
+
+    Reproduces the virtual-scroll bug: a partial viewport snapshot must not
+    mark trades for off-screen tickers as stale.
+    """
+    from sqlalchemy import select
+    from app.models.trade import Trade
+
+    # AAPL trade was seen an hour ago (recent)
+    create_resp = await client.post("/api/trades", json=STOCK_TRADE)
+    aapl_id = create_resp.json()["id"]
+    result = await db_session.execute(select(Trade).where(Trade.id == aapl_id))
+    trade = result.scalar_one()
+    original_seen = datetime.now(timezone.utc) - timedelta(hours=1)
+    trade.last_etrade_seen = original_seen
+    await db_session.commit()
+
+    # Snapshot contains only TSLA — AAPL not in viewport at all
+    resp = await client.post(RECONCILE_URL, json={
+        "positions": [{"ticker": "TSLA", "full_symbol": None, "type": "Stock"}]
+    })
+    assert resp.status_code == 200
+
+    # AAPL's last_etrade_seen must be unchanged (ticker absent from snapshot)
+    await db_session.refresh(trade)
+    assert trade.last_etrade_seen is not None
+    assert abs((trade.last_etrade_seen - original_seen).total_seconds()) < 2
+    # And it must not appear in stale_backend
+    stale_ids = [item["id"] for item in resp.json()["stale_backend"]]
+    assert aapl_id not in stale_ids
 
 
 async def test_reconcile_never_seen_not_stale(client: AsyncClient):

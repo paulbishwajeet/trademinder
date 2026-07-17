@@ -201,11 +201,13 @@ async def reconcile_positions(
         else:
             matched_ids.add(trade.id)
 
+    snapshot_tickers = {pos.ticker.upper() for pos in payload.positions}
+
     now = datetime.now(timezone.utc)
     for trade in all_open_trades:
         if trade.id in matched_ids:
             trade.last_etrade_seen = now
-        elif trade.last_etrade_seen is not None:
+        elif trade.ticker in snapshot_tickers and trade.last_etrade_seen is not None:
             trade.last_etrade_seen = now - timedelta(days=2)
     await db.commit()
 
