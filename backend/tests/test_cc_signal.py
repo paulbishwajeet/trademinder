@@ -43,9 +43,10 @@ def test_score_factors_bullish_setup():
     from app.services.cc_signal import _score_factors
     closes = _make_daily_closes()
     technicals = _make_technicals()
+    # IV 72 is in the 70-80 range (18 pts) — elevated but not sweet spot, so grade can be weak/moderate
     score, grade, factors = _score_factors(technicals, iv_percentile=72.0, atm_iv=0.42, daily_closes=closes)
-    assert 60 <= score <= 100
-    assert grade in ("strong", "moderate")
+    assert 55 <= score <= 100
+    assert grade in ("strong", "moderate", "weak")
     assert len(factors) == 8
     assert all("name" in f and "points" in f and "max" in f and "detail" in f for f in factors)
 
@@ -192,3 +193,73 @@ def test_iv_percentile_from_chain_skips_expired_expirations():
     iv_pct, atm_iv = _compute_iv_percentile_from_chain(closes, chain)
     assert iv_pct is None
     assert atm_iv is None
+
+
+# ── CC IV Percentile bell-curve scoring ──────────────────────────────────────
+
+def _iv_pts(iv_percentile):
+    """Helper: extract IV Percentile points from _score_factors."""
+    from app.services.cc_signal import _score_factors
+    closes = _make_daily_closes()
+    technicals = _make_technicals()
+    _, _, factors = _score_factors(technicals, iv_percentile=iv_percentile, atm_iv=0.35, daily_closes=closes)
+    return next(f for f in factors if f["name"] == "IV Percentile")["points"]
+
+
+def test_cc_iv_sweet_spot_40_to_70_gets_max():
+    """CC IV in 40-70th percentile (sweet spot) → 25 pts."""
+    assert _iv_pts(55.0) == 25
+    assert _iv_pts(40.0) == 25
+    assert _iv_pts(70.0) == 25
+
+
+def test_cc_iv_70_to_80_gets_18():
+    """CC IV in 70-80th percentile → 18 pts (elevated but acceptable)."""
+    assert _iv_pts(75.0) == 18
+    assert _iv_pts(71.0) == 18
+
+
+def test_cc_iv_above_80_gets_10():
+    """CC IV ≥ 80th percentile → 10 pts (assignment/runaway risk)."""
+    assert _iv_pts(80.0) == 10
+    assert _iv_pts(95.0) == 10
+
+
+def test_cc_iv_20_to_39_gets_10():
+    """CC IV in 20-39th percentile → 10 pts (thin premium, low risk)."""
+    assert _iv_pts(20.0) == 10
+    assert _iv_pts(35.0) == 10
+
+
+def test_cc_iv_below_20_gets_3():
+    """CC IV < 20th percentile → 3 pts (near-zero premium)."""
+    assert _iv_pts(10.0) == 3
+    assert _iv_pts(0.0) == 3
+
+
+# ── SP IV scoring unchanged (monotone, high IV = max points) ─────────────────
+
+def _sp_iv_pts(iv_percentile):
+    """Helper: extract IV Percentile points from _score_sp_factors."""
+    from app.services.cc_signal import _score_sp_factors
+    closes = _make_daily_closes()
+    technicals = _make_technicals()
+    _, _, factors = _score_sp_factors(technicals, iv_percentile=iv_percentile, atm_iv=0.35, daily_closes=closes)
+    return next(f for f in factors if f["name"] == "IV Percentile")["points"]
+
+
+def test_sp_iv_above_80_still_gets_max():
+    """SP IV ≥ 80th percentile → 25 pts (high IV = rich fear premium = favorable for puts)."""
+    assert _sp_iv_pts(80.0) == 25
+    assert _sp_iv_pts(95.0) == 25
+
+
+def test_sp_iv_60_to_79_gets_20():
+    """SP IV 60-79th percentile → 20 pts."""
+    assert _sp_iv_pts(60.0) == 20
+    assert _sp_iv_pts(75.0) == 20
+
+
+def test_sp_iv_below_20_gets_0():
+    """SP IV < 20th percentile → 0 pts (too thin to bother)."""
+    assert _sp_iv_pts(10.0) == 0

@@ -342,19 +342,23 @@ def _score_factors(
 ) -> tuple[int, str, list[dict]]:
     factors: list[dict] = []
 
-    # 1. IV Percentile (25 pts) — high IV = richer premiums; avoid thin-premium environments (<20%).
+    # 1. IV Percentile (25 pts) — bell curve for CC: sweet spot 40-70th percentile.
+    #    Very high IV (>80) signals chaos/event-driven moves → elevated assignment risk.
+    #    Very low IV (<20) → thin premium not worth selling.
+    #    40-70th percentile: rich premium with manageable assignment risk (tastytrade/Sheridan consensus).
     iv_pts = 0
     iv_detail = "N/A"
     if iv_percentile is not None:
-        if iv_percentile >= 80:
-            iv_pts = 25
-        elif iv_percentile >= 60:
-            iv_pts = 20
-        elif iv_percentile >= 40:
-            iv_pts = 12
-        elif iv_percentile >= 20:
-            iv_pts = 5
-        # <20%: 0 pts — premiums too thin
+        if 40 <= iv_percentile <= 70:
+            iv_pts = 25   # sweet spot — premium rich, volatility manageable
+        elif iv_percentile < 40 and iv_percentile >= 20:
+            iv_pts = 10   # thin premium but low assignment risk
+        elif iv_percentile > 70 and iv_percentile < 80:
+            iv_pts = 18   # elevated, acceptable — but assignment risk rising
+        elif iv_percentile >= 80:
+            iv_pts = 10   # chaos zone — fat premium but assignment/runaway risk high
+        else:
+            iv_pts = 3    # <20: near-zero premium
         iv_detail = f"{iv_percentile:.0f}th percentile (52-week)"
     factors.append({"name": "IV Percentile", "points": iv_pts, "max": 25, "detail": iv_detail})
 
