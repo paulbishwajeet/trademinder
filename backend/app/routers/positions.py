@@ -201,13 +201,22 @@ async def reconcile_positions(
         else:
             matched_ids.add(trade.id)
 
-    snapshot_tickers = {pos.ticker.upper() for pos in payload.positions}
-
+    # The extension scrolls the full E*TRADE grid before calling this endpoint
+    # (collectAllPositions in content.js), so payload.positions is a complete
+    # snapshot of open positions — not just what happened to be rendered at
+    # click time. That means an unmatched trade is genuinely gone from
+    # E*TRADE, not just off-screen, so it's safe to backdate unconditionally.
+    #
+    # Eligibility check: last_etrade_seen is not None (previously matched by a
+    # reconcile) OR etrade_symbol is not None (added via the extension modal,
+    # so it's a confirmed E*TRADE position even if reconcile never once caught
+    # it before it closed). Trades with neither are manual entries with no
+    # confirmed link to E*TRADE and must never be flagged stale.
     now = datetime.now(timezone.utc)
     for trade in all_open_trades:
         if trade.id in matched_ids:
             trade.last_etrade_seen = now
-        elif trade.ticker in snapshot_tickers and trade.last_etrade_seen is not None:
+        elif trade.last_etrade_seen is not None or trade.etrade_symbol is not None:
             trade.last_etrade_seen = now - timedelta(days=2)
     await db.commit()
 

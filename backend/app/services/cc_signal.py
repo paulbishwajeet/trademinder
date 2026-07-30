@@ -342,19 +342,23 @@ def _score_factors(
 ) -> tuple[int, str, list[dict]]:
     factors: list[dict] = []
 
-    # 1. IV Percentile (25 pts) — high IV = richer premiums; avoid thin-premium environments (<20%).
+    # 1. IV Percentile (25 pts) — bell curve for CC: sweet spot 40-70th percentile.
+    #    Very high IV (>80) signals chaos/event-driven moves → elevated assignment risk.
+    #    Very low IV (<20) → thin premium not worth selling.
+    #    40-70th percentile: rich premium with manageable assignment risk (tastytrade/Sheridan consensus).
     iv_pts = 0
     iv_detail = "N/A"
     if iv_percentile is not None:
-        if iv_percentile >= 80:
-            iv_pts = 25
-        elif iv_percentile >= 60:
-            iv_pts = 20
-        elif iv_percentile >= 40:
-            iv_pts = 12
-        elif iv_percentile >= 20:
-            iv_pts = 5
-        # <20%: 0 pts — premiums too thin
+        if 40 <= iv_percentile <= 70:
+            iv_pts = 25   # sweet spot — premium rich, volatility manageable
+        elif iv_percentile < 40 and iv_percentile >= 20:
+            iv_pts = 10   # thin premium but low assignment risk
+        elif iv_percentile > 70 and iv_percentile < 80:
+            iv_pts = 18   # elevated, acceptable — but assignment risk rising
+        elif iv_percentile >= 80:
+            iv_pts = 10   # chaos zone — fat premium but assignment/runaway risk high
+        else:
+            iv_pts = 3    # <20: near-zero premium
         iv_detail = f"{iv_percentile:.0f}th percentile (52-week)"
     factors.append({"name": "IV Percentile", "points": iv_pts, "max": 25, "detail": iv_detail})
 
@@ -409,24 +413,25 @@ def _score_factors(
     macd_notes = technicals.get("macd_notes", "")
     factors.append({"name": "MACD Trend", "points": macd_pts, "max": 10, "detail": f"{macd.capitalize()}, {macd_notes}"})
 
-    # 5. Day Color (5 pts) — sell calls into pullbacks: red day = IV spike + stock below strike.
-    #    Green day = strong momentum, higher assignment risk.
-    #    Use % change from prev close: <-0.5% red, ±0.5% neutral, >+0.5% green.
+    # 5. Day Color (5 pts) — sell calls into strength: green day = elevated call premium,
+    #    stock above previous close = call strike further from current price on entry.
+    #    Red day = stock falling, call premium deflated, assignment risk unclear.
+    #    Use % change from prev close: >+0.5% green, ±0.5% neutral, <-0.5% red.
     day_pts = 3  # default neutral
     day_detail = "N/A"
     try:
         live_price = float(technicals.get("price_action") or 0)
         prev_close = float(daily_closes.iloc[-1]) if not daily_closes.empty else 0
         pct_chg = (live_price - prev_close) / prev_close * 100 if prev_close else 0
-        if pct_chg < -0.5:
+        if pct_chg > 0.5:
             day_pts = 5
-            day_detail = f"Red ({pct_chg:+.1f}%)"
-        elif pct_chg <= 0.5:
+            day_detail = f"Green ({pct_chg:+.1f}%)"
+        elif pct_chg >= -0.5:
             day_pts = 3
             day_detail = f"Neutral ({pct_chg:+.1f}%)"
         else:
             day_pts = 1
-            day_detail = f"Green ({pct_chg:+.1f}%)"
+            day_detail = f"Red ({pct_chg:+.1f}%)"
     except (ValueError, TypeError):
         day_detail = technicals.get("day_color", "N/A").capitalize()
     factors.append({"name": "Day Color", "points": day_pts, "max": 5, "detail": day_detail})
@@ -629,23 +634,25 @@ def _score_sp_factors(
     macd_notes = technicals.get("macd_notes", "")
     factors.append({"name": "MACD Trend", "points": macd_pts, "max": 10, "detail": f"{macd.capitalize()}, {macd_notes}"})
 
-    # 5. Day Color (5 pts) — stock moving up = put is further OTM = safer.
-    #    Use % change from prev close: >+0.5% green, ±0.5% neutral, <-0.5% red.
+    # 5. Day Color (5 pts) — sell puts into weakness: red day = fear premium spikes,
+    #    stock pulls back = richer put premium + oversold bounce potential.
+    #    Green day = put premium deflated, less edge for the seller.
+    #    Use % change from prev close: <-0.5% red, ±0.5% neutral, >+0.5% green.
     day_pts = 3  # default neutral
     day_detail = "N/A"
     try:
         live_price = float(technicals.get("price_action") or 0)
         prev_close = float(daily_closes.iloc[-1]) if not daily_closes.empty else 0
         pct_chg = (live_price - prev_close) / prev_close * 100 if prev_close else 0
-        if pct_chg > 0.5:
+        if pct_chg < -0.5:
             day_pts = 5
-            day_detail = f"Green ({pct_chg:+.1f}%)"
-        elif pct_chg >= -0.5:
+            day_detail = f"Red ({pct_chg:+.1f}%)"
+        elif pct_chg <= 0.5:
             day_pts = 3
             day_detail = f"Neutral ({pct_chg:+.1f}%)"
         else:
             day_pts = 1
-            day_detail = f"Red ({pct_chg:+.1f}%)"
+            day_detail = f"Green ({pct_chg:+.1f}%)"
     except (ValueError, TypeError):
         day_detail = technicals.get("day_color", "N/A").capitalize()
     factors.append({"name": "Day Color", "points": day_pts, "max": 5, "detail": day_detail})
