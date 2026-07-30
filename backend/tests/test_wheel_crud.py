@@ -145,3 +145,17 @@ async def test_active_slots_endpoint(client: AsyncClient):
     data = resp.json()
     assert len(data) == 1
     assert data[0]["ticker"] == "NVDA"
+
+
+async def test_stock_leg_exposes_current_price(client: AsyncClient):
+    sess_resp = await client.post("/api/wheel", json=SESSION_PAYLOAD)
+    session_id = sess_resp.json()["id"]
+    slot_resp = await client.post(f"/api/wheel/{session_id}/slots", json={"contracts": 1, "shares_held": 100, "status": "awaiting_cc"})
+    slot_id = slot_resp.json()["id"]
+    trade_resp = await client.post("/api/trades", json=STOCK_TRADE)
+    trade_id = trade_resp.json()["id"]
+    await client.patch(f"/api/trades/{trade_id}", json={"current_price": "125.50"})
+    await client.post(f"/api/wheel/slots/{slot_id}/legs", json={"trade_id": trade_id, "leg_role": "stock"})
+    detail = await client.get(f"/api/wheel/{session_id}")
+    leg = detail.json()["slots"][0]["legs"][0]
+    assert leg["trade_current_price"] == "125.50"

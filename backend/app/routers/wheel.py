@@ -58,6 +58,7 @@ def _build_leg_item(leg: WheelSlotLeg) -> WheelSlotLegItem:
         trade_strike_price=t.strike_price if t else None,
         trade_quantity=t.quantity if t else None,
         trade_premium=t.premium if t else None,
+        trade_current_price=t.current_price if t else None,
         trade_status=t.status if t else None,
         trade_etrade_symbol=t.etrade_symbol if t else None,
     )

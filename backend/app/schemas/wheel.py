@@ -65,6 +65,7 @@ class WheelSlotLegItem(BaseModel):
     trade_strike_price: Optional[Decimal] = None
     trade_quantity: Optional[int] = None
     trade_premium: Optional[Decimal] = None
+    trade_current_price: Optional[Decimal] = None
     trade_status: Optional[str] = None
     trade_etrade_symbol: Optional[str] = None
 
