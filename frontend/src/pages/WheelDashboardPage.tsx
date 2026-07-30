@@ -371,7 +371,7 @@ export function WheelDashboardPage() {
           {leg.trade_expiry_date ?? '—'}{leg.trade_premium != null ? ` · $${leg.trade_premium}` : ''}
         </td>
         <td className="py-1 pr-3 text-xs text-gray-400 capitalize">{leg.trade_status}</td>
-        <td colSpan={5} className="py-1 text-xs text-right">
+        <td colSpan={6} className="py-1 text-xs text-right">
           <Link to={`/trades/${leg.trade_id}`} className="text-blue-500 hover:underline">view</Link>
         </td>
       </tr>
