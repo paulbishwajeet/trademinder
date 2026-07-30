@@ -11,10 +11,18 @@ interface FlatSlot {
   slot: WheelSlotDetail
   ticker: string
   sessionId: string
+  stockCostBasis: number | null
+  stockCurrentPrice: number | null
 }
 
 function flattenSlots(sessions: WheelSessionDetail[]): FlatSlot[] {
-  return sessions.flatMap(s => s.slots.map(slot => ({ slot, ticker: s.ticker, sessionId: s.id })))
+  return sessions.flatMap(s => s.slots.map(slot => ({
+    slot,
+    ticker: s.ticker,
+    sessionId: s.id,
+    stockCostBasis: s.stock_cost_basis,
+    stockCurrentPrice: s.stock_current_price,
+  })))
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -202,19 +210,12 @@ export function WheelDashboardPage() {
     )
   }
 
-  function stockLegCostBasis(slot: WheelSlotDetail): { costBasis: number; currentPrice: number } | null {
-    const stockLegs = slot.legs.filter(l => l.leg_role === 'stock' && l.trade_status === 'open')
-    const leg = stockLegs[stockLegs.length - 1]
-    if (!leg || leg.trade_premium == null || leg.trade_current_price == null) return null
-    const costBasis = Number(leg.trade_premium)
-    if (!costBasis) return null
-    return { costBasis, currentPrice: Number(leg.trade_current_price) }
-  }
-
-  function renderGainLossCell(slot: WheelSlotDetail) {
-    const basis = stockLegCostBasis(slot)
-    if (!basis) return <td className="py-2 pr-3 text-xs text-gray-300">—</td>
-    const pct = ((basis.currentPrice - basis.costBasis) / basis.costBasis) * 100
+  function renderGainLossCell(f: FlatSlot) {
+    const { stockCostBasis: costBasis, stockCurrentPrice: currentPrice } = f
+    if (costBasis == null || currentPrice == null || !costBasis) {
+      return <td className="py-2 pr-3 text-xs text-gray-300">—</td>
+    }
+    const pct = ((currentPrice - costBasis) / costBasis) * 100
     const isProfit = pct >= 0
     return (
       <td className={`py-2 pr-3 text-xs font-medium ${isProfit ? 'text-green-600' : 'text-red-500'}`}>
@@ -315,7 +316,7 @@ export function WheelDashboardPage() {
         <td className="py-2 pr-3">{renderSignalBadge(ticker, signals, 'CC')}</td>
         <td className="py-2 pr-3">{renderSignalBadge(ticker, spSignals, 'SP')}</td>
         {renderPnlCell(slot)}
-        {renderGainLossCell(slot)}
+        {renderGainLossCell(f)}
         <td className="py-2 text-right">
           <div className="flex items-center gap-1 justify-end">
             {(slot.status === 'cc_active' || slot.status === 'sold_put_active' || slot.needs_action) && (
@@ -324,14 +325,15 @@ export function WheelDashboardPage() {
               </button>
             )}
             {(slot.status === 'awaiting_cc' || slot.status === 'awaiting_sold_put') && !slot.needs_action && (() => {
-              const basis = slot.status === 'awaiting_cc' ? stockLegCostBasis(slot) : null
-              const isUnderwater = basis != null && basis.currentPrice < basis.costBasis
+              const isUnderwater = slot.status === 'awaiting_cc'
+                && f.stockCostBasis != null && f.stockCurrentPrice != null
+                && f.stockCurrentPrice < f.stockCostBasis
               const label = slot.status === 'awaiting_cc' ? '+ CC' : '+ Put'
               const className = isUnderwater
                 ? 'px-2 py-0.5 text-xs bg-red-100 text-red-800 rounded hover:bg-red-200'
                 : 'px-2 py-0.5 text-xs bg-blue-100 text-blue-800 rounded hover:bg-blue-200'
               const title = isUnderwater
-                ? `Cost basis $${basis!.costBasis} above current price $${basis!.currentPrice} — selling a CC may lock in a loss.`
+                ? `Cost basis $${f.stockCostBasis} above current price $${f.stockCurrentPrice} — selling a CC may lock in a loss.`
                 : undefined
               return (
                 <button onClick={() => setLinkSlotId(slot.id)} className={className} title={title}>

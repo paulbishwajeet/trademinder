@@ -225,6 +225,8 @@ export interface WheelSlotDetail {
 export interface WheelSessionDetail extends WheelSessionSummary {
   slots: WheelSlotDetail[]
   total_premium: string
+  stock_cost_basis: number | null
+  stock_current_price: number | null
 }
 
 export interface WheelActiveSlot {
