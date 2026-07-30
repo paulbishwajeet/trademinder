@@ -113,3 +113,5 @@ class WheelSlotDetail(WheelSlotSummary):
 class WheelSessionDetail(WheelSessionSummary):
     slots: list[WheelSlotDetail] = []
     total_premium: Decimal = Decimal("0")
+    stock_cost_basis: Optional[Decimal] = None
+    stock_current_price: Optional[Decimal] = None
