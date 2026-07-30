@@ -836,23 +836,99 @@ function applyWheelPillToRow(row) {
 // ============================================================
 // RECONCILIATION
 // ============================================================
-async function fireReconcile(rows) {
-  const positions = [];
-  const keys = [];
+// Walk up from a row to find the nearest ancestor that actually scrolls.
+// E*TRADE's grid virtualizes rows inside a scrollable div; the exact class
+// isn't stable enough to hardcode, so detect it structurally instead.
+function findScrollContainer(row) {
+  let el = row.parentElement;
+  while (el && el !== document.body) {
+    const style = getComputedStyle(el);
+    if ((style.overflowY === 'auto' || style.overflowY === 'scroll') && el.scrollHeight > el.clientHeight + 1) {
+      return el;
+    }
+    el = el.parentElement;
+  }
+  return null;
+}
 
-  rows.forEach(row => {
-    const info = getRowInfo(row);
-    if (!info) return;
-    const key = info.fullSymbol || info.ticker;
-    keys.push(key);
-    positions.push({
-      ticker: info.ticker,
-      full_symbol: info.fullSymbol || null,
-      type: info.optionDetails?.type || (info.isOption ? 'Option' : 'Stock'),
-      strike: info.optionDetails?.strike || null,
-      expiry: info.optionDetails?.expiry || null,
+// Wrap either an internally-scrollable element or the page itself behind a
+// common get/set scrollTop + clientHeight interface.
+function makeScroller(container) {
+  if (container) {
+    return {
+      getTop: () => container.scrollTop,
+      setTop: (v) => { container.scrollTop = v; },
+      clientHeight: () => container.clientHeight,
+    };
+  }
+  const scrollingEl = document.scrollingElement || document.documentElement;
+  return {
+    getTop: () => scrollingEl.scrollTop,
+    setTop: (v) => window.scrollTo(0, v),
+    clientHeight: () => window.innerHeight,
+  };
+}
+
+// Scroll the virtualized positions grid from top to bottom, accumulating
+// every row seen along the way, so reconcile gets the FULL position list
+// rather than just whatever happens to be rendered at click time. Without
+// this, a ticker that's scrolled off-screen (still open) is indistinguishable
+// from one that's genuinely closed — both are simply absent from the DOM.
+//
+// E*TRADE's grid has no internal scrollbar (rows are windowed against the
+// PAGE's own scroll, backed by placeholder rows for not-yet-rendered
+// positions) — so when no internal container is found, fall back to
+// scrolling the page itself.
+async function collectAllPositions() {
+  const collected = new Map(); // key -> info
+  const snapshot = () => {
+    document.querySelectorAll(ETRADE.positionRows).forEach(row => {
+      const info = getRowInfo(row);
+      if (!info) return;
+      const od = info.optionDetails;
+      const key = `${info.fullSymbol || info.ticker}|${od?.strike ?? ''}|${od?.expiry ?? ''}`;
+      collected.set(key, info);
     });
-  });
+  };
+
+  const firstRow = document.querySelector(ETRADE.positionRows);
+  const container = firstRow ? findScrollContainer(firstRow) : null;
+  const scroller = makeScroller(container);
+  console.debug('[TM] collectAllPositions: firstRow=', !!firstRow, 'container=', container);
+
+  snapshot();
+  console.debug('[TM] collectAllPositions: initial snapshot size=', collected.size);
+
+  const originalTop = scroller.getTop();
+  let prevTop = -1;
+  let guard = 0;
+  const MAX_STEPS = 400; // safety cap against a runaway loop
+
+  while (scroller.getTop() !== prevTop && guard < MAX_STEPS) {
+    prevTop = scroller.getTop();
+    scroller.setTop(prevTop + scroller.clientHeight());
+    await new Promise(r => setTimeout(r, 150)); // let virtualized rows render
+    snapshot();
+    guard++;
+  }
+  console.debug('[TM] collectAllPositions: scroll steps=', guard, 'final size=', collected.size);
+
+  scroller.setTop(originalTop);
+  await new Promise(r => setTimeout(r, 150));
+  snapshot();
+
+  console.debug('[TM] collectAllPositions: total collected=', collected.size, Array.from(collected.keys()));
+  return Array.from(collected.values());
+}
+
+async function fireReconcile(infos) {
+  const positions = infos.map(info => ({
+    ticker: info.ticker,
+    full_symbol: info.fullSymbol || null,
+    type: info.optionDetails?.type || (info.isOption ? 'Option' : 'Stock'),
+    strike: info.optionDetails?.strike || null,
+    expiry: info.optionDetails?.expiry || null,
+  }));
 
   if (positions.length === 0) return null;
 
@@ -1337,10 +1413,7 @@ async function fetchRsiForAll() {
 async function fetchAllActiveSessions(force = false) {
   if (!force && activeSessionsFetchedAt && (Date.now() - activeSessionsFetchedAt < ACTIVE_SESSIONS_TTL)) return;
   try {
-    const res = await fetch(
-      `${tmApiUrl}/api/sessions/active`,
-      { signal: AbortSignal.timeout(5000) },
-    );
+    const res = await bgFetch(`${tmApiUrl}/api/sessions/active`);
     if (!res.ok) { activeSessionsFetchedAt = Date.now(); return; }
     const sessions = await res.json();
     allActiveSessions = sessions;
@@ -1360,7 +1433,7 @@ async function fetchAllActiveSessions(force = false) {
 async function fetchWheelActiveSlots(force = false) {
   if (!force && wheelSlotsFetchedAt && (Date.now() - wheelSlotsFetchedAt < WHEEL_SLOTS_TTL)) return;
   try {
-    const res = await fetch(`${tmApiUrl}/api/wheel/active-slots`, { signal: AbortSignal.timeout(5000) });
+    const res = await bgFetch(`${tmApiUrl}/api/wheel/active-slots`);
     if (!res.ok) { wheelSlotsFetchedAt = Date.now(); return; }
     wheelActiveSlots = await res.json();
     wheelSlotsFetchedAt = Date.now();
@@ -1378,10 +1451,7 @@ async function fetchPricesForSpreadSessions() {
   await Promise.all(spreadTickers.map(async ticker => {
     if (priceCache.has(ticker)) return;
     try {
-      const res = await fetch(
-        `${tmApiUrl}/api/market/quote/${encodeURIComponent(ticker)}`,
-        { signal: AbortSignal.timeout(5000) },
-      );
+      const res = await bgFetch(`${tmApiUrl}/api/market/quote/${encodeURIComponent(ticker)}`);
       if (!res.ok) { priceCache.set(ticker, null); return; }
       const data = await res.json();
       priceCache.set(ticker, typeof data.price === 'number' ? data.price : null);
@@ -1457,8 +1527,8 @@ function insertReconcileButton() {
     btn.disabled = true;
     btn.textContent = '⏳ Reconciling…';
 
-    const rows = document.querySelectorAll(ETRADE.positionRows);
-    const data = await fireReconcile(rows);
+    const infos = await collectAllPositions();
+    const data = await fireReconcile(infos);
 
     if (data === null) {
       btn.textContent = '✗ Failed';
@@ -1836,7 +1906,7 @@ async function showAddTradeModal(info) {
     } else if (rawSession.startsWith('__new_')) {
       if (rawSession === '__new_WHEEL__') {
         const wheelStatus = (fd.get('strategy') === 'Sell Put') ? 'put_open' : 'cc_open';
-        const sessionResp = await fetch(`${tmApiUrl}/api/sessions`, {
+        const sessionResp = await bgFetch(`${tmApiUrl}/api/sessions`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -1845,7 +1915,6 @@ async function showAddTradeModal(info) {
             status: wheelStatus,
             opened_at: payload.open_date,
           }),
-          signal: AbortSignal.timeout(8000),
         });
         if (!sessionResp.ok) {
           const err = await sessionResp.json().catch(() => ({}));
@@ -1856,7 +1925,7 @@ async function showAddTradeModal(info) {
         resolvedSessionStrategy = 'WHEEL';
       } else {
         const strategy = rawSession === '__new_IC__' ? 'IRON_CONDOR' : 'PUT_B_W_FLY';
-        const sessionResp = await fetch(`${tmApiUrl}/api/sessions`, {
+        const sessionResp = await bgFetch(`${tmApiUrl}/api/sessions`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -1865,7 +1934,6 @@ async function showAddTradeModal(info) {
             status: 'open',
             opened_at: payload.open_date,
           }),
-          signal: AbortSignal.timeout(8000),
         });
         if (!sessionResp.ok) {
           const err = await sessionResp.json().catch(() => ({}));
@@ -1879,11 +1947,10 @@ async function showAddTradeModal(info) {
     if (resolvedSessionId) payload.session_id = resolvedSessionId;
 
     try {
-      const resp = await fetch(`${tmApiUrl}/api/trades`, {
+      const resp = await bgFetch(`${tmApiUrl}/api/trades`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(8000),
       });
 
       if (!resp.ok) {
@@ -1906,11 +1973,10 @@ async function showAddTradeModal(info) {
         }
         if (newStatus) {
           try {
-            await fetch(`${tmApiUrl}/api/sessions/${resolvedSessionId}`, {
+            await bgFetch(`${tmApiUrl}/api/sessions/${resolvedSessionId}`, {
               method: 'PATCH',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ status: newStatus }),
-              signal: AbortSignal.timeout(5000),
             });
           } catch (e) {
             console.debug('[TM] session auto-transition failed:', e.message);
@@ -2177,7 +2243,7 @@ async function showEditTradeModal(info) {
     } else if (rawSession.startsWith('__new_')) {
       if (rawSession === '__new_WHEEL__') {
         const wheelStatus = (fd.get('strategy') === 'Sell Put') ? 'put_open' : 'cc_open';
-        const sessionResp = await fetch(`${tmApiUrl}/api/sessions`, {
+        const sessionResp = await bgFetch(`${tmApiUrl}/api/sessions`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -2186,7 +2252,6 @@ async function showEditTradeModal(info) {
             status: wheelStatus,
             opened_at: trade.open_date,
           }),
-          signal: AbortSignal.timeout(8000),
         });
         if (!sessionResp.ok) {
           const err = await sessionResp.json().catch(() => ({}));
@@ -2198,7 +2263,7 @@ async function showEditTradeModal(info) {
         payload.session_id = resolvedSessionId;
       } else {
         const strategy = rawSession === '__new_IC__' ? 'IRON_CONDOR' : 'PUT_B_W_FLY';
-        const sessionResp = await fetch(`${tmApiUrl}/api/sessions`, {
+        const sessionResp = await bgFetch(`${tmApiUrl}/api/sessions`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -2207,7 +2272,6 @@ async function showEditTradeModal(info) {
             status: 'open',
             opened_at: trade.open_date,
           }),
-          signal: AbortSignal.timeout(8000),
         });
         if (!sessionResp.ok) {
           const err = await sessionResp.json().catch(() => ({}));
@@ -2221,11 +2285,10 @@ async function showEditTradeModal(info) {
     }
 
     try {
-      const resp = await fetch(`${tmApiUrl}/api/trades/${tradeId}`, {
+      const resp = await bgFetch(`${tmApiUrl}/api/trades/${tradeId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(8000),
       });
 
       if (!resp.ok) {
@@ -2246,11 +2309,10 @@ async function showEditTradeModal(info) {
         }
         if (newStatus) {
           try {
-            await fetch(`${tmApiUrl}/api/sessions/${resolvedSessionId}`, {
+            await bgFetch(`${tmApiUrl}/api/sessions/${resolvedSessionId}`, {
               method: 'PATCH',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ status: newStatus }),
-              signal: AbortSignal.timeout(5000),
             });
           } catch (e) {
             console.debug('[TM] session auto-transition failed:', e.message);
