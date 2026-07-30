@@ -202,6 +202,27 @@ export function WheelDashboardPage() {
     )
   }
 
+  function stockLegCostBasis(slot: WheelSlotDetail): { costBasis: number; currentPrice: number } | null {
+    const stockLegs = slot.legs.filter(l => l.leg_role === 'stock' && l.trade_status === 'open')
+    const leg = stockLegs[stockLegs.length - 1]
+    if (!leg || leg.trade_premium == null || leg.trade_current_price == null) return null
+    const costBasis = Number(leg.trade_premium)
+    if (!costBasis) return null
+    return { costBasis, currentPrice: Number(leg.trade_current_price) }
+  }
+
+  function renderGainLossCell(slot: WheelSlotDetail) {
+    const basis = stockLegCostBasis(slot)
+    if (!basis) return <td className="py-2 pr-3 text-xs text-gray-300">—</td>
+    const pct = ((basis.currentPrice - basis.costBasis) / basis.costBasis) * 100
+    const isProfit = pct >= 0
+    return (
+      <td className={`py-2 pr-3 text-xs font-medium ${isProfit ? 'text-green-600' : 'text-red-500'}`}>
+        {isProfit ? '+' : ''}{pct.toFixed(1)}%
+      </td>
+    )
+  }
+
   function renderSignalBadge(ticker: string, sigMap: Record<string, CCSignalResult | 'loading' | 'error'>, type: 'CC' | 'SP') {
     const sig = sigMap[ticker]
     const detailKey = `${ticker}-${type}`
@@ -230,7 +251,7 @@ export function WheelDashboardPage() {
 
     return (
       <tr key={`${ticker}-signal-detail`}>
-        <td colSpan={10} className="py-3 px-4 bg-gray-50 border-t border-gray-200">
+        <td colSpan={11} className="py-3 px-4 bg-gray-50 border-t border-gray-200">
           <div className="space-y-2 text-xs">
             <p className="font-medium text-gray-500 mb-1">{label} breakdown</p>
             <div className="grid grid-cols-2 gap-x-6 gap-y-1">
@@ -294,6 +315,7 @@ export function WheelDashboardPage() {
         <td className="py-2 pr-3">{renderSignalBadge(ticker, signals, 'CC')}</td>
         <td className="py-2 pr-3">{renderSignalBadge(ticker, spSignals, 'SP')}</td>
         {renderPnlCell(slot)}
+        {renderGainLossCell(slot)}
         <td className="py-2 text-right">
           <div className="flex items-center gap-1 justify-end">
             {(slot.status === 'cc_active' || slot.status === 'sold_put_active' || slot.needs_action) && (
@@ -301,11 +323,22 @@ export function WheelDashboardPage() {
                 Resolve
               </button>
             )}
-            {(slot.status === 'awaiting_cc' || slot.status === 'awaiting_sold_put') && !slot.needs_action && (
-              <button onClick={() => setLinkSlotId(slot.id)} className="px-2 py-0.5 text-xs bg-blue-100 text-blue-800 rounded hover:bg-blue-200">
-                {slot.status === 'awaiting_cc' ? '+ CC' : '+ Put'}
-              </button>
-            )}
+            {(slot.status === 'awaiting_cc' || slot.status === 'awaiting_sold_put') && !slot.needs_action && (() => {
+              const basis = slot.status === 'awaiting_cc' ? stockLegCostBasis(slot) : null
+              const isUnderwater = basis != null && basis.currentPrice < basis.costBasis
+              const label = slot.status === 'awaiting_cc' ? '+ CC' : '+ Put'
+              const className = isUnderwater
+                ? 'px-2 py-0.5 text-xs bg-red-100 text-red-800 rounded hover:bg-red-200'
+                : 'px-2 py-0.5 text-xs bg-blue-100 text-blue-800 rounded hover:bg-blue-200'
+              const title = isUnderwater
+                ? `Cost basis $${basis!.costBasis} above current price $${basis!.currentPrice} — selling a CC may lock in a loss.`
+                : undefined
+              return (
+                <button onClick={() => setLinkSlotId(slot.id)} className={className} title={title}>
+                  {label}
+                </button>
+              )
+            })()}
             <button
               onClick={() => setExpandedSlot(isExpanded ? null : slot.id)}
               className="px-1.5 py-0.5 text-xs text-gray-400 hover:text-gray-600 rounded hover:bg-gray-100"
@@ -325,7 +358,7 @@ export function WheelDashboardPage() {
     if (currentLegs.length === 0) {
       return (
         <tr key={`${f.slot.id}-legs`}>
-          <td colSpan={10} className="py-1 pl-8 text-xs text-gray-400 italic">No legs in current rotation.</td>
+          <td colSpan={11} className="py-1 pl-8 text-xs text-gray-400 italic">No legs in current rotation.</td>
         </tr>
       )
     }
@@ -366,6 +399,7 @@ export function WheelDashboardPage() {
                 <th className="py-2 pr-3 font-normal">CC Signal</th>
                 <th className="py-2 pr-3 font-normal">SP Signal</th>
                 <th className="py-2 pr-3 font-normal">P&L %</th>
+                <th className="py-2 pr-3 font-normal">% G/L</th>
                 <th className="py-2 pr-3 font-normal"></th>
               </tr>
             </thead>
