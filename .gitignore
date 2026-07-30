@@ -23,6 +23,9 @@ frontend/.vite/
 # IDE
 .idea/
 .vscode/
+
+# Worktrees
+.worktrees/
 stockpile-main
 .playwright-mcp/
 
