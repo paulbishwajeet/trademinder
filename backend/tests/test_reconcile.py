@@ -141,13 +141,15 @@ async def test_reconcile_unmatched_seen_trade_immediately_stale(
     assert trade_id in stale_ids
 
 
-async def test_reconcile_ticker_not_in_snapshot_not_backdated(
+async def test_reconcile_ticker_absent_from_snapshot_is_backdated(
     client: AsyncClient, db_session: AsyncSession
 ):
-    """Trade whose ticker wasn't in the snapshot at all must NOT be backdated.
+    """Trade whose ticker isn't in the snapshot at all IS backdated (closed position).
 
-    Reproduces the virtual-scroll bug: a partial viewport snapshot must not
-    mark trades for off-screen tickers as stale.
+    The extension sends a complete snapshot (it scrolls the full E*TRADE grid
+    before calling reconcile — see collectAllPositions in content.js), so a
+    ticker's total absence means the position is genuinely closed, not merely
+    off-screen. Reconcile must treat that as immediately stale.
     """
     from sqlalchemy import select
     from app.models.trade import Trade
@@ -161,23 +163,23 @@ async def test_reconcile_ticker_not_in_snapshot_not_backdated(
     trade.last_etrade_seen = original_seen
     await db_session.commit()
 
-    # Snapshot contains only TSLA — AAPL not in viewport at all
+    # Complete snapshot contains only TSLA — AAPL has been fully closed out
     resp = await client.post(RECONCILE_URL, json={
         "positions": [{"ticker": "TSLA", "full_symbol": None, "type": "Stock"}]
     })
     assert resp.status_code == 200
 
-    # AAPL's last_etrade_seen must be unchanged (ticker absent from snapshot)
+    # AAPL's last_etrade_seen must be backdated past the stale threshold
     await db_session.refresh(trade)
     assert trade.last_etrade_seen is not None
-    assert abs((trade.last_etrade_seen - original_seen).total_seconds()) < 2
-    # And it must not appear in stale_backend
+    assert trade.last_etrade_seen < original_seen
+    # And it must appear in stale_backend
     stale_ids = [item["id"] for item in resp.json()["stale_backend"]]
-    assert aapl_id not in stale_ids
+    assert aapl_id in stale_ids
 
 
 async def test_reconcile_never_seen_not_stale(client: AsyncClient):
-    """Trade with null last_etrade_seen is never flagged stale."""
+    """Manually-entered trade (no etrade_symbol) with null last_etrade_seen is never flagged stale."""
     create_resp = await client.post("/api/trades", json=STOCK_TRADE)
     trade_id = create_resp.json()["id"]
 
@@ -187,6 +189,23 @@ async def test_reconcile_never_seen_not_stale(client: AsyncClient):
     assert resp.status_code == 200
     stale_ids = [item["id"] for item in resp.json()["stale_backend"]]
     assert trade_id not in stale_ids
+
+
+async def test_reconcile_never_seen_but_extension_added_is_stale(client: AsyncClient):
+    """Trade added via the extension (etrade_symbol set) but never yet matched by
+    a successful reconcile — e.g. it closed before reconcile worked correctly —
+    must still be flagged stale once it's absent from a complete snapshot.
+    """
+    payload = dict(STOCK_TRADE, etrade_symbol="AAPL")
+    create_resp = await client.post("/api/trades", json=payload)
+    trade_id = create_resp.json()["id"]
+
+    resp = await client.post(RECONCILE_URL, json={
+        "positions": [{"ticker": "TSLA", "full_symbol": None, "type": "Stock"}]
+    })
+    assert resp.status_code == 200
+    stale_ids = [item["id"] for item in resp.json()["stale_backend"]]
+    assert trade_id in stale_ids
 
 
 async def test_reconcile_option_matched_by_strike_and_expiry(
