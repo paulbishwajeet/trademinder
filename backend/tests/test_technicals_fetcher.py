@@ -12,7 +12,7 @@ from app.services.technicals_fetcher import (
 
 def _make_daily_df(n: int = 200, base: float = 100.0, step: float = 0.25) -> pd.DataFrame:
     close = [base + i * step for i in range(n)]
-    idx = pd.date_range(end=pd.Timestamp.now(tz="UTC"), periods=n, freq="B")
+    idx = pd.date_range(end=pd.Timestamp.now(tz="UTC"), periods=n + 1, freq="B")[-n:]
     return pd.DataFrame(
         {"Open": close, "High": close, "Low": close, "Close": close, "Volume": [1_000_000] * n},
         index=idx,
@@ -21,7 +21,7 @@ def _make_daily_df(n: int = 200, base: float = 100.0, step: float = 0.25) -> pd.
 
 def _make_weekly_df(n: int = 60, base: float = 95.0, step: float = 0.5) -> pd.DataFrame:
     close = [base + i * step for i in range(n)]
-    idx = pd.date_range(end=pd.Timestamp.now(tz="UTC"), periods=n, freq="W")
+    idx = pd.date_range(end=pd.Timestamp.now(tz="UTC"), periods=n + 1, freq="W")[-n:]
     return pd.DataFrame(
         {"Open": close, "High": close, "Low": close, "Close": close, "Volume": [500_000] * n},
         index=idx,
@@ -222,6 +222,21 @@ def test_fetch_technicals_no_ma200_when_insufficient_history():
     assert result["fetch_status"] == "ok"
     assert result["ma_200d"] is None
     assert result["ma_50d"] is not None
+
+
+def test_fetch_technicals_includes_macd_crossover_fields():
+    mock_client = _mock_client(_make_daily_df(200), _make_weekly_df(60))
+    with patch("app.services.technicals_fetcher.get_schwab_client", return_value=mock_client), \
+         patch("yfinance.Ticker") as mock_ticker:
+        mock_ticker.return_value.calendar = {}
+        result = fetch_technicals("AAPL")
+
+    assert result["fetch_status"] == "ok"
+    assert "macd_cross_date" in result
+    assert "macd_cross_direction" in result
+    assert "macd_weeks_since_cross" in result
+    assert "macd_strength_score" in result
+    assert "macd_trend" in result
 
 
 def test_fetch_technicals_schwab_error_returns_error():

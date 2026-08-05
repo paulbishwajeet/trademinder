@@ -174,12 +174,14 @@ def fetch_technicals(ticker: str, return_closes: bool = False) -> dict | tuple[d
         )
 
         macd = _compute_macd_weekly(close_w)
+        crossover = _macd_weekly_crossover_state(close_w)
         sentiment = _infer_sentiment(macd["macd_signal"], price, ma_50d, rsi_14)
         next_earnings = _get_next_earnings(ticker)
 
         result = {
             "macd_signal": macd["macd_signal"],
             "macd_notes": macd["macd_notes"],
+            **crossover,
             "rsi_14": rsi_14,
             "rsi_result": rsi_result,
             "ma_200d": ma_200d,
