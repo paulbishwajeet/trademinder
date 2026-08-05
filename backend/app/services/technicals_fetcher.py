@@ -24,6 +24,64 @@ def _compute_macd_weekly(close_w: pd.Series) -> dict[str, str]:
     return {"macd_signal": macd_signal, "macd_notes": macd_notes}
 
 
+_NONE_CROSSOVER_FIELDS: dict = {
+    "macd_cross_date": None,
+    "macd_cross_direction": None,
+    "macd_weeks_since_cross": None,
+    "macd_strength_score": None,
+    "macd_trend": None,
+}
+
+
+def _macd_weekly_crossover_state(close_w: pd.Series) -> dict:
+    if len(close_w) < 35:
+        return dict(_NONE_CROSSOVER_FIELDS)
+
+    exp1 = close_w.ewm(span=12, adjust=False).mean()
+    exp2 = close_w.ewm(span=26, adjust=False).mean()
+    macd_line = exp1 - exp2
+    signal_line = macd_line.ewm(span=9, adjust=False).mean()
+    diff = macd_line - signal_line
+
+    sign = diff.apply(lambda x: 1 if x > 0 else -1)
+    crossovers = sign[sign != sign.shift(1)].iloc[1:]
+    if crossovers.empty:
+        return dict(_NONE_CROSSOVER_FIELDS)
+
+    last_cross_date = crossovers.index[-1]
+    direction = "bullish" if crossovers.iloc[-1] == 1 else "bearish"
+
+    since = diff[diff.index >= last_cross_date]
+    weeks_since = len(since) - 1
+
+    if direction == "bullish":
+        peak_val = float(since.max())
+        peak_date = since.idxmax()
+    else:
+        peak_val = float(since.min())
+        peak_date = since.idxmin()
+
+    current = float(since.iloc[-1])
+    score = round((current / peak_val) * 100, 1) if peak_val != 0 else 0.0
+
+    if peak_date == since.index[-1]:
+        trend = "expanding"
+    elif score >= 70:
+        trend = "holding_strong"
+    elif score >= 30:
+        trend = "squeezing"
+    else:
+        trend = "fading_near_flip"
+
+    return {
+        "macd_cross_date": str(last_cross_date.date()),
+        "macd_cross_direction": direction,
+        "macd_weeks_since_cross": weeks_since,
+        "macd_strength_score": score,
+        "macd_trend": trend,
+    }
+
+
 def _bollinger_position(price: float, upper: float, mid: float, lower: float) -> str:
     band_width = upper - lower
     if band_width == 0:

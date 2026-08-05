@@ -91,6 +91,87 @@ def test_macd_weekly_insufficient_data():
     assert result["macd_signal"] == "neutral"
 
 
+# --- unit tests for _macd_weekly_crossover_state ---
+
+from app.services.technicals_fetcher import _macd_weekly_crossover_state
+
+
+def _make_weekly_close(values: list[float]) -> pd.Series:
+    idx = pd.date_range(end=pd.Timestamp("2026-08-03", tz="UTC"), periods=len(values) + 1, freq="W")[-len(values):]
+    return pd.Series(values, index=idx)
+
+
+def test_macd_crossover_insufficient_data_returns_all_none():
+    close = _make_weekly_close([100.0] * 10)
+    result = _macd_weekly_crossover_state(close)
+    assert result == {
+        "macd_cross_date": None,
+        "macd_cross_direction": None,
+        "macd_weeks_since_cross": None,
+        "macd_strength_score": None,
+        "macd_trend": None,
+    }
+
+
+def test_macd_crossover_bullish_fading_near_flip():
+    # 30 weeks falling, 25 weeks rising sharply (bullish crossover), 5 weeks pulling back (squeeze)
+    down = [200.0 - i * 2.0 for i in range(30)]
+    up = [down[-1] + i * 3.0 for i in range(1, 26)]
+    flat = [up[-1] - i * 0.5 for i in range(1, 6)]
+    close = _make_weekly_close(down + up + flat)
+
+    result = _macd_weekly_crossover_state(close)
+
+    assert result["macd_cross_date"] == "2026-01-25"
+    assert result["macd_cross_direction"] == "bullish"
+    assert result["macd_weeks_since_cross"] == 27
+    assert result["macd_strength_score"] == 12.2
+    assert result["macd_trend"] == "fading_near_flip"
+
+
+def test_macd_crossover_bearish_fading_near_flip():
+    # Mirror image of the bullish case: rising, then falling sharply (bearish crossover), then a small bounce
+    up = [100.0 + i * 2.0 for i in range(30)]
+    down = [up[-1] - i * 3.0 for i in range(1, 26)]
+    bounce = [down[-1] + i * 0.5 for i in range(1, 6)]
+    close = _make_weekly_close(up + down + bounce)
+
+    result = _macd_weekly_crossover_state(close)
+
+    assert result["macd_cross_date"] == "2026-01-25"
+    assert result["macd_cross_direction"] == "bearish"
+    assert result["macd_weeks_since_cross"] == 27
+    assert result["macd_strength_score"] == 12.2
+    assert result["macd_trend"] == "fading_near_flip"
+
+
+def test_macd_crossover_squeezing():
+    # Steady compounding growth (1% per week) - gap narrows to a mid-range score after the initial ramp
+    close = _make_weekly_close([100.0 * (1.01 ** i) for i in range(60)])
+    result = _macd_weekly_crossover_state(close)
+
+    assert result["macd_cross_direction"] == "bullish"
+    assert result["macd_strength_score"] == 42.8
+    assert result["macd_trend"] == "squeezing"
+
+
+def test_macd_crossover_holding_strong():
+    close = _make_weekly_close([100.0 * (1.016 ** i) for i in range(60)])
+    result = _macd_weekly_crossover_state(close)
+
+    assert result["macd_strength_score"] == 75.5
+    assert result["macd_trend"] == "holding_strong"
+
+
+def test_macd_crossover_expanding_at_peak():
+    # Strong compounding growth - the gap is still widening at the very last bar
+    close = _make_weekly_close([100.0 * (1.02 ** i) for i in range(60)])
+    result = _macd_weekly_crossover_state(close)
+
+    assert result["macd_strength_score"] == 100.0
+    assert result["macd_trend"] == "expanding"
+
+
 # --- integration: fetch_technicals ---
 
 def test_fetch_technicals_success():
