@@ -216,14 +216,24 @@ def fetch_macd_crossover(ticker: str) -> dict:
     try:
         client = get_schwab_client()
         df_w = client.get_price_history(ticker, "year", 2, "weekly", 1)
+        df_d = client.get_price_history(ticker, "year", 1, "daily", 1)
     except SchwabAPIError as exc:
-        return {**_NONE_CROSSOVER_FIELDS, "fetch_status": "error", "fetch_error": str(exc)}
+        return {
+            "weekly": dict(_NONE_CROSSOVER_FIELDS),
+            "daily": dict(_NONE_CROSSOVER_FIELDS),
+            "fetch_status": "error",
+            "fetch_error": str(exc),
+        }
 
-    if df_w is None or df_w.empty:
-        raise ValueError(f"No weekly data for {ticker}")
+    if df_w is None or df_w.empty or df_d is None or df_d.empty:
+        raise ValueError(f"No price history for {ticker}")
 
     close_w = df_w["Close"].dropna()
-    result = _macd_weekly_crossover_state(close_w)
-    result["fetch_status"] = "ok"
-    result["fetch_error"] = None
-    return result
+    close_d = df_d["Close"].dropna()
+
+    return {
+        "weekly": _macd_crossover_state(close_w),
+        "daily": _macd_crossover_state(close_d),
+        "fetch_status": "ok",
+        "fetch_error": None,
+    }

@@ -258,18 +258,29 @@ from app.services.technicals_fetcher import fetch_macd_crossover
 
 def test_fetch_macd_crossover_success():
     mock_client = MagicMock()
-    mock_client.get_price_history.return_value = _make_weekly_df(60)
+    mock_client.get_price_history.side_effect = [_make_weekly_df(60), _make_daily_df(200)]
     with patch("app.services.technicals_fetcher.get_schwab_client", return_value=mock_client):
         result = fetch_macd_crossover("AAPL")
 
     assert result["fetch_status"] == "ok"
     assert result["fetch_error"] is None
-    mock_client.get_price_history.assert_called_once_with("AAPL", "year", 2, "weekly", 1)
+    assert set(result["weekly"].keys()) == {"cross_date", "cross_direction", "periods_since_cross", "strength_score", "trend"}
+    assert set(result["daily"].keys()) == {"cross_date", "cross_direction", "periods_since_cross", "strength_score", "trend"}
+    mock_client.get_price_history.assert_any_call("AAPL", "year", 2, "weekly", 1)
+    mock_client.get_price_history.assert_any_call("AAPL", "year", 1, "daily", 1)
 
 
 def test_fetch_macd_crossover_no_weekly_data_raises_value_error():
     mock_client = MagicMock()
-    mock_client.get_price_history.return_value = pd.DataFrame()
+    mock_client.get_price_history.side_effect = [pd.DataFrame(), _make_daily_df(200)]
+    with patch("app.services.technicals_fetcher.get_schwab_client", return_value=mock_client):
+        with pytest.raises(ValueError):
+            fetch_macd_crossover("INVALID")
+
+
+def test_fetch_macd_crossover_no_daily_data_raises_value_error():
+    mock_client = MagicMock()
+    mock_client.get_price_history.side_effect = [_make_weekly_df(60), pd.DataFrame()]
     with patch("app.services.technicals_fetcher.get_schwab_client", return_value=mock_client):
         with pytest.raises(ValueError):
             fetch_macd_crossover("INVALID")
@@ -284,14 +295,16 @@ def test_fetch_macd_crossover_schwab_error_returns_error_status():
 
     assert result["fetch_status"] == "error"
     assert "network error" in result["fetch_error"]
-    assert result["macd_cross_date"] is None
+    assert result["weekly"]["cross_date"] is None
+    assert result["daily"]["cross_date"] is None
 
 
 def test_fetch_macd_crossover_insufficient_history_returns_ok_with_none_fields():
     mock_client = MagicMock()
-    mock_client.get_price_history.return_value = _make_weekly_df(10)
+    mock_client.get_price_history.side_effect = [_make_weekly_df(10), _make_daily_df(10)]
     with patch("app.services.technicals_fetcher.get_schwab_client", return_value=mock_client):
         result = fetch_macd_crossover("AAPL")
 
     assert result["fetch_status"] == "ok"
-    assert result["macd_cross_date"] is None
+    assert result["weekly"]["cross_date"] is None
+    assert result["daily"]["cross_date"] is None
