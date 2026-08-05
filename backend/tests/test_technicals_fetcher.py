@@ -232,11 +232,12 @@ def test_fetch_technicals_includes_macd_crossover_fields():
         result = fetch_technicals("AAPL")
 
     assert result["fetch_status"] == "ok"
-    assert "macd_cross_date" in result
-    assert "macd_cross_direction" in result
-    assert "macd_weeks_since_cross" in result
-    assert "macd_strength_score" in result
-    assert "macd_trend" in result
+    for prefix in ("weekly", "daily"):
+        assert f"macd_{prefix}_cross_date" in result
+        assert f"macd_{prefix}_cross_direction" in result
+        assert f"macd_{prefix}_periods_since_cross" in result
+        assert f"macd_{prefix}_strength_score" in result
+        assert f"macd_{prefix}_trend" in result
 
 
 def test_fetch_technicals_schwab_error_returns_error():
