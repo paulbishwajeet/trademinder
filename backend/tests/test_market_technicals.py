@@ -50,11 +50,20 @@ async def test_get_technicals_ticker_uppercased(client: AsyncClient):
 
 
 MOCK_CROSSOVER = {
-    "macd_cross_date": "2026-04-27",
-    "macd_cross_direction": "bullish",
-    "macd_weeks_since_cross": 14,
-    "macd_strength_score": 19.1,
-    "macd_trend": "fading_near_flip",
+    "weekly": {
+        "cross_date": "2026-04-27",
+        "cross_direction": "bullish",
+        "periods_since_cross": 14,
+        "strength_score": 19.1,
+        "trend": "fading_near_flip",
+    },
+    "daily": {
+        "cross_date": "2026-07-31",
+        "cross_direction": "bearish",
+        "periods_since_cross": 2,
+        "strength_score": 100.0,
+        "trend": "expanding",
+    },
     "fetch_status": "ok",
     "fetch_error": None,
 }
@@ -65,8 +74,10 @@ async def test_get_macd_crossover_success(client: AsyncClient):
         response = await client.get("/api/market/macd-crossover/AAPL")
     assert response.status_code == 200
     data = response.json()
-    assert data["macd_cross_direction"] == "bullish"
-    assert data["macd_strength_score"] == 19.1
+    assert data["weekly"]["cross_direction"] == "bullish"
+    assert data["weekly"]["strength_score"] == 19.1
+    assert data["daily"]["cross_direction"] == "bearish"
+    assert data["daily"]["strength_score"] == 100.0
 
 
 async def test_get_macd_crossover_no_data_returns_404(client: AsyncClient):
