@@ -47,3 +47,35 @@ async def test_get_technicals_ticker_uppercased(client: AsyncClient):
     with patch("app.routers.market.fetch_technicals", return_value=MOCK_TECHNICALS) as mock_fn:
         await client.get("/api/market/technicals/aapl")
     mock_fn.assert_called_once_with("AAPL")
+
+
+MOCK_CROSSOVER = {
+    "macd_cross_date": "2026-04-27",
+    "macd_cross_direction": "bullish",
+    "macd_weeks_since_cross": 14,
+    "macd_strength_score": 19.1,
+    "macd_trend": "fading_near_flip",
+    "fetch_status": "ok",
+    "fetch_error": None,
+}
+
+
+async def test_get_macd_crossover_success(client: AsyncClient):
+    with patch("app.routers.market.fetch_macd_crossover", return_value=MOCK_CROSSOVER):
+        response = await client.get("/api/market/macd-crossover/AAPL")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["macd_cross_direction"] == "bullish"
+    assert data["macd_strength_score"] == 19.1
+
+
+async def test_get_macd_crossover_no_data_returns_404(client: AsyncClient):
+    with patch("app.routers.market.fetch_macd_crossover", side_effect=ValueError("No weekly data for INVALID")):
+        response = await client.get("/api/market/macd-crossover/INVALID")
+    assert response.status_code == 404
+
+
+async def test_get_macd_crossover_ticker_uppercased(client: AsyncClient):
+    with patch("app.routers.market.fetch_macd_crossover", return_value=MOCK_CROSSOVER) as mock_fn:
+        await client.get("/api/market/macd-crossover/aapl")
+    mock_fn.assert_called_once_with("AAPL")
