@@ -248,3 +248,49 @@ def test_fetch_technicals_schwab_error_returns_error():
 
     assert result["fetch_status"] == "error"
     assert "network error" in result["fetch_error"]
+
+
+# --- fetch_macd_crossover (standalone) ---
+
+from app.services.technicals_fetcher import fetch_macd_crossover
+
+
+def test_fetch_macd_crossover_success():
+    mock_client = MagicMock()
+    mock_client.get_price_history.return_value = _make_weekly_df(60)
+    with patch("app.services.technicals_fetcher.get_schwab_client", return_value=mock_client):
+        result = fetch_macd_crossover("AAPL")
+
+    assert result["fetch_status"] == "ok"
+    assert result["fetch_error"] is None
+    mock_client.get_price_history.assert_called_once_with("AAPL", "year", 2, "weekly", 1)
+
+
+def test_fetch_macd_crossover_no_weekly_data_raises_value_error():
+    mock_client = MagicMock()
+    mock_client.get_price_history.return_value = pd.DataFrame()
+    with patch("app.services.technicals_fetcher.get_schwab_client", return_value=mock_client):
+        with pytest.raises(ValueError):
+            fetch_macd_crossover("INVALID")
+
+
+def test_fetch_macd_crossover_schwab_error_returns_error_status():
+    from app.services.schwab_client import SchwabAPIError
+    mock_client = MagicMock()
+    mock_client.get_price_history.side_effect = SchwabAPIError("network error")
+    with patch("app.services.technicals_fetcher.get_schwab_client", return_value=mock_client):
+        result = fetch_macd_crossover("AAPL")
+
+    assert result["fetch_status"] == "error"
+    assert "network error" in result["fetch_error"]
+    assert result["macd_cross_date"] is None
+
+
+def test_fetch_macd_crossover_insufficient_history_returns_ok_with_none_fields():
+    mock_client = MagicMock()
+    mock_client.get_price_history.return_value = _make_weekly_df(10)
+    with patch("app.services.technicals_fetcher.get_schwab_client", return_value=mock_client):
+        result = fetch_macd_crossover("AAPL")
+
+    assert result["fetch_status"] == "ok"
+    assert result["macd_cross_date"] is None

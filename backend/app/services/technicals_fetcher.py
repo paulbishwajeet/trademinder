@@ -208,3 +208,20 @@ def fetch_technicals(ticker: str, return_closes: bool = False) -> dict | tuple[d
     except Exception as exc:
         err = {"fetch_status": "error", "fetch_error": str(exc)}
         return (err, pd.Series(dtype=float)) if return_closes else err
+
+
+def fetch_macd_crossover(ticker: str) -> dict:
+    try:
+        client = get_schwab_client()
+        df_w = client.get_price_history(ticker, "year", 2, "weekly", 1)
+    except SchwabAPIError as exc:
+        return {**_NONE_CROSSOVER_FIELDS, "fetch_status": "error", "fetch_error": str(exc)}
+
+    if df_w is None or df_w.empty:
+        raise ValueError(f"No weekly data for {ticker}")
+
+    close_w = df_w["Close"].dropna()
+    result = _macd_weekly_crossover_state(close_w)
+    result["fetch_status"] = "ok"
+    result["fetch_error"] = None
+    return result
