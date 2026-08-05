@@ -25,20 +25,20 @@ def _compute_macd_weekly(close_w: pd.Series) -> dict[str, str]:
 
 
 _NONE_CROSSOVER_FIELDS: dict = {
-    "macd_cross_date": None,
-    "macd_cross_direction": None,
-    "macd_weeks_since_cross": None,
-    "macd_strength_score": None,
-    "macd_trend": None,
+    "cross_date": None,
+    "cross_direction": None,
+    "periods_since_cross": None,
+    "strength_score": None,
+    "trend": None,
 }
 
 
-def _macd_weekly_crossover_state(close_w: pd.Series) -> dict:
-    if len(close_w) < 35:
+def _macd_crossover_state(close: pd.Series) -> dict:
+    if len(close) < 35:
         return dict(_NONE_CROSSOVER_FIELDS)
 
-    exp1 = close_w.ewm(span=12, adjust=False).mean()
-    exp2 = close_w.ewm(span=26, adjust=False).mean()
+    exp1 = close.ewm(span=12, adjust=False).mean()
+    exp2 = close.ewm(span=26, adjust=False).mean()
     macd_line = exp1 - exp2
     signal_line = macd_line.ewm(span=9, adjust=False).mean()
     diff = macd_line - signal_line
@@ -52,7 +52,7 @@ def _macd_weekly_crossover_state(close_w: pd.Series) -> dict:
     direction = "bullish" if crossovers.iloc[-1] == 1 else "bearish"
 
     since = diff[diff.index >= last_cross_date]
-    weeks_since = len(since) - 1
+    periods_since = len(since) - 1
 
     if direction == "bullish":
         peak_val = float(since.max())
@@ -74,11 +74,11 @@ def _macd_weekly_crossover_state(close_w: pd.Series) -> dict:
         trend = "fading_near_flip"
 
     return {
-        "macd_cross_date": str(last_cross_date.date()),
-        "macd_cross_direction": direction,
-        "macd_weeks_since_cross": weeks_since,
-        "macd_strength_score": score,
-        "macd_trend": trend,
+        "cross_date": str(last_cross_date.date()),
+        "cross_direction": direction,
+        "periods_since_cross": periods_since,
+        "strength_score": score,
+        "trend": trend,
     }
 
 
