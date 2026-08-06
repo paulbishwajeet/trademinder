@@ -191,6 +191,7 @@ export interface WheelSlotLegItem {
   trade_strike_price: number | null
   trade_quantity: number | null
   trade_premium: number | null
+  trade_current_price: number | null
   trade_status: string | null
   trade_etrade_symbol: string | null
 }
@@ -224,6 +225,8 @@ export interface WheelSlotDetail {
 export interface WheelSessionDetail extends WheelSessionSummary {
   slots: WheelSlotDetail[]
   total_premium: string
+  stock_cost_basis: number | null
+  stock_current_price: number | null
 }
 
 export interface WheelActiveSlot {

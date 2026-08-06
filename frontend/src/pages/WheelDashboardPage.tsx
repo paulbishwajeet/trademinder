@@ -11,10 +11,18 @@ interface FlatSlot {
   slot: WheelSlotDetail
   ticker: string
   sessionId: string
+  stockCostBasis: number | null
+  stockCurrentPrice: number | null
 }
 
 function flattenSlots(sessions: WheelSessionDetail[]): FlatSlot[] {
-  return sessions.flatMap(s => s.slots.map(slot => ({ slot, ticker: s.ticker, sessionId: s.id })))
+  return sessions.flatMap(s => s.slots.map(slot => ({
+    slot,
+    ticker: s.ticker,
+    sessionId: s.id,
+    stockCostBasis: s.stock_cost_basis,
+    stockCurrentPrice: s.stock_current_price,
+  })))
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -202,6 +210,20 @@ export function WheelDashboardPage() {
     )
   }
 
+  function renderGainLossCell(f: FlatSlot) {
+    const { stockCostBasis: costBasis, stockCurrentPrice: currentPrice } = f
+    if (costBasis == null || currentPrice == null || !costBasis) {
+      return <td className="py-2 pr-3 text-xs text-gray-300">—</td>
+    }
+    const pct = ((currentPrice - costBasis) / costBasis) * 100
+    const isProfit = pct >= 0
+    return (
+      <td className={`py-2 pr-3 text-xs font-medium ${isProfit ? 'text-green-600' : 'text-red-500'}`}>
+        {isProfit ? '+' : ''}{pct.toFixed(1)}%
+      </td>
+    )
+  }
+
   function renderSignalBadge(ticker: string, sigMap: Record<string, CCSignalResult | 'loading' | 'error'>, type: 'CC' | 'SP') {
     const sig = sigMap[ticker]
     const detailKey = `${ticker}-${type}`
@@ -230,7 +252,7 @@ export function WheelDashboardPage() {
 
     return (
       <tr key={`${ticker}-signal-detail`}>
-        <td colSpan={10} className="py-3 px-4 bg-gray-50 border-t border-gray-200">
+        <td colSpan={11} className="py-3 px-4 bg-gray-50 border-t border-gray-200">
           <div className="space-y-2 text-xs">
             <p className="font-medium text-gray-500 mb-1">{label} breakdown</p>
             <div className="grid grid-cols-2 gap-x-6 gap-y-1">
@@ -294,6 +316,7 @@ export function WheelDashboardPage() {
         <td className="py-2 pr-3">{renderSignalBadge(ticker, signals, 'CC')}</td>
         <td className="py-2 pr-3">{renderSignalBadge(ticker, spSignals, 'SP')}</td>
         {renderPnlCell(slot)}
+        {renderGainLossCell(f)}
         <td className="py-2 text-right">
           <div className="flex items-center gap-1 justify-end">
             {(slot.status === 'cc_active' || slot.status === 'sold_put_active' || slot.needs_action) && (
@@ -301,11 +324,23 @@ export function WheelDashboardPage() {
                 Resolve
               </button>
             )}
-            {(slot.status === 'awaiting_cc' || slot.status === 'awaiting_sold_put') && !slot.needs_action && (
-              <button onClick={() => setLinkSlotId(slot.id)} className="px-2 py-0.5 text-xs bg-blue-100 text-blue-800 rounded hover:bg-blue-200">
-                {slot.status === 'awaiting_cc' ? '+ CC' : '+ Put'}
-              </button>
-            )}
+            {(slot.status === 'awaiting_cc' || slot.status === 'awaiting_sold_put') && !slot.needs_action && (() => {
+              const isUnderwater = slot.status === 'awaiting_cc'
+                && f.stockCostBasis != null && f.stockCurrentPrice != null
+                && f.stockCurrentPrice < f.stockCostBasis
+              const label = slot.status === 'awaiting_cc' ? '+ CC' : '+ Put'
+              const className = isUnderwater
+                ? 'px-2 py-0.5 text-xs bg-red-100 text-red-800 rounded hover:bg-red-200'
+                : 'px-2 py-0.5 text-xs bg-blue-100 text-blue-800 rounded hover:bg-blue-200'
+              const title = isUnderwater
+                ? `Cost basis $${f.stockCostBasis} above current price $${f.stockCurrentPrice} — selling a CC may lock in a loss.`
+                : undefined
+              return (
+                <button onClick={() => setLinkSlotId(slot.id)} className={className} title={title}>
+                  {label}
+                </button>
+              )
+            })()}
             <button
               onClick={() => setExpandedSlot(isExpanded ? null : slot.id)}
               className="px-1.5 py-0.5 text-xs text-gray-400 hover:text-gray-600 rounded hover:bg-gray-100"
@@ -325,7 +360,7 @@ export function WheelDashboardPage() {
     if (currentLegs.length === 0) {
       return (
         <tr key={`${f.slot.id}-legs`}>
-          <td colSpan={10} className="py-1 pl-8 text-xs text-gray-400 italic">No legs in current rotation.</td>
+          <td colSpan={11} className="py-1 pl-8 text-xs text-gray-400 italic">No legs in current rotation.</td>
         </tr>
       )
     }
@@ -338,7 +373,7 @@ export function WheelDashboardPage() {
           {leg.trade_expiry_date ?? '—'}{leg.trade_premium != null ? ` · $${leg.trade_premium}` : ''}
         </td>
         <td className="py-1 pr-3 text-xs text-gray-400 capitalize">{leg.trade_status}</td>
-        <td colSpan={5} className="py-1 text-xs text-right">
+        <td colSpan={6} className="py-1 text-xs text-right">
           <Link to={`/trades/${leg.trade_id}`} className="text-blue-500 hover:underline">view</Link>
         </td>
       </tr>
@@ -366,6 +401,7 @@ export function WheelDashboardPage() {
                 <th className="py-2 pr-3 font-normal">CC Signal</th>
                 <th className="py-2 pr-3 font-normal">SP Signal</th>
                 <th className="py-2 pr-3 font-normal">P&L %</th>
+                <th className="py-2 pr-3 font-normal">% G/L</th>
                 <th className="py-2 pr-3 font-normal"></th>
               </tr>
             </thead>

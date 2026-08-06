@@ -47,3 +47,114 @@ async def test_get_technicals_ticker_uppercased(client: AsyncClient):
     with patch("app.routers.market.fetch_technicals", return_value=MOCK_TECHNICALS) as mock_fn:
         await client.get("/api/market/technicals/aapl")
     mock_fn.assert_called_once_with("AAPL")
+
+
+MOCK_CROSSOVER = {
+    "weekly": {
+        "cross_date": "2026-04-27",
+        "cross_direction": "bullish",
+        "periods_since_cross": 14,
+        "strength_score": 19.1,
+        "trend": "fading_near_flip",
+    },
+    "daily": {
+        "cross_date": "2026-07-31",
+        "cross_direction": "bearish",
+        "periods_since_cross": 2,
+        "strength_score": 100.0,
+        "trend": "expanding",
+    },
+    "fetch_status": "ok",
+    "fetch_error": None,
+}
+
+
+async def test_get_macd_crossover_success(client: AsyncClient):
+    with patch("app.routers.market.fetch_macd_crossover", return_value=MOCK_CROSSOVER):
+        response = await client.get("/api/market/macd-crossover/AAPL")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["weekly"]["cross_direction"] == "bullish"
+    assert data["weekly"]["strength_score"] == 19.1
+    assert data["daily"]["cross_direction"] == "bearish"
+    assert data["daily"]["strength_score"] == 100.0
+
+
+async def test_get_macd_crossover_no_data_returns_404(client: AsyncClient):
+    with patch("app.routers.market.fetch_macd_crossover", side_effect=ValueError("No weekly data for INVALID")):
+        response = await client.get("/api/market/macd-crossover/INVALID")
+    assert response.status_code == 404
+
+
+async def test_get_macd_crossover_ticker_uppercased(client: AsyncClient):
+    with patch("app.routers.market.fetch_macd_crossover", return_value=MOCK_CROSSOVER) as mock_fn:
+        await client.get("/api/market/macd-crossover/aapl")
+    mock_fn.assert_called_once_with("AAPL")
+
+
+MOCK_RSI_SIGNAL = {
+    "rsi_14": 44.68,
+    "rsi_ma_14": 60.73,
+    "cross_date": "2026-07-30",
+    "cross_direction": "bearish",
+    "periods_since_cross": 3,
+    "strength_score": 72.6,
+    "trend": "holding_strong",
+    "fetch_status": "ok",
+    "fetch_error": None,
+}
+
+
+async def test_get_rsi_crossover_success(client: AsyncClient):
+    with patch("app.routers.market.fetch_rsi_signal", return_value=MOCK_RSI_SIGNAL):
+        response = await client.get("/api/market/rsi-crossover/AAPL")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["rsi_14"] == 44.68
+    assert data["cross_direction"] == "bearish"
+    assert data["strength_score"] == 72.6
+
+
+async def test_get_rsi_crossover_no_data_returns_404(client: AsyncClient):
+    with patch("app.routers.market.fetch_rsi_signal", side_effect=ValueError("No daily data for INVALID")):
+        response = await client.get("/api/market/rsi-crossover/INVALID")
+    assert response.status_code == 404
+
+
+async def test_get_rsi_crossover_ticker_uppercased(client: AsyncClient):
+    with patch("app.routers.market.fetch_rsi_signal", return_value=MOCK_RSI_SIGNAL) as mock_fn:
+        await client.get("/api/market/rsi-crossover/aapl")
+    mock_fn.assert_called_once_with("AAPL")
+
+
+MOCK_VOLUME_SPIKES = {
+    "spikes": [
+        {"date": "2026-07-31", "volume": 132489137, "avg_volume": 50812793, "ratio": 2.61},
+    ],
+    "lookback_days": 10,
+    "baseline_days": 20,
+    "threshold_multiple": 2.0,
+    "fetch_status": "ok",
+    "fetch_error": None,
+}
+
+
+async def test_get_volume_spikes_success(client: AsyncClient):
+    with patch("app.routers.market.fetch_volume_spikes", return_value=MOCK_VOLUME_SPIKES):
+        response = await client.get("/api/market/volume-spikes/AAPL")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["spikes"]) == 1
+    assert data["spikes"][0]["ratio"] == 2.61
+
+
+async def test_get_volume_spikes_no_data_returns_404(client: AsyncClient):
+    with patch("app.routers.market.fetch_volume_spikes", side_effect=ValueError("No daily data for INVALID")):
+        response = await client.get("/api/market/volume-spikes/INVALID")
+    assert response.status_code == 404
+
+
+async def test_get_volume_spikes_ticker_uppercased(client: AsyncClient):
+    with patch("app.routers.market.fetch_volume_spikes", return_value=MOCK_VOLUME_SPIKES) as mock_fn:
+        await client.get("/api/market/volume-spikes/aapl")
+    mock_fn.assert_called_once_with("AAPL")

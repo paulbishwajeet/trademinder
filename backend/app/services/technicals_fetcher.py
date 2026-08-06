@@ -24,6 +24,163 @@ def _compute_macd_weekly(close_w: pd.Series) -> dict[str, str]:
     return {"macd_signal": macd_signal, "macd_notes": macd_notes}
 
 
+_NONE_CROSSOVER_FIELDS: dict = {
+    "cross_date": None,
+    "cross_direction": None,
+    "periods_since_cross": None,
+    "strength_score": None,
+    "trend": None,
+}
+
+
+def _macd_crossover_state(close: pd.Series) -> dict:
+    if len(close) < 35:
+        return dict(_NONE_CROSSOVER_FIELDS)
+
+    exp1 = close.ewm(span=12, adjust=False).mean()
+    exp2 = close.ewm(span=26, adjust=False).mean()
+    macd_line = exp1 - exp2
+    signal_line = macd_line.ewm(span=9, adjust=False).mean()
+    diff = macd_line - signal_line
+
+    sign = diff.apply(lambda x: 1 if x > 0 else -1)
+    crossovers = sign[sign != sign.shift(1)].iloc[1:]
+    if crossovers.empty:
+        return dict(_NONE_CROSSOVER_FIELDS)
+
+    last_cross_date = crossovers.index[-1]
+    direction = "bullish" if crossovers.iloc[-1] == 1 else "bearish"
+
+    since = diff[diff.index >= last_cross_date]
+    periods_since = len(since) - 1
+
+    if direction == "bullish":
+        peak_val = float(since.max())
+        peak_date = since.idxmax()
+    else:
+        peak_val = float(since.min())
+        peak_date = since.idxmin()
+
+    current = float(since.iloc[-1])
+    score = round((current / peak_val) * 100, 1) if peak_val != 0 else 0.0
+
+    if peak_date == since.index[-1]:
+        trend = "expanding"
+    elif score >= 70:
+        trend = "holding_strong"
+    elif score >= 30:
+        trend = "squeezing"
+    else:
+        trend = "fading_near_flip"
+
+    return {
+        "cross_date": str(last_cross_date.date()),
+        "cross_direction": direction,
+        "periods_since_cross": periods_since,
+        "strength_score": score,
+        "trend": trend,
+    }
+
+
+_NONE_RSI_CROSSOVER_FIELDS: dict = {
+    "rsi_14": None,
+    "rsi_ma_14": None,
+    "cross_date": None,
+    "cross_direction": None,
+    "periods_since_cross": None,
+    "strength_score": None,
+    "trend": None,
+}
+
+
+def _rsi_crossover_state(close: pd.Series) -> dict:
+    if len(close) < 15:
+        return dict(_NONE_RSI_CROSSOVER_FIELDS)
+
+    delta = close.diff()
+    gain = delta.clip(lower=0)
+    loss = (-delta).clip(lower=0)
+    avg_gain = gain.ewm(alpha=1 / 14, min_periods=14, adjust=False).mean()
+    avg_loss = loss.ewm(alpha=1 / 14, min_periods=14, adjust=False).mean()
+    rs = avg_gain / avg_loss.replace(0, float("nan"))
+    rsi = (100 - (100 / (1 + rs))).fillna(100)
+
+    rsi_14 = round(float(rsi.iloc[-1]), 2)
+    rsi_ma = rsi.rolling(14).mean()
+    rsi_ma_14 = round(float(rsi_ma.iloc[-1]), 2) if not pd.isna(rsi_ma.iloc[-1]) else None
+
+    diff = (rsi - rsi_ma).dropna()
+    if len(diff) < 35:
+        return {**_NONE_RSI_CROSSOVER_FIELDS, "rsi_14": rsi_14, "rsi_ma_14": rsi_ma_14}
+
+    sign = diff.apply(lambda x: 1 if x > 0 else -1)
+    crossovers = sign[sign != sign.shift(1)].iloc[1:]
+    if crossovers.empty:
+        return {**_NONE_RSI_CROSSOVER_FIELDS, "rsi_14": rsi_14, "rsi_ma_14": rsi_ma_14}
+
+    last_cross_date = crossovers.index[-1]
+    direction = "bullish" if crossovers.iloc[-1] == 1 else "bearish"
+
+    since = diff[diff.index >= last_cross_date]
+    periods_since = len(since) - 1
+
+    if direction == "bullish":
+        peak_val = float(since.max())
+        peak_date = since.idxmax()
+    else:
+        peak_val = float(since.min())
+        peak_date = since.idxmin()
+
+    current = float(since.iloc[-1])
+    score = round((current / peak_val) * 100, 1) if peak_val != 0 else 0.0
+
+    if peak_date == since.index[-1]:
+        trend = "expanding"
+    elif score >= 70:
+        trend = "holding_strong"
+    elif score >= 30:
+        trend = "squeezing"
+    else:
+        trend = "fading_near_flip"
+
+    return {
+        "rsi_14": rsi_14,
+        "rsi_ma_14": rsi_ma_14,
+        "cross_date": str(last_cross_date.date()),
+        "cross_direction": direction,
+        "periods_since_cross": periods_since,
+        "strength_score": score,
+        "trend": trend,
+    }
+
+
+def _detect_volume_spikes(
+    volume: pd.Series,
+    lookback_days: int = 10,
+    baseline_days: int = 20,
+    threshold: float = 2.0,
+) -> list[dict]:
+    spikes = []
+    n = len(volume)
+    for i in range(max(0, n - lookback_days), n):
+        baseline = volume.iloc[max(0, i - baseline_days):i]
+        if len(baseline) < baseline_days:
+            continue
+        avg = float(baseline.mean())
+        if avg <= 0:
+            continue
+        today = float(volume.iloc[i])
+        ratio = round(today / avg, 2)
+        if ratio >= threshold:
+            spikes.append({
+                "date": str(volume.index[i].date()),
+                "volume": int(today),
+                "avg_volume": int(avg),
+                "ratio": ratio,
+            })
+    return spikes
+
+
 def _bollinger_position(price: float, upper: float, mid: float, lower: float) -> str:
     band_width = upper - lower
     if band_width == 0:
@@ -81,6 +238,8 @@ def fetch_technicals(ticker: str, return_closes: bool = False) -> dict | tuple[d
             err = {"fetch_status": "error", "fetch_error": f"Insufficient daily history for {ticker}"}
             return (err, pd.Series(dtype=float)) if return_closes else err
 
+        volume_d = df_d["Volume"].dropna()
+
         df_w = client.get_price_history(ticker, "year", 2, "weekly", 1)
         close_w = pd.Series(dtype=float)
         if df_w is not None and not df_w.empty:
@@ -116,14 +275,27 @@ def fetch_technicals(ticker: str, return_closes: bool = False) -> dict | tuple[d
         )
 
         macd = _compute_macd_weekly(close_w)
+        weekly_crossover = _macd_crossover_state(close_w)
+        daily_crossover = _macd_crossover_state(close_d)
+        rsi_crossover = _rsi_crossover_state(close_d)
+        volume_spikes = _detect_volume_spikes(volume_d)
         sentiment = _infer_sentiment(macd["macd_signal"], price, ma_50d, rsi_14)
         next_earnings = _get_next_earnings(ticker)
 
         result = {
             "macd_signal": macd["macd_signal"],
             "macd_notes": macd["macd_notes"],
+            **{f"macd_weekly_{k}": v for k, v in weekly_crossover.items()},
+            **{f"macd_daily_{k}": v for k, v in daily_crossover.items()},
             "rsi_14": rsi_14,
             "rsi_result": rsi_result,
+            "rsi_ma_14": rsi_crossover["rsi_ma_14"],
+            "rsi_cross_date": rsi_crossover["cross_date"],
+            "rsi_cross_direction": rsi_crossover["cross_direction"],
+            "rsi_periods_since_cross": rsi_crossover["periods_since_cross"],
+            "rsi_strength_score": rsi_crossover["strength_score"],
+            "rsi_trend": rsi_crossover["trend"],
+            "volume_spikes": volume_spikes,
             "ma_200d": ma_200d,
             "ma_50d": ma_50d,
             "price_vs_ma200": price_vs_ma200,
@@ -148,3 +320,75 @@ def fetch_technicals(ticker: str, return_closes: bool = False) -> dict | tuple[d
     except Exception as exc:
         err = {"fetch_status": "error", "fetch_error": str(exc)}
         return (err, pd.Series(dtype=float)) if return_closes else err
+
+
+def fetch_macd_crossover(ticker: str) -> dict:
+    try:
+        client = get_schwab_client()
+        df_w = client.get_price_history(ticker, "year", 2, "weekly", 1)
+        df_d = client.get_price_history(ticker, "year", 1, "daily", 1)
+    except SchwabAPIError as exc:
+        return {
+            "weekly": dict(_NONE_CROSSOVER_FIELDS),
+            "daily": dict(_NONE_CROSSOVER_FIELDS),
+            "fetch_status": "error",
+            "fetch_error": str(exc),
+        }
+
+    if df_w is None or df_w.empty or df_d is None or df_d.empty:
+        raise ValueError(f"No price history for {ticker}")
+
+    close_w = df_w["Close"].dropna()
+    close_d = df_d["Close"].dropna()
+
+    return {
+        "weekly": _macd_crossover_state(close_w),
+        "daily": _macd_crossover_state(close_d),
+        "fetch_status": "ok",
+        "fetch_error": None,
+    }
+
+
+def fetch_rsi_signal(ticker: str) -> dict:
+    try:
+        client = get_schwab_client()
+        df_d = client.get_price_history(ticker, "year", 1, "daily", 1)
+    except SchwabAPIError as exc:
+        return {**_NONE_RSI_CROSSOVER_FIELDS, "fetch_status": "error", "fetch_error": str(exc)}
+
+    if df_d is None or df_d.empty:
+        raise ValueError(f"No daily data for {ticker}")
+
+    close_d = df_d["Close"].dropna()
+    result = _rsi_crossover_state(close_d)
+    result["fetch_status"] = "ok"
+    result["fetch_error"] = None
+    return result
+
+
+def fetch_volume_spikes(ticker: str) -> dict:
+    try:
+        client = get_schwab_client()
+        df_d = client.get_price_history(ticker, "year", 1, "daily", 1)
+    except SchwabAPIError as exc:
+        return {
+            "spikes": [],
+            "lookback_days": 10,
+            "baseline_days": 20,
+            "threshold_multiple": 2.0,
+            "fetch_status": "error",
+            "fetch_error": str(exc),
+        }
+
+    if df_d is None or df_d.empty:
+        raise ValueError(f"No daily data for {ticker}")
+
+    volume_d = df_d["Volume"].dropna()
+    return {
+        "spikes": _detect_volume_spikes(volume_d),
+        "lookback_days": 10,
+        "baseline_days": 20,
+        "threshold_multiple": 2.0,
+        "fetch_status": "ok",
+        "fetch_error": None,
+    }

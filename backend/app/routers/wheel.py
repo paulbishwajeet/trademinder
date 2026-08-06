@@ -44,6 +44,31 @@ OUTCOME_MAP = {
     "put_rolled":      ("sold_put_active",     "keep",   False, "put_bought_back"),
 }
 
+TICKER_ALIASES = {"GOOG": "GOOGL", "GOOGL": "GOOG"}
+
+
+async def _find_stock_position(db: AsyncSession, ticker: str) -> tuple[Optional[Decimal], Optional[Decimal]]:
+    async def _latest_open_stock_trade(t: str) -> Optional[Trade]:
+        stmt = (
+            select(Trade)
+            .where(
+                Trade.category == "WHEEL",
+                Trade.strategy == "Stock",
+                Trade.status == "open",
+                Trade.ticker == t,
+            )
+            .order_by(Trade.open_date.desc())
+        )
+        result = await db.execute(stmt)
+        return result.scalars().first()
+
+    trade = await _latest_open_stock_trade(ticker)
+    if trade is None and ticker in TICKER_ALIASES:
+        trade = await _latest_open_stock_trade(TICKER_ALIASES[ticker])
+    if trade is None:
+        return None, None
+    return trade.premium, trade.current_price
+
 
 def _build_leg_item(leg: WheelSlotLeg) -> WheelSlotLegItem:
     t = leg.trade
@@ -58,6 +83,7 @@ def _build_leg_item(leg: WheelSlotLeg) -> WheelSlotLegItem:
         trade_strike_price=t.strike_price if t else None,
         trade_quantity=t.quantity if t else None,
         trade_premium=t.premium if t else None,
+        trade_current_price=t.current_price if t else None,
         trade_status=t.status if t else None,
         trade_etrade_symbol=t.etrade_symbol if t else None,
     )
@@ -76,13 +102,15 @@ def _build_slot_detail(slot: WheelSlot) -> WheelSlotDetail:
     )
 
 
-def _build_session_detail(session: WheelSession) -> WheelSessionDetail:
+async def _build_session_detail(db: AsyncSession, session: WheelSession) -> WheelSessionDetail:
     slots = [_build_slot_detail(s) for s in sorted(session.slots, key=lambda s: s.slot_number)]
     total = sum((s.total_premium for s in slots), Decimal("0"))
+    stock_cost_basis, stock_current_price = await _find_stock_position(db, session.ticker)
     return WheelSessionDetail(
         id=session.id, ticker=session.ticker, total_shares=session.total_shares,
         status=session.status, opened_at=session.opened_at, closed_at=session.closed_at,
         slots=slots, total_premium=total,
+        stock_cost_basis=stock_cost_basis, stock_current_price=stock_current_price,
     )
 
 
@@ -166,7 +194,7 @@ async def get_wheel_session(session_id: uuid.UUID, db: AsyncSession = Depends(ge
     session = result.scalar_one_or_none()
     if session is None:
         raise HTTPException(status_code=404, detail="Wheel session not found")
-    return _build_session_detail(session)
+    return await _build_session_detail(db, session)
 
 
 @router.patch("/{session_id}", response_model=WheelSessionSummary)
