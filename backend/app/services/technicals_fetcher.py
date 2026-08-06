@@ -238,6 +238,8 @@ def fetch_technicals(ticker: str, return_closes: bool = False) -> dict | tuple[d
             err = {"fetch_status": "error", "fetch_error": f"Insufficient daily history for {ticker}"}
             return (err, pd.Series(dtype=float)) if return_closes else err
 
+        volume_d = df_d["Volume"].dropna()
+
         df_w = client.get_price_history(ticker, "year", 2, "weekly", 1)
         close_w = pd.Series(dtype=float)
         if df_w is not None and not df_w.empty:
@@ -276,6 +278,7 @@ def fetch_technicals(ticker: str, return_closes: bool = False) -> dict | tuple[d
         weekly_crossover = _macd_crossover_state(close_w)
         daily_crossover = _macd_crossover_state(close_d)
         rsi_crossover = _rsi_crossover_state(close_d)
+        volume_spikes = _detect_volume_spikes(volume_d)
         sentiment = _infer_sentiment(macd["macd_signal"], price, ma_50d, rsi_14)
         next_earnings = _get_next_earnings(ticker)
 
@@ -292,6 +295,7 @@ def fetch_technicals(ticker: str, return_closes: bool = False) -> dict | tuple[d
             "rsi_periods_since_cross": rsi_crossover["periods_since_cross"],
             "rsi_strength_score": rsi_crossover["strength_score"],
             "rsi_trend": rsi_crossover["trend"],
+            "volume_spikes": volume_spikes,
             "ma_200d": ma_200d,
             "ma_50d": ma_50d,
             "price_vs_ma200": price_vs_ma200,

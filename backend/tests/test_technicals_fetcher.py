@@ -403,6 +403,18 @@ def test_fetch_technicals_includes_rsi_crossover_fields():
     assert "rsi_trend" in result
 
 
+def test_fetch_technicals_includes_volume_spikes_field():
+    mock_client = _mock_client(_make_daily_df(200), _make_weekly_df(60))
+    with patch("app.services.technicals_fetcher.get_schwab_client", return_value=mock_client), \
+         patch("yfinance.Ticker") as mock_ticker:
+        mock_ticker.return_value.calendar = {}
+        result = fetch_technicals("AAPL")
+
+    assert result["fetch_status"] == "ok"
+    assert "volume_spikes" in result
+    assert isinstance(result["volume_spikes"], list)
+
+
 def test_fetch_technicals_schwab_error_returns_error():
     from app.services.schwab_client import SchwabAPIError
     mock_client = MagicMock()
