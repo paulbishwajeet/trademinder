@@ -125,3 +125,36 @@ async def test_get_rsi_crossover_ticker_uppercased(client: AsyncClient):
     with patch("app.routers.market.fetch_rsi_signal", return_value=MOCK_RSI_SIGNAL) as mock_fn:
         await client.get("/api/market/rsi-crossover/aapl")
     mock_fn.assert_called_once_with("AAPL")
+
+
+MOCK_VOLUME_SPIKES = {
+    "spikes": [
+        {"date": "2026-07-31", "volume": 132489137, "avg_volume": 50812793, "ratio": 2.61},
+    ],
+    "lookback_days": 10,
+    "baseline_days": 20,
+    "threshold_multiple": 2.0,
+    "fetch_status": "ok",
+    "fetch_error": None,
+}
+
+
+async def test_get_volume_spikes_success(client: AsyncClient):
+    with patch("app.routers.market.fetch_volume_spikes", return_value=MOCK_VOLUME_SPIKES):
+        response = await client.get("/api/market/volume-spikes/AAPL")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["spikes"]) == 1
+    assert data["spikes"][0]["ratio"] == 2.61
+
+
+async def test_get_volume_spikes_no_data_returns_404(client: AsyncClient):
+    with patch("app.routers.market.fetch_volume_spikes", side_effect=ValueError("No daily data for INVALID")):
+        response = await client.get("/api/market/volume-spikes/INVALID")
+    assert response.status_code == 404
+
+
+async def test_get_volume_spikes_ticker_uppercased(client: AsyncClient):
+    with patch("app.routers.market.fetch_volume_spikes", return_value=MOCK_VOLUME_SPIKES) as mock_fn:
+        await client.get("/api/market/volume-spikes/aapl")
+    mock_fn.assert_called_once_with("AAPL")
