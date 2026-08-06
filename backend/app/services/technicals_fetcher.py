@@ -154,6 +154,33 @@ def _rsi_crossover_state(close: pd.Series) -> dict:
     }
 
 
+def _detect_volume_spikes(
+    volume: pd.Series,
+    lookback_days: int = 10,
+    baseline_days: int = 20,
+    threshold: float = 2.0,
+) -> list[dict]:
+    spikes = []
+    n = len(volume)
+    for i in range(max(0, n - lookback_days), n):
+        baseline = volume.iloc[max(0, i - baseline_days):i]
+        if len(baseline) < baseline_days:
+            continue
+        avg = float(baseline.mean())
+        if avg <= 0:
+            continue
+        today = float(volume.iloc[i])
+        ratio = round(today / avg, 2)
+        if ratio >= threshold:
+            spikes.append({
+                "date": str(volume.index[i].date()),
+                "volume": int(today),
+                "avg_volume": int(avg),
+                "ratio": ratio,
+            })
+    return spikes
+
+
 def _bollinger_position(price: float, upper: float, mid: float, lower: float) -> str:
     band_width = upper - lower
     if band_width == 0:

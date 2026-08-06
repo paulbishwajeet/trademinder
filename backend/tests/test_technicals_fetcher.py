@@ -256,6 +256,68 @@ def test_rsi_crossover_bullish_expanding():
     assert result["trend"] == "expanding"
 
 
+# --- unit tests for _detect_volume_spikes ---
+
+from app.services.technicals_fetcher import _detect_volume_spikes
+
+
+def _make_volume_series(values: list[int]) -> pd.Series:
+    idx = pd.date_range(end=pd.Timestamp("2026-08-03", tz="UTC"), periods=len(values) + 1, freq="B")[-len(values):]
+    return pd.Series(values, index=idx)
+
+
+def test_volume_spikes_none_in_flat_series():
+    volume = _make_volume_series([1_000_000] * 30)
+    assert _detect_volume_spikes(volume) == []
+
+
+def test_volume_spikes_insufficient_history_returns_empty():
+    volume = _make_volume_series([1_000_000] * 15)
+    assert _detect_volume_spikes(volume) == []
+
+
+def test_volume_spikes_single_spike():
+    values = [1_000_000] * 30
+    values[29] = 3_000_000
+    volume = _make_volume_series(values)
+
+    result = _detect_volume_spikes(volume)
+
+    assert result == [{"date": "2026-08-03", "volume": 3000000, "avg_volume": 1000000, "ratio": 3.0}]
+
+
+def test_volume_spikes_multiple_spikes():
+    values = [1_000_000] * 30
+    values[25] = 2_500_000
+    values[29] = 3_000_000
+    volume = _make_volume_series(values)
+
+    result = _detect_volume_spikes(volume)
+
+    assert result == [
+        {"date": "2026-07-28", "volume": 2500000, "avg_volume": 1000000, "ratio": 2.5},
+        {"date": "2026-08-03", "volume": 3000000, "avg_volume": 1075000, "ratio": 2.79},
+    ]
+
+
+def test_volume_spikes_boundary_at_threshold_included():
+    values = [1_000_000] * 21
+    values[20] = 2_000_000
+    volume = _make_volume_series(values)
+
+    result = _detect_volume_spikes(volume)
+
+    assert result == [{"date": "2026-08-03", "volume": 2000000, "avg_volume": 1000000, "ratio": 2.0}]
+
+
+def test_volume_spikes_below_threshold_excluded():
+    values = [1_000_000] * 21
+    values[20] = 1_900_000
+    volume = _make_volume_series(values)
+
+    assert _detect_volume_spikes(volume) == []
+
+
 # --- integration: fetch_technicals ---
 
 def test_fetch_technicals_success():
