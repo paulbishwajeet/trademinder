@@ -316,3 +316,20 @@ def fetch_macd_crossover(ticker: str) -> dict:
         "fetch_status": "ok",
         "fetch_error": None,
     }
+
+
+def fetch_rsi_signal(ticker: str) -> dict:
+    try:
+        client = get_schwab_client()
+        df_d = client.get_price_history(ticker, "year", 1, "daily", 1)
+    except SchwabAPIError as exc:
+        return {**_NONE_RSI_CROSSOVER_FIELDS, "fetch_status": "error", "fetch_error": str(exc)}
+
+    if df_d is None or df_d.empty:
+        raise ValueError(f"No daily data for {ticker}")
+
+    close_d = df_d["Close"].dropna()
+    result = _rsi_crossover_state(close_d)
+    result["fetch_status"] = "ok"
+    result["fetch_error"] = None
+    return result

@@ -409,3 +409,51 @@ def test_fetch_macd_crossover_insufficient_history_returns_ok_with_none_fields()
     assert result["fetch_status"] == "ok"
     assert result["weekly"]["cross_date"] is None
     assert result["daily"]["cross_date"] is None
+
+
+# --- fetch_rsi_signal (standalone) ---
+
+from app.services.technicals_fetcher import fetch_rsi_signal
+
+
+def test_fetch_rsi_signal_success():
+    mock_client = MagicMock()
+    mock_client.get_price_history.return_value = _make_daily_df(200)
+    with patch("app.services.technicals_fetcher.get_schwab_client", return_value=mock_client):
+        result = fetch_rsi_signal("AAPL")
+
+    assert result["fetch_status"] == "ok"
+    assert result["fetch_error"] is None
+    assert result["rsi_14"] is not None
+    mock_client.get_price_history.assert_called_once_with("AAPL", "year", 1, "daily", 1)
+
+
+def test_fetch_rsi_signal_no_data_raises_value_error():
+    mock_client = MagicMock()
+    mock_client.get_price_history.return_value = pd.DataFrame()
+    with patch("app.services.technicals_fetcher.get_schwab_client", return_value=mock_client):
+        with pytest.raises(ValueError):
+            fetch_rsi_signal("INVALID")
+
+
+def test_fetch_rsi_signal_schwab_error_returns_error_status():
+    from app.services.schwab_client import SchwabAPIError
+    mock_client = MagicMock()
+    mock_client.get_price_history.side_effect = SchwabAPIError("network error")
+    with patch("app.services.technicals_fetcher.get_schwab_client", return_value=mock_client):
+        result = fetch_rsi_signal("AAPL")
+
+    assert result["fetch_status"] == "error"
+    assert "network error" in result["fetch_error"]
+    assert result["rsi_14"] is None
+
+
+def test_fetch_rsi_signal_insufficient_history_returns_ok_with_none_crossover():
+    mock_client = MagicMock()
+    mock_client.get_price_history.return_value = _make_daily_df(10)
+    with patch("app.services.technicals_fetcher.get_schwab_client", return_value=mock_client):
+        result = fetch_rsi_signal("AAPL")
+
+    assert result["fetch_status"] == "ok"
+    assert result["rsi_14"] is None
+    assert result["cross_date"] is None
