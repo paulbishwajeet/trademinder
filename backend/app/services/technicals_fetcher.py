@@ -364,3 +364,31 @@ def fetch_rsi_signal(ticker: str) -> dict:
     result["fetch_status"] = "ok"
     result["fetch_error"] = None
     return result
+
+
+def fetch_volume_spikes(ticker: str) -> dict:
+    try:
+        client = get_schwab_client()
+        df_d = client.get_price_history(ticker, "year", 1, "daily", 1)
+    except SchwabAPIError as exc:
+        return {
+            "spikes": [],
+            "lookback_days": 10,
+            "baseline_days": 20,
+            "threshold_multiple": 2.0,
+            "fetch_status": "error",
+            "fetch_error": str(exc),
+        }
+
+    if df_d is None or df_d.empty:
+        raise ValueError(f"No daily data for {ticker}")
+
+    volume_d = df_d["Volume"].dropna()
+    return {
+        "spikes": _detect_volume_spikes(volume_d),
+        "lookback_days": 10,
+        "baseline_days": 20,
+        "threshold_multiple": 2.0,
+        "fetch_status": "ok",
+        "fetch_error": None,
+    }

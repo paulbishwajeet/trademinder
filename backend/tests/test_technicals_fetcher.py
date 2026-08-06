@@ -531,3 +531,43 @@ def test_fetch_rsi_signal_insufficient_history_returns_ok_with_none_crossover():
     assert result["fetch_status"] == "ok"
     assert result["rsi_14"] is None
     assert result["cross_date"] is None
+
+
+# --- fetch_volume_spikes (standalone) ---
+
+from app.services.technicals_fetcher import fetch_volume_spikes
+
+
+def test_fetch_volume_spikes_success():
+    mock_client = MagicMock()
+    mock_client.get_price_history.return_value = _make_daily_df(200)
+    with patch("app.services.technicals_fetcher.get_schwab_client", return_value=mock_client):
+        result = fetch_volume_spikes("AAPL")
+
+    assert result["fetch_status"] == "ok"
+    assert result["fetch_error"] is None
+    assert result["spikes"] == []
+    assert result["lookback_days"] == 10
+    assert result["baseline_days"] == 20
+    assert result["threshold_multiple"] == 2.0
+    mock_client.get_price_history.assert_called_once_with("AAPL", "year", 1, "daily", 1)
+
+
+def test_fetch_volume_spikes_no_data_raises_value_error():
+    mock_client = MagicMock()
+    mock_client.get_price_history.return_value = pd.DataFrame()
+    with patch("app.services.technicals_fetcher.get_schwab_client", return_value=mock_client):
+        with pytest.raises(ValueError):
+            fetch_volume_spikes("INVALID")
+
+
+def test_fetch_volume_spikes_schwab_error_returns_error_status():
+    from app.services.schwab_client import SchwabAPIError
+    mock_client = MagicMock()
+    mock_client.get_price_history.side_effect = SchwabAPIError("network error")
+    with patch("app.services.technicals_fetcher.get_schwab_client", return_value=mock_client):
+        result = fetch_volume_spikes("AAPL")
+
+    assert result["fetch_status"] == "error"
+    assert "network error" in result["fetch_error"]
+    assert result["spikes"] == []
