@@ -324,6 +324,23 @@ def test_fetch_technicals_includes_macd_crossover_fields():
         assert f"macd_{prefix}_trend" in result
 
 
+def test_fetch_technicals_includes_rsi_crossover_fields():
+    mock_client = _mock_client(_make_daily_df(200), _make_weekly_df(60))
+    with patch("app.services.technicals_fetcher.get_schwab_client", return_value=mock_client), \
+         patch("yfinance.Ticker") as mock_ticker:
+        mock_ticker.return_value.calendar = {}
+        result = fetch_technicals("AAPL")
+
+    assert result["fetch_status"] == "ok"
+    assert result["rsi_14"] is not None
+    assert "rsi_ma_14" in result
+    assert "rsi_cross_date" in result
+    assert "rsi_cross_direction" in result
+    assert "rsi_periods_since_cross" in result
+    assert "rsi_strength_score" in result
+    assert "rsi_trend" in result
+
+
 def test_fetch_technicals_schwab_error_returns_error():
     from app.services.schwab_client import SchwabAPIError
     mock_client = MagicMock()

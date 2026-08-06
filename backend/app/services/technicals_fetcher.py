@@ -248,6 +248,7 @@ def fetch_technicals(ticker: str, return_closes: bool = False) -> dict | tuple[d
         macd = _compute_macd_weekly(close_w)
         weekly_crossover = _macd_crossover_state(close_w)
         daily_crossover = _macd_crossover_state(close_d)
+        rsi_crossover = _rsi_crossover_state(close_d)
         sentiment = _infer_sentiment(macd["macd_signal"], price, ma_50d, rsi_14)
         next_earnings = _get_next_earnings(ticker)
 
@@ -258,6 +259,12 @@ def fetch_technicals(ticker: str, return_closes: bool = False) -> dict | tuple[d
             **{f"macd_daily_{k}": v for k, v in daily_crossover.items()},
             "rsi_14": rsi_14,
             "rsi_result": rsi_result,
+            "rsi_ma_14": rsi_crossover["rsi_ma_14"],
+            "rsi_cross_date": rsi_crossover["cross_date"],
+            "rsi_cross_direction": rsi_crossover["cross_direction"],
+            "rsi_periods_since_cross": rsi_crossover["periods_since_cross"],
+            "rsi_strength_score": rsi_crossover["strength_score"],
+            "rsi_trend": rsi_crossover["trend"],
             "ma_200d": ma_200d,
             "ma_50d": ma_50d,
             "price_vs_ma200": price_vs_ma200,
