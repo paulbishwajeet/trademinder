@@ -172,6 +172,90 @@ def test_macd_crossover_expanding_at_peak():
     assert result["trend"] == "expanding"
 
 
+# --- unit tests for _rsi_crossover_state ---
+
+from app.services.technicals_fetcher import _rsi_crossover_state
+
+
+def _make_daily_close(values: list[float]) -> pd.Series:
+    idx = pd.date_range(end=pd.Timestamp("2026-08-03", tz="UTC"), periods=len(values) + 1, freq="B")[-len(values):]
+    return pd.Series(values, index=idx)
+
+
+def test_rsi_crossover_insufficient_for_rsi_returns_all_none():
+    close = _make_daily_close([100.0] * 10)
+    result = _rsi_crossover_state(close)
+    assert result == {
+        "rsi_14": None,
+        "rsi_ma_14": None,
+        "cross_date": None,
+        "cross_direction": None,
+        "periods_since_cross": None,
+        "strength_score": None,
+        "trend": None,
+    }
+
+
+def test_rsi_crossover_enough_for_rsi_not_for_crossover():
+    import math
+    close = _make_daily_close([100.0 + 5 * math.sin(i / 2) for i in range(40)])
+    result = _rsi_crossover_state(close)
+
+    assert result["rsi_14"] == 61.6
+    assert result["rsi_ma_14"] == 57.23
+    assert result["cross_date"] is None
+    assert result["cross_direction"] is None
+    assert result["strength_score"] is None
+    assert result["trend"] is None
+
+
+def test_rsi_crossover_bearish_fading_near_flip():
+    import math
+    close = _make_daily_close([100.0 + 10 * math.sin(i / 6) * math.exp(-i / 300) + i * 0.02 for i in range(145)])
+    result = _rsi_crossover_state(close)
+
+    assert result["rsi_14"] == 28.17
+    assert result["rsi_ma_14"] == 28.24
+    assert result["cross_date"] == "2026-07-08"
+    assert result["cross_direction"] == "bearish"
+    assert result["periods_since_cross"] == 18
+    assert result["strength_score"] == 0.3
+    assert result["trend"] == "fading_near_flip"
+
+
+def test_rsi_crossover_bearish_squeezing():
+    import math
+    close = _make_daily_close([100.0 + 10 * math.sin(i / 6) * math.exp(-i / 300) + i * 0.02 for i in range(140)])
+    result = _rsi_crossover_state(close)
+
+    assert result["cross_direction"] == "bearish"
+    assert result["periods_since_cross"] == 13
+    assert result["strength_score"] == 64.8
+    assert result["trend"] == "squeezing"
+
+
+def test_rsi_crossover_bullish_holding_strong():
+    import math
+    close = _make_daily_close([100.0 + 10 * math.sin(i / 6) * math.exp(-i / 300) + i * 0.02 for i in range(155)])
+    result = _rsi_crossover_state(close)
+
+    assert result["cross_direction"] == "bullish"
+    assert result["periods_since_cross"] == 9
+    assert result["strength_score"] == 94.4
+    assert result["trend"] == "holding_strong"
+
+
+def test_rsi_crossover_bullish_expanding():
+    import math
+    close = _make_daily_close([100.0 + 10 * math.sin(i / 6) * math.exp(-i / 300) + i * 0.02 for i in range(150)])
+    result = _rsi_crossover_state(close)
+
+    assert result["cross_direction"] == "bullish"
+    assert result["periods_since_cross"] == 4
+    assert result["strength_score"] == 100.0
+    assert result["trend"] == "expanding"
+
+
 # --- integration: fetch_technicals ---
 
 def test_fetch_technicals_success():

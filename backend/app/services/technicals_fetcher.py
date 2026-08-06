@@ -82,6 +82,78 @@ def _macd_crossover_state(close: pd.Series) -> dict:
     }
 
 
+_NONE_RSI_CROSSOVER_FIELDS: dict = {
+    "rsi_14": None,
+    "rsi_ma_14": None,
+    "cross_date": None,
+    "cross_direction": None,
+    "periods_since_cross": None,
+    "strength_score": None,
+    "trend": None,
+}
+
+
+def _rsi_crossover_state(close: pd.Series) -> dict:
+    if len(close) < 15:
+        return dict(_NONE_RSI_CROSSOVER_FIELDS)
+
+    delta = close.diff()
+    gain = delta.clip(lower=0)
+    loss = (-delta).clip(lower=0)
+    avg_gain = gain.ewm(alpha=1 / 14, min_periods=14, adjust=False).mean()
+    avg_loss = loss.ewm(alpha=1 / 14, min_periods=14, adjust=False).mean()
+    rs = avg_gain / avg_loss.replace(0, float("nan"))
+    rsi = (100 - (100 / (1 + rs))).fillna(100)
+
+    rsi_14 = round(float(rsi.iloc[-1]), 2)
+    rsi_ma = rsi.rolling(14).mean()
+    rsi_ma_14 = round(float(rsi_ma.iloc[-1]), 2) if not pd.isna(rsi_ma.iloc[-1]) else None
+
+    diff = (rsi - rsi_ma).dropna()
+    if len(diff) < 35:
+        return {**_NONE_RSI_CROSSOVER_FIELDS, "rsi_14": rsi_14, "rsi_ma_14": rsi_ma_14}
+
+    sign = diff.apply(lambda x: 1 if x > 0 else -1)
+    crossovers = sign[sign != sign.shift(1)].iloc[1:]
+    if crossovers.empty:
+        return {**_NONE_RSI_CROSSOVER_FIELDS, "rsi_14": rsi_14, "rsi_ma_14": rsi_ma_14}
+
+    last_cross_date = crossovers.index[-1]
+    direction = "bullish" if crossovers.iloc[-1] == 1 else "bearish"
+
+    since = diff[diff.index >= last_cross_date]
+    periods_since = len(since) - 1
+
+    if direction == "bullish":
+        peak_val = float(since.max())
+        peak_date = since.idxmax()
+    else:
+        peak_val = float(since.min())
+        peak_date = since.idxmin()
+
+    current = float(since.iloc[-1])
+    score = round((current / peak_val) * 100, 1) if peak_val != 0 else 0.0
+
+    if peak_date == since.index[-1]:
+        trend = "expanding"
+    elif score >= 70:
+        trend = "holding_strong"
+    elif score >= 30:
+        trend = "squeezing"
+    else:
+        trend = "fading_near_flip"
+
+    return {
+        "rsi_14": rsi_14,
+        "rsi_ma_14": rsi_ma_14,
+        "cross_date": str(last_cross_date.date()),
+        "cross_direction": direction,
+        "periods_since_cross": periods_since,
+        "strength_score": score,
+        "trend": trend,
+    }
+
+
 def _bollinger_position(price: float, upper: float, mid: float, lower: float) -> str:
     band_width = upper - lower
     if band_width == 0:
