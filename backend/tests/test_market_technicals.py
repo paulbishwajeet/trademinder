@@ -90,3 +90,38 @@ async def test_get_macd_crossover_ticker_uppercased(client: AsyncClient):
     with patch("app.routers.market.fetch_macd_crossover", return_value=MOCK_CROSSOVER) as mock_fn:
         await client.get("/api/market/macd-crossover/aapl")
     mock_fn.assert_called_once_with("AAPL")
+
+
+MOCK_RSI_SIGNAL = {
+    "rsi_14": 44.68,
+    "rsi_ma_14": 60.73,
+    "cross_date": "2026-07-30",
+    "cross_direction": "bearish",
+    "periods_since_cross": 3,
+    "strength_score": 72.6,
+    "trend": "holding_strong",
+    "fetch_status": "ok",
+    "fetch_error": None,
+}
+
+
+async def test_get_rsi_crossover_success(client: AsyncClient):
+    with patch("app.routers.market.fetch_rsi_signal", return_value=MOCK_RSI_SIGNAL):
+        response = await client.get("/api/market/rsi-crossover/AAPL")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["rsi_14"] == 44.68
+    assert data["cross_direction"] == "bearish"
+    assert data["strength_score"] == 72.6
+
+
+async def test_get_rsi_crossover_no_data_returns_404(client: AsyncClient):
+    with patch("app.routers.market.fetch_rsi_signal", side_effect=ValueError("No daily data for INVALID")):
+        response = await client.get("/api/market/rsi-crossover/INVALID")
+    assert response.status_code == 404
+
+
+async def test_get_rsi_crossover_ticker_uppercased(client: AsyncClient):
+    with patch("app.routers.market.fetch_rsi_signal", return_value=MOCK_RSI_SIGNAL) as mock_fn:
+        await client.get("/api/market/rsi-crossover/aapl")
+    mock_fn.assert_called_once_with("AAPL")

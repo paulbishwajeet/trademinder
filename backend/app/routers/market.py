@@ -13,7 +13,7 @@ from app.database import get_db
 from app.services.alert_engine import run as run_alert_engine
 from app.services.options_scanner import run_scan
 from app.services.price_fetcher import fetch_quote, fetch_rsi_batch, refresh_open_trades
-from app.services.technicals_fetcher import fetch_technicals, fetch_macd_crossover
+from app.services.technicals_fetcher import fetch_technicals, fetch_macd_crossover, fetch_rsi_signal
 from app.services.cc_signal import compute_cc_signal, compute_combined_signal, compute_sp_signal, fetch_option_mid
 
 router = APIRouter(prefix="/api/market", tags=["market"])
@@ -84,6 +84,16 @@ async def get_macd_crossover(ticker: str):
     loop = asyncio.get_running_loop()
     try:
         result = await loop.run_in_executor(None, fetch_macd_crossover, ticker.upper())
+        return result
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@router.get("/rsi-crossover/{ticker}")
+async def get_rsi_crossover(ticker: str):
+    loop = asyncio.get_running_loop()
+    try:
+        result = await loop.run_in_executor(None, fetch_rsi_signal, ticker.upper())
         return result
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
