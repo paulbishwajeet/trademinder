@@ -12,7 +12,7 @@ Trader wants a persistent watchlist of tickers with a compact, at-a-glance techn
 
 1. A `/screener` page with a grid of watched symbols, each row showing: Symbol, Price, Change%, IV Rank/Percentile, RSI(d), MACD(w), 20ma/50ma/100ma/200ma (color-coded vs price), Bollinger position, "fetched X ago", and a commentary entry point.
 2. Rows are backed by a new `screener` DB table — populated by an explicit fetch action, not live on every page load. Page load reads persisted data instantly.
-3. Add new symbols to the watchlist.
+3. Add new symbols to the watchlist, either directly (symbol + category → instant add+fetch) or via a lookup-first flow (punch in a symbol, click Fetch to preview its data, then decide whether to add it).
 4. Fetch technicals for one symbol on demand, or all symbols at once (sequential background job with progress polling).
 5. Expandable rows reveal a fuller technical breakdown (Bollinger bands, MACD daily+weekly crossover trend, RSI trend, next earnings, volume spikes).
 6. Per-symbol commentary thread with add/edit/delete (a new `screener_commentary` table, many-to-one to `screener`).
@@ -101,7 +101,10 @@ Error handling: any `SchwabAPIError` or exception → `{"fetch_status": "error",
 **`backend/app/routers/screener.py`** — new router, `prefix="/api/screener"`:
 
 - `GET /api/screener` → list all rows from DB, ordered by `symbol`. Pure read, no external calls.
-- `POST /api/screener` (body: `{symbol, category?}`) → uppercase symbol, reject if already exists (409), create row, run `fetch_screener_row` synchronously via thread executor (single-ticker fetch, a few seconds), persist result including `last_fetched_at = now()`, return the row. If the fetch itself errors, the row is still created with `fetch_status="error"` (user sees the symbol added but can retry fetch).
+- `GET /api/screener/preview/{ticker}` → read-only lookup, does **not** write to the DB. Runs `fetch_screener_row(ticker)` via thread executor and returns the same field shape as `ScreenerRowResponse` minus `id`/`created_at`, plus `already_tracked: bool` (true if a row for that symbol already exists, so the UI can warn instead of silently allowing a duplicate). Powers the "punch in a symbol → Fetch → review → Add" flow described below. No 404 on missing history — same error shape as other fetch endpoints (`fetch_status: "error"`), since the user is actively probing an arbitrary ticker and a hard error response is worse UX than an inline error state.
+- `POST /api/screener` (body: `{symbol, category?, precomputed?}`) → uppercase symbol, reject if already exists (409). Two modes:
+  - **Direct add** (`precomputed` omitted): create row, run `fetch_screener_row` synchronously via thread executor (single-ticker fetch, a few seconds), persist result including `last_fetched_at = now()`, return the row. If the fetch itself errors, the row is still created with `fetch_status="error"` (user sees the symbol added but can retry fetch).
+  - **Commit from preview** (`precomputed` provided, shaped like the `GET /preview` response): skip re-fetching entirely — persist the already-fetched field values directly with `last_fetched_at = now()`. Avoids a redundant round of Schwab calls when the user already previewed the data seconds earlier.
 - `POST /api/screener/{symbol}/fetch` → re-run `fetch_screener_row` for one existing row, update it, return it. 404 if symbol not tracked.
 - `POST /api/screener/fetch-all` → for every tracked symbol, spawn an in-memory sequential background job (see below), return `{"job_id": ...}`.
 - `GET /api/screener/jobs/{job_id}` → `{"status": "running"|"done", "total": N, "completed": N, "errors": [{"symbol": ..., "error": ...}]}`. 404 for unknown job_id.
@@ -116,7 +119,7 @@ Error handling: any `SchwabAPIError` or exception → `{"fetch_status": "error",
 
 ### Backend: schemas
 
-**`backend/app/schemas/screener.py`** — new file: `ScreenerRowCreate`, `ScreenerRowResponse` (full table shape), `ScreenerRowPatch` (sector/category only), `ScreenerCommentaryCreate`, `ScreenerCommentaryUpdate`, `ScreenerCommentaryResponse`, `ScreenerJobStatus`.
+**`backend/app/schemas/screener.py`** — new file: `ScreenerRowCreate` (`symbol`, `category?`, `precomputed: ScreenerPreviewData?`), `ScreenerRowResponse` (full table shape), `ScreenerPreviewData` (same fields as `ScreenerRowResponse` minus `id`/`created_at`, used both as the `GET /preview` response shape — with `already_tracked` added — and as the `precomputed` input shape on `POST /api/screener`), `ScreenerRowPatch` (sector/category only), `ScreenerCommentaryCreate`, `ScreenerCommentaryUpdate`, `ScreenerCommentaryResponse`, `ScreenerJobStatus`.
 
 ### Frontend
 
@@ -128,13 +131,15 @@ Error handling: any `SchwabAPIError` or exception → `{"fetch_status": "error",
 
 **`frontend/src/components/Screener/ScreenerDetailRow.tsx`** — expanded content: Bollinger upper/mid/lower values, MACD daily + weekly crossover trend/strength (`macd_daily_*`/`macd_weekly_*` fields already computed by `fetch_technicals`), RSI trend, next earnings date, volume spike list (date/ratio).
 
-**`frontend/src/components/Screener/AddSymbolForm.tsx`** — ticker input (+ optional category text input) → `POST /api/screener`, shows inline loading state during the synchronous fetch, appends result to the table on success, surfaces `fetch_status: "error"` inline without blocking the add.
+**`frontend/src/components/Screener/AddSymbolForm.tsx`** — ticker input (+ optional category text input) → `POST /api/screener` (direct-add mode, no `precomputed`), shows inline loading state during the synchronous fetch, appends result to the table on success, surfaces `fetch_status: "error"` inline without blocking the add.
+
+**`frontend/src/components/Screener/SymbolLookup.tsx`** — separate "quick lookup" section on the page, alongside `AddSymbolForm`: a symbol input + **Fetch** button calling `GET /api/screener/preview/{ticker}`. While loading, shows a spinner; on success, renders a preview card using the same column layout/labels as the main grid row (price, change%, IV pctl, RSI, MACD, MAs, BB, etc.) plus an **Add to Screener** button. If `already_tracked` is true, the button is replaced with a disabled "Already tracked" state (or relabeled to jump to that row) instead of allowing a duplicate. Clicking **Add to Screener** calls `POST /api/screener` with `{symbol, precomputed: <the previewed data>}` — committing without re-fetching — then appends/updates the row in the grid and clears the lookup form. This is independent of `AddSymbolForm`; both write through the same `POST /api/screener` endpoint, just with different payload shapes.
 
 **`frontend/src/components/Screener/ScreenerCommentaryCell.tsx`** — same Radix `Dialog` pattern as `CommentaryCell.tsx`, backed by a new `ScreenerCommentaryThread.tsx` (adapted from `CommentaryThread.tsx`) that additionally supports inline edit (click note → textarea + Save/Cancel) since screener commentary is editable, unlike trade commentary.
 
-**`frontend/src/api/screener.ts`** — typed wrappers: `list()`, `add()`, `fetchOne(symbol)`, `fetchAll()`, `getJobStatus(jobId)`, `remove(symbol)`, `patch(symbol, {sector?, category?})`, `commentary.{list,add,update,remove}`.
+**`frontend/src/api/screener.ts`** — typed wrappers: `list()`, `preview(ticker)`, `add()`, `fetchOne(symbol)`, `fetchAll()`, `getJobStatus(jobId)`, `remove(symbol)`, `patch(symbol, {sector?, category?})`, `commentary.{list,add,update,remove}`.
 
-**`frontend/src/types/index.ts`** — add `ScreenerRow`, `ScreenerCommentary`, `ScreenerJobStatus` types matching the backend schemas.
+**`frontend/src/types/index.ts`** — add `ScreenerRow`, `ScreenerPreviewData` (extends the row shape with `already_tracked`), `ScreenerCommentary`, `ScreenerJobStatus` types matching the backend schemas.
 
 **Fetch-all polling:** `ScreenerPage` calls `fetchAll()` → gets `job_id` → polls `getJobStatus(job_id)` every 2s until `status: "done"`, showing a progress indicator (`completed/total`), then calls `list()` again to refresh the grid with final data. Simple `setInterval`/`useEffect` polling, no websockets — consistent with the rest of the app having no real-time infrastructure.
 
@@ -142,9 +147,9 @@ Error handling: any `SchwabAPIError` or exception → `{"fetch_status": "error",
 
 - Backend unit tests for `screener_fetcher.fetch_screener_row`: success path (mocked Schwab client), `SchwabAPIError` propagation, `fetch_technicals` error short-circuit.
 - Backend unit tests for the relocated `compute_iv_percentile_from_chain` (moved, not changed — existing `cc_signal` tests covering it should still pass unmodified against the new import path).
-- Router tests for `screener.py`: add symbol (success + duplicate 409), get/list, fetch one (success + 404), fetch-all job lifecycle (status transitions running→done, completed count increments), delete, patch sector/category, commentary CRUD (including edit setting `updated_at`).
+- Router tests for `screener.py`: add symbol direct-mode (success + duplicate 409), add symbol via `precomputed` (asserts `fetch_screener_row` is NOT called again), preview endpoint (success shape incl. `already_tracked` true/false), get/list, fetch one (success + 404), fetch-all job lifecycle (status transitions running→done, completed count increments), delete, patch sector/category, commentary CRUD (including edit setting `updated_at`).
 - Migration test: upgrade/downgrade round-trip for the two new tables.
-- Frontend: manual verification via dev server — add a symbol, confirm row populates; expand a row, confirm detail fields render; trigger fetch-all with 2-3 symbols, confirm progress polling and final refresh; add/edit/delete a commentary entry.
+- Frontend: manual verification via dev server — add a symbol via `AddSymbolForm`, confirm row populates; use `SymbolLookup` to preview a ticker, confirm preview card renders, click Add to Screener, confirm it appears in the grid without a second fetch delay; preview an already-tracked symbol, confirm `already_tracked` state shows; expand a row, confirm detail fields render; trigger fetch-all with 2-3 symbols, confirm progress polling and final refresh; add/edit/delete a commentary entry.
 
 ## Open Questions
 
