@@ -279,3 +279,73 @@ export function isStale(trade: Trade): boolean {
   if (!trade.last_etrade_seen) return false
   return new Date(trade.last_etrade_seen) < new Date(Date.now() - 24 * 60 * 60 * 1000)
 }
+
+export interface VolumeSpike {
+  date: string
+  volume: number
+  avg_volume: number
+  ratio: number
+}
+
+// Decimal-backed fields are serialized as JSON strings by this repo's Pydantic
+// schemas (e.g. "195.50", not 195.5) — parseFloat() at the point of use, don't
+// treat these as numbers. volume_spikes entries are plain JSON ints/floats
+// (not Decimal), so VolumeSpike stays numeric.
+export interface ScreenerFetchedFields {
+  sector: string | null
+  price: string | null
+  prev_close: string | null
+  change_pct: string | null
+  iv_rank: string | null
+  iv_percentile: string | null
+  rsi_14: string | null
+  macd_weekly_signal: string | null
+  macd_daily_signal: string | null
+  ma_20d: string | null
+  ma_50d: string | null
+  ma_100d: string | null
+  ma_200d: string | null
+  bollinger_upper: string | null
+  bollinger_mid: string | null
+  bollinger_lower: string | null
+  bollinger_position: string | null
+  next_earnings_date: string | null
+  volume_spikes: VolumeSpike[] | null
+  fetch_status: string | null
+  fetch_error: string | null
+}
+
+export interface ScreenerRow extends ScreenerFetchedFields {
+  id: string
+  symbol: string
+  category: string | null
+  last_fetched_at: string | null
+  created_at: string
+}
+
+export interface ScreenerPreview extends ScreenerFetchedFields {
+  symbol: string
+  already_tracked: boolean
+}
+
+export interface ScreenerCommentary {
+  id: string
+  screener_id: string
+  note: string
+  tags: string[] | null
+  created_at: string
+  updated_at: string | null
+}
+
+export interface ScreenerJobError {
+  symbol: string
+  error: string
+}
+
+export interface ScreenerJobStatus {
+  job_id: string
+  status: 'running' | 'done'
+  total: number
+  completed: number
+  errors: ScreenerJobError[]
+}

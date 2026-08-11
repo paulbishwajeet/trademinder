@@ -12,7 +12,7 @@
 
 - Backend routes live under `backend/app/routers/`, models under `backend/app/models/`, schemas under `backend/app/schemas/`, services under `backend/app/services/` — follow existing per-file-per-concern layout.
 - Frontend: TypeScript strict mode, functional components with hooks, Tailwind utility classes only, no new CSS files, API calls go through typed wrappers in `frontend/src/api/`.
-- All monetary/technical numeric fields use `Decimal` in Python / `number` in TypeScript (matches existing `Rationale`/`TechnicalsData` convention — Pydantic serializes `Decimal` to a JSON number, not a string).
+- All monetary/technical numeric fields use `Decimal` in Python. **Correction discovered during Task 7 implementation/review:** this repo's Pydantic schemas serialize `Decimal` to a JSON **string** (e.g. `"195.50"`), not a number — confirmed empirically (`Decimal('195.50')` → `{"x":"195.50"}` via `model_dump_json()`) and consistent with this repo's existing `test_wheel_crud.py` convention. The pre-existing `Rationale`/`TechnicalsData` TS interfaces are typed `number | null` for these fields, but nothing in the existing frontend does arithmetic on them (only `String(value)` display in `CommentaryThread.tsx`), so that inaccuracy is latent and harmless there. The Screener frontend DOES need arithmetic (MA color comparison, `.toFixed()` formatting) on these fields, so Tasks 10/11/14 below are written with `string | null` for every Decimal-backed field and explicit `parseFloat`/`Number()` conversion at the point of use — do not copy the `number | null` pattern from `Rationale`/`TechnicalsData`. Fields inside `volume_spikes` (a raw JSON list of plain Python `int`/`float`, not `Decimal`) remain JSON numbers as before.
 - New DB objects: table `screener`, table `screener_commentary`, both created via a single new Alembic migration (`010`), matching the numbered-revision convention in `backend/alembic/versions/`.
 - No new background-job infrastructure (no Celery/RQ) — sequential `asyncio.create_task` + in-memory dict, same weight class as the existing in-memory `_summary_cache` in `commentary.py`.
 - Spec reference: `docs/superpowers/specs/2026-08-10-screener-page-design.md`.
@@ -1634,23 +1634,27 @@ export interface VolumeSpike {
   ratio: number
 }
 
+// Decimal-backed fields are serialized as JSON strings by this repo's Pydantic
+// schemas (e.g. "195.50", not 195.5) — parseFloat() at the point of use, don't
+// treat these as numbers. volume_spikes entries are plain JSON ints/floats
+// (not Decimal), so VolumeSpike stays numeric.
 export interface ScreenerFetchedFields {
   sector: string | null
-  price: number | null
-  prev_close: number | null
-  change_pct: number | null
-  iv_rank: number | null
-  iv_percentile: number | null
-  rsi_14: number | null
+  price: string | null
+  prev_close: string | null
+  change_pct: string | null
+  iv_rank: string | null
+  iv_percentile: string | null
+  rsi_14: string | null
   macd_weekly_signal: string | null
   macd_daily_signal: string | null
-  ma_20d: number | null
-  ma_50d: number | null
-  ma_100d: number | null
-  ma_200d: number | null
-  bollinger_upper: number | null
-  bollinger_mid: number | null
-  bollinger_lower: number | null
+  ma_20d: string | null
+  ma_50d: string | null
+  ma_100d: string | null
+  ma_200d: string | null
+  bollinger_upper: string | null
+  bollinger_mid: string | null
+  bollinger_lower: string | null
   bollinger_position: string | null
   next_earnings_date: string | null
   volume_spikes: VolumeSpike[] | null
@@ -1875,12 +1879,21 @@ const BB_LABELS: Record<string, string> = {
 
 const COLUMNS = ['Symbol', 'Price', 'Change%', 'IV Pctl', 'RSI(d)', 'MACD(w)', '20ma', '50ma', '100ma', '200ma', 'BB', 'Fetched', 'Commentary', '']
 
-function MaCell({ price, ma }: { price: number | null; ma: number | null }) {
-  if (ma == null) return <td className="px-3 py-2 text-gray-300">—</td>
-  const below = price != null && price < ma
+// Decimal fields arrive as strings (see types/index.ts note) — parse before math/formatting.
+function toNum(v: string | null): number | null {
+  if (v == null) return null
+  const n = parseFloat(v)
+  return Number.isNaN(n) ? null : n
+}
+
+function MaCell({ price, ma }: { price: string | null; ma: string | null }) {
+  const maNum = toNum(ma)
+  if (maNum == null) return <td className="px-3 py-2 text-gray-300">—</td>
+  const priceNum = toNum(price)
+  const below = priceNum != null && priceNum < maNum
   return (
     <td className={`px-3 py-2 font-medium ${below ? 'text-red-600' : 'text-green-600'}`}>
-      {ma.toFixed(2)}
+      {maNum.toFixed(2)}
     </td>
   )
 }
@@ -1908,12 +1921,12 @@ function ScreenerRowView({ row, onRefreshRow, onRemove }: { row: ScreenerRow; on
             {row.symbol}
           </button>
         </td>
-        <td className="px-3 py-2">{row.price != null ? `$${row.price.toFixed(2)}` : '—'}</td>
-        <td className={`px-3 py-2 font-medium ${row.change_pct != null && row.change_pct < 0 ? 'text-red-600' : 'text-green-600'}`}>
-          {row.change_pct != null ? `${row.change_pct.toFixed(2)}%` : '—'}
+        <td className="px-3 py-2">{toNum(row.price) != null ? `$${toNum(row.price)!.toFixed(2)}` : '—'}</td>
+        <td className={`px-3 py-2 font-medium ${(toNum(row.change_pct) ?? 0) < 0 ? 'text-red-600' : 'text-green-600'}`}>
+          {toNum(row.change_pct) != null ? `${toNum(row.change_pct)!.toFixed(2)}%` : '—'}
         </td>
-        <td className="px-3 py-2">{row.iv_percentile != null ? `${row.iv_percentile.toFixed(0)}%` : '—'}</td>
-        <td className="px-3 py-2">{row.rsi_14 != null ? row.rsi_14.toFixed(1) : '—'}</td>
+        <td className="px-3 py-2">{toNum(row.iv_percentile) != null ? `${toNum(row.iv_percentile)!.toFixed(0)}%` : '—'}</td>
+        <td className="px-3 py-2">{toNum(row.rsi_14) != null ? toNum(row.rsi_14)!.toFixed(1) : '—'}</td>
         <td className="px-3 py-2">
           <span className={`px-2 py-0.5 rounded text-xs font-medium ${MACD_COLORS[row.macd_weekly_signal ?? 'neutral']}`}>
             {row.macd_weekly_signal ?? '—'}

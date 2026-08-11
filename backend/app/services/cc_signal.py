@@ -1,18 +1,17 @@
 import json
 import logging
-import math
 import os
 import time
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
-import numpy as np
 import pandas as pd
 
 from typing import Optional
 
 from app.services.price_fetcher import _compute_rsi_14
 from app.services.schwab_client import get_schwab_client
+from app.services.technicals_fetcher import compute_iv_percentile_from_chain
 
 
 def _bollinger_pos_from_closes(closes: pd.Series, window: int) -> Optional[str]:
@@ -239,11 +238,11 @@ def _compute_combined_fresh(ticker: str, dte: Optional[int] = None) -> dict:
     cc_strike_otm_pct = _standard_strike_otm_pct(call_chain, spot, target_delta=0.30, contract_type="CALL")
     sp_strike_otm_pct = _standard_strike_otm_pct(put_chain, spot, target_delta=0.30, contract_type="PUT")
 
-    cc_iv_pct, cc_atm_iv = _compute_iv_percentile_from_chain(close_d, call_chain, ticker, contract_type="CALL")
+    cc_iv_pct, cc_atm_iv = compute_iv_percentile_from_chain(close_d, call_chain, ticker, contract_type="CALL")
     cc_score, cc_grade, cc_factors = _score_factors(technicals, cc_iv_pct, cc_atm_iv, close_d, dte=dte, strike_otm_pct=cc_strike_otm_pct)
     commentary_data = _get_llm_commentary(ticker, cc_score, cc_grade, cc_factors, technicals, cc_iv_pct, spot)
 
-    sp_iv_pct, sp_atm_iv = _compute_iv_percentile_from_chain(close_d, put_chain, ticker, contract_type="PUT")
+    sp_iv_pct, sp_atm_iv = compute_iv_percentile_from_chain(close_d, put_chain, ticker, contract_type="PUT")
     sp_score, sp_grade, sp_factors = _score_sp_factors(technicals, sp_iv_pct, sp_atm_iv, close_d, dte=dte, strike_otm_pct=sp_strike_otm_pct)
 
     return {
@@ -278,58 +277,6 @@ def _compute_combined_fresh(ticker: str, dte: Optional[int] = None) -> dict:
             "fetch_error": None,
         },
     }
-
-
-def _compute_iv_percentile_from_chain(
-    daily_closes: pd.Series, chain: dict, ticker: str = "?", contract_type: str = "CALL"
-) -> tuple[float | None, float | None]:
-    try:
-        log_returns = np.log(daily_closes / daily_closes.shift(1)).dropna()
-        if len(log_returns) < 60:
-            return None, None
-        hv30 = log_returns.rolling(window=30).std() * math.sqrt(252)
-        hv30 = hv30.dropna()
-        if len(hv30) < 30:
-            return None, None
-
-        exp_map_key = "putExpDateMap" if contract_type == "PUT" else "callExpDateMap"
-        call_exp_map = chain.get(exp_map_key, {})
-        if not call_exp_map:
-            return None, None
-
-        spot = float(chain.get("underlyingPrice", 0))
-
-        today = date.today()
-        best_exp_key = None
-        best_dist = float("inf")
-        for exp_key in call_exp_map:
-            exp_str = exp_key.split(":")[0]
-            exp_date = datetime.strptime(exp_str, "%Y-%m-%d").date()
-            dte = (exp_date - today).days
-            if dte < 14:
-                continue
-            dist = abs(dte - 37)
-            if dist < best_dist:
-                best_dist = dist
-                best_exp_key = exp_key
-
-        if best_exp_key is None:
-            return None, None
-
-        strikes = call_exp_map[best_exp_key]
-        best_strike_key = min(strikes.keys(), key=lambda s: abs(float(s) - spot))
-        atm_option = strikes[best_strike_key][0]
-        raw_iv = float(atm_option.get("volatility", 0))
-        if raw_iv <= 1.0:
-            return None, None
-        atm_iv = raw_iv / 100.0
-
-        pct = float((hv30 < atm_iv).sum()) / len(hv30) * 100
-        return round(pct, 1), atm_iv
-
-    except Exception as exc:
-        log.warning("IV percentile failed for %s: %s", ticker, exc)
-        return None, None
 
 
 def _score_factors(

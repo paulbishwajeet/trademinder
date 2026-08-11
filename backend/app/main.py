@@ -2,7 +2,7 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import trades, commentary, alerts, market, briefing, categories, positions, signals, sessions, wheel
+from app.routers import trades, commentary, alerts, market, briefing, categories, positions, signals, sessions, wheel, screener
 from app.scheduler import scheduler, start_scheduler
 
 
@@ -39,3 +39,4 @@ app.include_router(positions.router)
 app.include_router(signals.router)
 app.include_router(sessions.router)
 app.include_router(wheel.router)
+app.include_router(screener.router)
