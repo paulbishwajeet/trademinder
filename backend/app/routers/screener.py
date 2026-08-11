@@ -10,6 +10,7 @@ from sqlalchemy import select
 
 from app.database import get_db, AsyncSessionLocal
 from app.models.screener import Screener
+from app.models.screener_commentary import ScreenerCommentary
 from app.schemas.screener import (
     ScreenerFetchedFields,
     ScreenerRowCreate,
@@ -17,6 +18,9 @@ from app.schemas.screener import (
     ScreenerRowPatch,
     ScreenerPreviewResponse,
     ScreenerJobStatus,
+    ScreenerCommentaryCreate,
+    ScreenerCommentaryUpdate,
+    ScreenerCommentaryResponse,
 )
 from app.services.screener_fetcher import fetch_screener_row
 
@@ -149,3 +153,51 @@ async def get_screener_job(job_id: str):
     if job is None:
         raise HTTPException(status_code=404, detail="Unknown job")
     return {"job_id": job_id, **job}
+
+
+@router.get("/{symbol}/commentary", response_model=list[ScreenerCommentaryResponse])
+async def list_screener_commentary(symbol: str, db: AsyncSession = Depends(get_db)):
+    row = await _get_row_or_404(symbol, db)
+    stmt = (
+        select(ScreenerCommentary)
+        .where(ScreenerCommentary.screener_id == row.id)
+        .order_by(ScreenerCommentary.created_at.desc())
+    )
+    result = await db.execute(stmt)
+    return result.scalars().all()
+
+
+@router.post("/{symbol}/commentary", response_model=ScreenerCommentaryResponse, status_code=201)
+async def add_screener_commentary(symbol: str, payload: ScreenerCommentaryCreate, db: AsyncSession = Depends(get_db)):
+    row = await _get_row_or_404(symbol, db)
+    entry = ScreenerCommentary(screener_id=row.id, note=payload.note, tags=payload.tags)
+    db.add(entry)
+    await db.commit()
+    await db.refresh(entry)
+    return entry
+
+
+@router.put("/commentary/{comment_id}", response_model=ScreenerCommentaryResponse)
+async def update_screener_commentary(comment_id: uuid.UUID, payload: ScreenerCommentaryUpdate, db: AsyncSession = Depends(get_db)):
+    stmt = select(ScreenerCommentary).where(ScreenerCommentary.id == comment_id)
+    result = await db.execute(stmt)
+    entry = result.scalar_one_or_none()
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Commentary entry not found")
+    entry.note = payload.note
+    entry.tags = payload.tags
+    entry.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+    await db.refresh(entry)
+    return entry
+
+
+@router.delete("/commentary/{comment_id}", status_code=204)
+async def delete_screener_commentary(comment_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    stmt = select(ScreenerCommentary).where(ScreenerCommentary.id == comment_id)
+    result = await db.execute(stmt)
+    entry = result.scalar_one_or_none()
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Commentary entry not found")
+    await db.delete(entry)
+    await db.commit()
