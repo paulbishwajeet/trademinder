@@ -113,10 +113,10 @@ async def patch_screener_symbol(symbol: str, payload: ScreenerRowPatch, db: Asyn
 _jobs: dict[str, dict] = {}
 
 
-async def _run_fetch_all_job(job_id: str, symbols: list[str]) -> None:
+async def _run_fetch_all_job(job_id: str, symbols: list[str], session_factory=AsyncSessionLocal) -> None:
     loop = asyncio.get_running_loop()
     for symbol in symbols:
-        async with AsyncSessionLocal() as session:
+        async with session_factory() as session:
             stmt = select(Screener).where(Screener.symbol == symbol)
             result = await session.execute(stmt)
             row = result.scalar_one_or_none()
@@ -139,7 +139,7 @@ async def fetch_all_screener(db: AsyncSession = Depends(get_db)):
     symbols = [row[0] for row in result.all()]
     job_id = str(uuid.uuid4())
     _jobs[job_id] = {"status": "running", "total": len(symbols), "completed": 0, "errors": []}
-    asyncio.create_task(_run_fetch_all_job(job_id, symbols))
+    asyncio.create_task(_run_fetch_all_job(job_id, symbols, session_factory=AsyncSessionLocal))
     return {"job_id": job_id, **_jobs[job_id]}
 
 
