@@ -606,3 +606,40 @@ def test_fetch_technicals_ma20_ma100_null_on_short_history():
     assert result["ma_100d"] is None
     assert result["price_vs_ma20"] is None
     assert result["price_vs_ma100"] is None
+
+
+import numpy as np
+from datetime import date, timedelta
+
+from app.services.technicals_fetcher import compute_iv_percentile_from_chain
+
+
+def _make_chain(dte_days: int, strike: float, iv_pct: float) -> dict:
+    exp_date = date.today() + timedelta(days=dte_days)
+    exp_key = f"{exp_date.isoformat()}:{dte_days}"
+    return {
+        "underlyingPrice": strike,
+        "callExpDateMap": {
+            exp_key: {
+                str(strike): [{"volatility": iv_pct}],
+            }
+        },
+    }
+
+
+def test_compute_iv_percentile_from_chain_returns_none_on_short_history():
+    closes = pd.Series(np.linspace(100, 110, 10))
+    chain = _make_chain(37, 105.0, 30.0)
+    pct, atm_iv = compute_iv_percentile_from_chain(closes, chain, "AAPL")
+    assert pct is None
+    assert atm_iv is None
+
+
+def test_compute_iv_percentile_from_chain_success():
+    rng = np.random.default_rng(42)
+    closes = pd.Series(100 * np.exp(np.cumsum(rng.normal(0, 0.01, 120))))
+    chain = _make_chain(37, float(closes.iloc[-1]), 25.0)
+    pct, atm_iv = compute_iv_percentile_from_chain(closes, chain, "AAPL")
+    assert pct is not None
+    assert 0 <= pct <= 100
+    assert atm_iv == 0.25

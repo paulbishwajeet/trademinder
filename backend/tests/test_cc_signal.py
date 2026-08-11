@@ -160,7 +160,7 @@ def test_iv_percentile_from_chain_parses_atm_iv():
     from datetime import date, timedelta
     import pandas as pd
     import numpy as np
-    from app.services.cc_signal import _compute_iv_percentile_from_chain
+    from app.services.technicals_fetcher import compute_iv_percentile_from_chain
 
     closes = _make_daily_closes(252)
     exp_date = (date.today() + timedelta(days=37)).strftime("%Y-%m-%d")
@@ -172,7 +172,7 @@ def test_iv_percentile_from_chain_parses_atm_iv():
             }
         },
     }
-    iv_pct, atm_iv = _compute_iv_percentile_from_chain(closes, chain)
+    iv_pct, atm_iv = compute_iv_percentile_from_chain(closes, chain)
     assert atm_iv is not None
     assert 0.01 < atm_iv < 2.0  # 35% / 100 = 0.35
 
@@ -180,7 +180,7 @@ def test_iv_percentile_from_chain_parses_atm_iv():
 def test_iv_percentile_from_chain_skips_expired_expirations():
     """Expirations with DTE < 14 should be ignored."""
     from datetime import date, timedelta
-    from app.services.cc_signal import _compute_iv_percentile_from_chain
+    from app.services.technicals_fetcher import compute_iv_percentile_from_chain
 
     closes = _make_daily_closes(252)
     near_exp = (date.today() + timedelta(days=5)).strftime("%Y-%m-%d")
@@ -190,7 +190,7 @@ def test_iv_percentile_from_chain_skips_expired_expirations():
             f"{near_exp}:5": {"100.0": [{"volatility": 35.0}]},
         },
     }
-    iv_pct, atm_iv = _compute_iv_percentile_from_chain(closes, chain)
+    iv_pct, atm_iv = compute_iv_percentile_from_chain(closes, chain)
     assert iv_pct is None
     assert atm_iv is None
 

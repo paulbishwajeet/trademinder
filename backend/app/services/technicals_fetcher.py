@@ -1,8 +1,67 @@
 # backend/app/services/technicals_fetcher.py
+import logging
+import math
+from datetime import date, datetime
+
+import numpy as np
 import pandas as pd
 
 from app.services.price_fetcher import _compute_rsi_14
 from app.services.schwab_client import get_schwab_client, SchwabAPIError
+
+log = logging.getLogger(__name__)
+
+
+def compute_iv_percentile_from_chain(
+    daily_closes: pd.Series, chain: dict, ticker: str = "?", contract_type: str = "CALL"
+) -> tuple[float | None, float | None]:
+    try:
+        log_returns = np.log(daily_closes / daily_closes.shift(1)).dropna()
+        if len(log_returns) < 60:
+            return None, None
+        hv30 = log_returns.rolling(window=30).std() * math.sqrt(252)
+        hv30 = hv30.dropna()
+        if len(hv30) < 30:
+            return None, None
+
+        exp_map_key = "putExpDateMap" if contract_type == "PUT" else "callExpDateMap"
+        call_exp_map = chain.get(exp_map_key, {})
+        if not call_exp_map:
+            return None, None
+
+        spot = float(chain.get("underlyingPrice", 0))
+
+        today = date.today()
+        best_exp_key = None
+        best_dist = float("inf")
+        for exp_key in call_exp_map:
+            exp_str = exp_key.split(":")[0]
+            exp_date = datetime.strptime(exp_str, "%Y-%m-%d").date()
+            dte = (exp_date - today).days
+            if dte < 14:
+                continue
+            dist = abs(dte - 37)
+            if dist < best_dist:
+                best_dist = dist
+                best_exp_key = exp_key
+
+        if best_exp_key is None:
+            return None, None
+
+        strikes = call_exp_map[best_exp_key]
+        best_strike_key = min(strikes.keys(), key=lambda s: abs(float(s) - spot))
+        atm_option = strikes[best_strike_key][0]
+        raw_iv = float(atm_option.get("volatility", 0))
+        if raw_iv <= 1.0:
+            return None, None
+        atm_iv = raw_iv / 100.0
+
+        pct = float((hv30 < atm_iv).sum()) / len(hv30) * 100
+        return round(pct, 1), atm_iv
+
+    except Exception as exc:
+        log.warning("IV percentile failed for %s: %s", ticker, exc)
+        return None, None
 
 
 def _compute_macd_weekly(close_w: pd.Series) -> dict[str, str]:
