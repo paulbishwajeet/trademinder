@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 from httpx import AsyncClient
 from unittest.mock import patch
@@ -108,3 +110,58 @@ async def test_patch_sector_and_category(client: AsyncClient):
     data = response.json()
     assert data["sector"] == "Consumer Electronics"
     assert data["category"] == "Wheel Candidate"
+
+
+async def test_fetch_all_runs_job_and_updates_rows(client: AsyncClient):
+    from tests.conftest import TestSessionLocal
+
+    with patch("app.routers.screener.fetch_screener_row", return_value=MOCK_FETCH_OK):
+        await client.post("/api/screener", json={"symbol": "AAPL"})
+        await client.post("/api/screener", json={"symbol": "MSFT"})
+
+    updated = {**MOCK_FETCH_OK, "price": 999.0}
+    with patch("app.routers.screener.fetch_screener_row", return_value=updated), \
+         patch("app.routers.screener.AsyncSessionLocal", TestSessionLocal):
+        response = await client.post("/api/screener/fetch-all")
+        assert response.status_code == 202
+        job_id = response.json()["job_id"]
+        assert response.json()["total"] == 2
+
+        for _ in range(50):
+            status_response = await client.get(f"/api/screener/jobs/{job_id}")
+            status = status_response.json()
+            if status["status"] == "done":
+                break
+            await asyncio.sleep(0.1)
+        assert status["status"] == "done"
+        assert status["completed"] == 2
+
+    list_response = await client.get("/api/screener")
+    prices = {r["symbol"]: r["price"] for r in list_response.json()}
+    assert prices == {"AAPL": "999.00", "MSFT": "999.00"}
+
+
+async def test_fetch_all_records_per_symbol_errors(client: AsyncClient):
+    from tests.conftest import TestSessionLocal
+
+    with patch("app.routers.screener.fetch_screener_row", return_value=MOCK_FETCH_OK):
+        await client.post("/api/screener", json={"symbol": "AAPL"})
+
+    with patch("app.routers.screener.fetch_screener_row", return_value=MOCK_FETCH_ERROR), \
+         patch("app.routers.screener.AsyncSessionLocal", TestSessionLocal):
+        response = await client.post("/api/screener/fetch-all")
+        job_id = response.json()["job_id"]
+
+        for _ in range(50):
+            status_response = await client.get(f"/api/screener/jobs/{job_id}")
+            status = status_response.json()
+            if status["status"] == "done":
+                break
+            await asyncio.sleep(0.1)
+        assert status["status"] == "done"
+        assert status["errors"] == [{"symbol": "AAPL", "error": "No daily data for ZZZZ"}]
+
+
+async def test_get_job_status_404_for_unknown_job(client: AsyncClient):
+    response = await client.get("/api/screener/jobs/does-not-exist")
+    assert response.status_code == 404

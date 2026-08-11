@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from app.database import get_db
+from app.database import get_db, AsyncSessionLocal
 from app.models.screener import Screener
 from app.schemas.screener import (
     ScreenerFetchedFields,
@@ -16,6 +16,7 @@ from app.schemas.screener import (
     ScreenerRowResponse,
     ScreenerRowPatch,
     ScreenerPreviewResponse,
+    ScreenerJobStatus,
 )
 from app.services.screener_fetcher import fetch_screener_row
 
@@ -107,3 +108,44 @@ async def patch_screener_symbol(symbol: str, payload: ScreenerRowPatch, db: Asyn
     await db.commit()
     await db.refresh(row)
     return row
+
+
+_jobs: dict[str, dict] = {}
+
+
+async def _run_fetch_all_job(job_id: str, symbols: list[str]) -> None:
+    loop = asyncio.get_running_loop()
+    for symbol in symbols:
+        async with AsyncSessionLocal() as session:
+            stmt = select(Screener).where(Screener.symbol == symbol)
+            result = await session.execute(stmt)
+            row = result.scalar_one_or_none()
+            if row is not None:
+                raw = await loop.run_in_executor(None, partial(fetch_screener_row, symbol, row.sector))
+                data = ScreenerFetchedFields(**raw).model_dump()
+                if data.get("fetch_status") == "error":
+                    _jobs[job_id]["errors"].append({"symbol": symbol, "error": data.get("fetch_error")})
+                for k in _SCREENER_FIELDS:
+                    setattr(row, k, data.get(k))
+                row.last_fetched_at = datetime.now(timezone.utc)
+                await session.commit()
+        _jobs[job_id]["completed"] += 1
+    _jobs[job_id]["status"] = "done"
+
+
+@router.post("/fetch-all", response_model=ScreenerJobStatus, status_code=202)
+async def fetch_all_screener(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Screener.symbol))
+    symbols = [row[0] for row in result.all()]
+    job_id = str(uuid.uuid4())
+    _jobs[job_id] = {"status": "running", "total": len(symbols), "completed": 0, "errors": []}
+    asyncio.create_task(_run_fetch_all_job(job_id, symbols))
+    return {"job_id": job_id, **_jobs[job_id]}
+
+
+@router.get("/jobs/{job_id}", response_model=ScreenerJobStatus)
+async def get_screener_job(job_id: str):
+    job = _jobs.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Unknown job")
+    return {"job_id": job_id, **job}
