@@ -258,10 +258,14 @@ def fetch_technicals(ticker: str, return_closes: bool = False) -> dict | tuple[d
                 rsi_result = "rsi_overbought"
 
         ma_200d = round(float(close_d.rolling(200).mean().iloc[-1]), 2) if len(close_d) >= 200 else None
+        ma_100d = round(float(close_d.rolling(100).mean().iloc[-1]), 2) if len(close_d) >= 100 else None
         ma_50d = round(float(close_d.rolling(50).mean().iloc[-1]), 2) if len(close_d) >= 50 else None
+        ma_20d = round(float(close_d.rolling(20).mean().iloc[-1]), 2) if len(close_d) >= 20 else None
 
         price_vs_ma200 = ("above" if price > ma_200d else "below") if ma_200d is not None else None
+        price_vs_ma100 = ("above" if price > ma_100d else "below") if ma_100d is not None else None
         price_vs_ma50 = ("above" if price > ma_50d else "below") if ma_50d is not None else None
+        price_vs_ma20 = ("above" if price > ma_20d else "below") if ma_20d is not None else None
 
         rolling_mean = close_d.rolling(20).mean()
         rolling_std = close_d.rolling(20).std()
@@ -297,9 +301,13 @@ def fetch_technicals(ticker: str, return_closes: bool = False) -> dict | tuple[d
             "rsi_trend": rsi_crossover["trend"],
             "volume_spikes": volume_spikes,
             "ma_200d": ma_200d,
+            "ma_100d": ma_100d,
             "ma_50d": ma_50d,
+            "ma_20d": ma_20d,
             "price_vs_ma200": price_vs_ma200,
+            "price_vs_ma100": price_vs_ma100,
             "price_vs_ma50": price_vs_ma50,
+            "price_vs_ma20": price_vs_ma20,
             "bollinger_upper": b_upper,
             "bollinger_mid": b_mid,
             "bollinger_lower": b_lower,
