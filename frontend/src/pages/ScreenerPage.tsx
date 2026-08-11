@@ -10,6 +10,7 @@ export function ScreenerPage() {
   const [loading, setLoading] = useState(true)
   const [fetchingAll, setFetchingAll] = useState(false)
   const [jobProgress, setJobProgress] = useState<{ completed: number; total: number } | null>(null)
+  const [pollError, setPollError] = useState<string | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const loadRows = useCallback(async () => {
@@ -47,16 +48,24 @@ export function ScreenerPage() {
 
   const handleFetchAll = async () => {
     setFetchingAll(true)
+    setPollError(null)
     const job = await screenerApi.fetchAll()
     setJobProgress({ completed: job.completed, total: job.total })
     pollRef.current = setInterval(async () => {
-      const status = await screenerApi.getJobStatus(job.job_id)
-      setJobProgress({ completed: status.completed, total: status.total })
-      if (status.status === 'done') {
+      try {
+        const status = await screenerApi.getJobStatus(job.job_id)
+        setJobProgress({ completed: status.completed, total: status.total })
+        if (status.status === 'done') {
+          if (pollRef.current) clearInterval(pollRef.current)
+          setFetchingAll(false)
+          setJobProgress(null)
+          loadRows()
+        }
+      } catch {
         if (pollRef.current) clearInterval(pollRef.current)
         setFetchingAll(false)
         setJobProgress(null)
-        loadRows()
+        setPollError('Lost connection to fetch-all job. Please try again.')
       }
     }, 2000)
   }
@@ -73,6 +82,7 @@ export function ScreenerPage() {
           {fetchingAll ? `Fetching ${jobProgress?.completed ?? 0}/${jobProgress?.total ?? 0}…` : 'Fetch All'}
         </button>
       </div>
+      {pollError && <p className="text-red-600 text-sm mb-3">{pollError}</p>}
       <SymbolLookup onAdded={handleAdded} />
       <AddSymbolForm onAdded={handleAdded} />
       {loading ? (
