@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import type { ScreenerRow } from '../../types'
 import { screenerApi } from '../../api/screener'
 import { ScreenerDetailRow } from './ScreenerDetailRow'
@@ -25,13 +25,63 @@ const BB_LABELS: Record<string, string> = {
   below_lower: 'Below',
 }
 
-const COLUMNS = ['Symbol', 'Price', 'Change%', 'IV Pctl', 'RSI(d)', 'MACD(w)', '20ma', '50ma', '100ma', '200ma', 'BB', 'Fetched', 'Commentary', '']
+type SortKey =
+  | 'symbol' | 'price' | 'change_pct' | 'iv_percentile' | 'rsi_14'
+  | 'macd_weekly_signal' | 'ma_20d' | 'ma_50d' | 'ma_100d' | 'ma_200d'
+  | 'bollinger_position' | 'last_fetched_at'
+
+interface ColumnDef {
+  label: string
+  key: SortKey | null
+}
+
+const COLUMNS: ColumnDef[] = [
+  { label: 'Symbol', key: 'symbol' },
+  { label: 'Price', key: 'price' },
+  { label: 'Change%', key: 'change_pct' },
+  { label: 'IV Pctl', key: 'iv_percentile' },
+  { label: 'RSI(d)', key: 'rsi_14' },
+  { label: 'MACD(w)', key: 'macd_weekly_signal' },
+  { label: '20ma', key: 'ma_20d' },
+  { label: '50ma', key: 'ma_50d' },
+  { label: '100ma', key: 'ma_100d' },
+  { label: '200ma', key: 'ma_200d' },
+  { label: 'BB', key: 'bollinger_position' },
+  { label: 'Fetched', key: 'last_fetched_at' },
+  { label: 'Commentary', key: null },
+  { label: '', key: null },
+]
+
+const NUMERIC_KEYS = new Set<SortKey>(['price', 'change_pct', 'iv_percentile', 'rsi_14', 'ma_20d', 'ma_50d', 'ma_100d', 'ma_200d'])
 
 // Decimal fields arrive as strings (see types/index.ts note) — parse before math/formatting.
 function toNum(v: string | null): number | null {
   if (v == null) return null
   const n = parseFloat(v)
   return Number.isNaN(n) ? null : n
+}
+
+function getSortValue(row: ScreenerRow, key: SortKey): number | string | null {
+  if (key === 'last_fetched_at') {
+    return row.last_fetched_at ? new Date(row.last_fetched_at).getTime() : null
+  }
+  if (NUMERIC_KEYS.has(key)) {
+    return toNum(row[key] as string | null)
+  }
+  return row[key] as string | null
+}
+
+function compareRows(a: ScreenerRow, b: ScreenerRow, key: SortKey, direction: 'asc' | 'desc'): number {
+  const va = getSortValue(a, key)
+  const vb = getSortValue(b, key)
+  // Nulls always sort last, regardless of direction.
+  if (va == null && vb == null) return 0
+  if (va == null) return 1
+  if (vb == null) return -1
+  const cmp = typeof va === 'number' && typeof vb === 'number'
+    ? va - vb
+    : String(va).localeCompare(String(vb))
+  return direction === 'asc' ? cmp : -cmp
 }
 
 function MaCell({ price, ma }: { price: string | null; ma: string | null }) {
@@ -100,25 +150,66 @@ function ScreenerRowView({ row, onRefreshRow, onRemove }: { row: ScreenerRow; on
 }
 
 export function ScreenerTable({ rows, onRefreshRow, onRemove }: Props) {
+  const [filterText, setFilterText] = useState('')
+  const [sortKey, setSortKey] = useState<SortKey | null>(null)
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc')
+
+  const handleSort = (key: SortKey) => {
+    if (sortKey === key) {
+      setSortDirection(d => (d === 'asc' ? 'desc' : 'asc'))
+    } else {
+      setSortKey(key)
+      setSortDirection('asc')
+    }
+  }
+
+  const filteredSortedRows = useMemo(() => {
+    const trimmed = filterText.trim().toLowerCase()
+    const filtered = trimmed ? rows.filter(r => r.symbol.toLowerCase().includes(trimmed)) : rows
+    if (sortKey == null) return filtered
+    return [...filtered].sort((a, b) => compareRows(a, b, sortKey, sortDirection))
+  }, [rows, filterText, sortKey, sortDirection])
+
   return (
-    <div className="overflow-x-auto">
-      <table className="min-w-full text-sm">
-        <thead className="bg-gray-50">
-          <tr>
-            {COLUMNS.map(c => (
-              <th key={c} className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">{c}</th>
+    <div className="space-y-3">
+      <input
+        type="text"
+        value={filterText}
+        onChange={e => setFilterText(e.target.value)}
+        placeholder="Filter by symbol…"
+        className="border border-gray-300 rounded px-2 py-1 text-sm w-48"
+      />
+      <div className="overflow-x-auto">
+        <table className="min-w-full text-sm">
+          <thead className="bg-gray-50">
+            <tr>
+              {COLUMNS.map((col, i) => (
+                <th
+                  key={i}
+                  onClick={col.key ? () => handleSort(col.key!) : undefined}
+                  className={`px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap ${col.key ? 'cursor-pointer select-none hover:text-gray-700' : ''}`}
+                >
+                  {col.label}
+                  {col.key != null && sortKey === col.key && (
+                    <span className="ml-1">{sortDirection === 'asc' ? '▲' : '▼'}</span>
+                  )}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length === 0 && (
+              <tr><td colSpan={COLUMNS.length} className="px-3 py-6 text-center text-gray-400">No symbols tracked yet.</td></tr>
+            )}
+            {rows.length > 0 && filteredSortedRows.length === 0 && (
+              <tr><td colSpan={COLUMNS.length} className="px-3 py-6 text-center text-gray-400">No symbols match "{filterText}".</td></tr>
+            )}
+            {filteredSortedRows.map(row => (
+              <ScreenerRowView key={row.id} row={row} onRefreshRow={onRefreshRow} onRemove={onRemove} />
             ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.length === 0 && (
-            <tr><td colSpan={COLUMNS.length} className="px-3 py-6 text-center text-gray-400">No symbols tracked yet.</td></tr>
-          )}
-          {rows.map(row => (
-            <ScreenerRowView key={row.id} row={row} onRefreshRow={onRefreshRow} onRemove={onRemove} />
-          ))}
-        </tbody>
-      </table>
+          </tbody>
+        </table>
+      </div>
     </div>
   )
 }
