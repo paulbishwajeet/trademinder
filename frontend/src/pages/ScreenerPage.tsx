@@ -9,6 +9,7 @@ export function ScreenerPage() {
   const [rows, setRows] = useState<ScreenerRow[]>([])
   const [loading, setLoading] = useState(true)
   const [fetchingAll, setFetchingAll] = useState(false)
+  const [fetchAllStartedAt, setFetchAllStartedAt] = useState<string | null>(null)
   const [jobProgress, setJobProgress] = useState<{ completed: number; total: number } | null>(null)
   const [pollError, setPollError] = useState<string | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -21,6 +22,13 @@ export function ScreenerPage() {
     } finally {
       setLoading(false)
     }
+  }, [])
+
+  // Same fetch as loadRows, but doesn't toggle the page-level loading flag —
+  // used during Fetch All polling so the table doesn't flicker/unmount every 2s.
+  const refreshRowsQuiet = useCallback(async () => {
+    const data = await screenerApi.list()
+    setRows(data)
   }, [])
 
   useEffect(() => {
@@ -48,6 +56,7 @@ export function ScreenerPage() {
 
   const handleFetchAll = async () => {
     setFetchingAll(true)
+    setFetchAllStartedAt(new Date().toISOString())
     setPollError(null)
     const job = await screenerApi.fetchAll()
     setJobProgress({ completed: job.completed, total: job.total })
@@ -55,16 +64,18 @@ export function ScreenerPage() {
       try {
         const status = await screenerApi.getJobStatus(job.job_id)
         setJobProgress({ completed: status.completed, total: status.total })
+        await refreshRowsQuiet()
         if (status.status === 'done') {
           if (pollRef.current) clearInterval(pollRef.current)
           setFetchingAll(false)
           setJobProgress(null)
-          loadRows()
+          setFetchAllStartedAt(null)
         }
       } catch {
         if (pollRef.current) clearInterval(pollRef.current)
         setFetchingAll(false)
         setJobProgress(null)
+        setFetchAllStartedAt(null)
         setPollError('Lost connection to fetch-all job. Please try again.')
       }
     }, 2000)
@@ -88,7 +99,13 @@ export function ScreenerPage() {
       {loading ? (
         <p className="text-gray-400 text-sm">Loading…</p>
       ) : (
-        <ScreenerTable rows={rows} onRefreshRow={handleRefreshRow} onRemove={handleRemove} />
+        <ScreenerTable
+          rows={rows}
+          onRefreshRow={handleRefreshRow}
+          onRemove={handleRemove}
+          bulkFetching={fetchingAll}
+          fetchAllStartedAt={fetchAllStartedAt}
+        />
       )}
     </div>
   )

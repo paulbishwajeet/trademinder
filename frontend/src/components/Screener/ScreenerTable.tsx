@@ -9,6 +9,8 @@ interface Props {
   rows: ScreenerRow[]
   onRefreshRow: (row: ScreenerRow) => void
   onRemove: (symbol: string) => void
+  bulkFetching: boolean
+  fetchAllStartedAt: string | null
 }
 
 const MACD_COLORS: Record<string, string> = {
@@ -96,7 +98,19 @@ function MaCell({ price, ma }: { price: string | null; ma: string | null }) {
   )
 }
 
-function ScreenerRowView({ row, onRefreshRow, onRemove }: { row: ScreenerRow; onRefreshRow: (row: ScreenerRow) => void; onRemove: (symbol: string) => void }) {
+function ScreenerRowView({
+  row,
+  onRefreshRow,
+  onRemove,
+  bulkFetching,
+  fetchAllStartedAt,
+}: {
+  row: ScreenerRow
+  onRefreshRow: (row: ScreenerRow) => void
+  onRemove: (symbol: string) => void
+  bulkFetching: boolean
+  fetchAllStartedAt: string | null
+}) {
   const [expanded, setExpanded] = useState(false)
   const [fetching, setFetching] = useState(false)
 
@@ -109,6 +123,16 @@ function ScreenerRowView({ row, onRefreshRow, onRemove }: { row: ScreenerRow; on
       setFetching(false)
     }
   }
+
+  // True while Fetch All is running and this row's data hasn't been
+  // refreshed since the job started — string comparison is safe since
+  // both are ISO-8601 UTC timestamps (lexicographic order == chronological order).
+  const bulkPending =
+    bulkFetching &&
+    fetchAllStartedAt != null &&
+    (row.last_fetched_at == null || row.last_fetched_at <= fetchAllStartedAt)
+
+  const isFetching = fetching || bulkPending
 
   return (
     <>
@@ -138,8 +162,8 @@ function ScreenerRowView({ row, onRefreshRow, onRemove }: { row: ScreenerRow; on
         <td className="px-3 py-2 text-gray-400 text-xs">{timeAgo(row.last_fetched_at)}</td>
         <td className="px-3 py-2"><ScreenerCommentaryCell symbol={row.symbol} /></td>
         <td className="px-3 py-2 text-right space-x-2 whitespace-nowrap">
-          <button onClick={handleFetch} disabled={fetching} className="text-xs text-blue-600 hover:underline disabled:text-gray-400">
-            {fetching ? 'Fetching…' : 'Fetch'}
+          <button onClick={handleFetch} disabled={isFetching} className="text-xs text-blue-600 hover:underline disabled:text-gray-400">
+            {isFetching ? 'Fetching…' : 'Fetch'}
           </button>
           <button onClick={() => onRemove(row.symbol)} className="text-xs text-red-500 hover:underline">Remove</button>
         </td>
@@ -149,7 +173,7 @@ function ScreenerRowView({ row, onRefreshRow, onRemove }: { row: ScreenerRow; on
   )
 }
 
-export function ScreenerTable({ rows, onRefreshRow, onRemove }: Props) {
+export function ScreenerTable({ rows, onRefreshRow, onRemove, bulkFetching, fetchAllStartedAt }: Props) {
   const [filterText, setFilterText] = useState('')
   const [sortKey, setSortKey] = useState<SortKey | null>(null)
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc')
@@ -205,7 +229,14 @@ export function ScreenerTable({ rows, onRefreshRow, onRemove }: Props) {
               <tr><td colSpan={COLUMNS.length} className="px-3 py-6 text-center text-gray-400">No symbols match "{filterText}".</td></tr>
             )}
             {filteredSortedRows.map(row => (
-              <ScreenerRowView key={row.id} row={row} onRefreshRow={onRefreshRow} onRemove={onRemove} />
+              <ScreenerRowView
+                key={row.id}
+                row={row}
+                onRefreshRow={onRefreshRow}
+                onRemove={onRemove}
+                bulkFetching={bulkFetching}
+                fetchAllStartedAt={fetchAllStartedAt}
+              />
             ))}
           </tbody>
         </table>
