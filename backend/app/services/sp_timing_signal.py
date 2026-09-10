@@ -1,0 +1,166 @@
+"""Standalone 'SP Timing Signal' — scores how good a moment it is to sell a cash-secured
+put likely to expire OTM (mean-reversion entry timing), mirroring cc_timing_signal.py's
+architecture with every directional factor inverted for the 'stock holds or rises' thesis.
+Independent of the existing CC/SP Signal in cc_signal.py, which optimizes for overall
+wheel P&L instead."""
+import logging
+import time
+from datetime import datetime, timezone
+
+import pandas as pd
+
+from app.services.price_fetcher import _compute_rsi_14
+from app.services.schwab_client import get_schwab_client
+from app.services.technicals_fetcher import compute_iv_percentile_from_chain, fetch_technicals
+from app.services.cc_signal import _get_llm_commentary
+
+log = logging.getLogger(__name__)
+
+_sp_timing_cache: dict[str, tuple[dict, float]] = {}
+_CACHE_TTL = 14400  # 4 hours
+
+
+def _score_sp_timing_factors(
+    technicals: dict,
+    daily_closes: pd.Series,
+    live_price: float,
+    prev_close: float,
+) -> tuple[int, str, list[dict]]:
+    factors: list[dict] = []
+
+    # 1. RSI(D) Level (20 pts) — ideal at <=40 (oversold), mirrored curve re-centered
+    #    so the ideal edge sits at 40 instead of CC Timing's 70.
+    rsi = technicals.get("rsi_14")
+    rsi_pts = 0.0
+    rsi_detail = "N/A"
+    if rsi is not None:
+        rsi = float(rsi)
+        if rsi <= 40:
+            rsi_pts = 20.0
+        elif rsi <= 60:
+            rsi_pts = 14.0 + (60 - rsi) * 0.3
+        elif rsi <= 80:
+            rsi_pts = (80 - rsi) * 0.7
+        else:
+            rsi_pts = 0.0
+        rsi_pts = round(rsi_pts, 1)
+        rsi_detail = f"RSI {rsi:.1f}"
+    factors.append({"name": "RSI(D) Level", "points": rsi_pts, "max": 20, "detail": rsi_detail})
+
+    # 2. RSI(D) Trend (10 pts) — bottoming out from a depressed read = ideal.
+    trend_pts = 0
+    trend_detail = "Insufficient data"
+    if len(daily_closes) >= 20:
+        rsi_series = []
+        for i in range(6):
+            offset = len(daily_closes) - 1 - i
+            if offset < 14:
+                break
+            sub = daily_closes.iloc[: offset + 1]
+            rsi_val = _compute_rsi_14(sub)
+            if rsi_val is not None:
+                rsi_series.append(rsi_val)
+        if len(rsi_series) >= 2:
+            current_rsi = rsi_series[0]
+            oldest_rsi = rsi_series[-1]
+            was_depressed = any(r < 40 for r in rsi_series)
+            if was_depressed and current_rsi > oldest_rsi:
+                trend_pts = 10
+                trend_detail = f"Bottoming out: {oldest_rsi:.1f} → {current_rsi:.1f}"
+            elif was_depressed and current_rsi <= oldest_rsi:
+                trend_pts = 6
+                trend_detail = f"Depressed ({current_rsi:.1f}), not yet bottoming out"
+            elif current_rsi < oldest_rsi and current_rsi < 45:
+                trend_pts = 1
+                trend_detail = f"Falling strongly: {oldest_rsi:.1f} → {current_rsi:.1f}"
+            else:
+                trend_pts = 3
+                trend_detail = f"Neutral/weak ({current_rsi:.1f})"
+    factors.append({"name": "RSI(D) Trend", "points": trend_pts, "max": 10, "detail": trend_detail})
+
+    # 3. MACD(W) (25 pts) — bullish weekly = tailwind, confirms the "holds or rises" thesis.
+    macd = technicals.get("macd_signal", "neutral")
+    macd_map = {"bullish": 25, "neutral": 12, "bearish": 0}
+    macd_pts = macd_map.get(macd, 0)
+    macd_notes = technicals.get("macd_notes", "")
+    factors.append({"name": "MACD(W)", "points": macd_pts, "max": 25, "detail": f"{macd.capitalize()}, {macd_notes}"})
+
+    # 4. Bollinger %B (15 pts) — sweet spot is lower-mid without touching the extremes
+    #    (oversold but not in freefall) — mirror reflection of CC Timing's zones about 0.5.
+    bb_pts = 0
+    bb_detail = "N/A"
+    if len(daily_closes) >= 20:
+        mean = float(daily_closes.rolling(20).mean().iloc[-1])
+        std = float(daily_closes.rolling(20).std().iloc[-1])
+        if std > 0:
+            upper = mean + 2 * std
+            lower = mean - 2 * std
+            pct_b = (live_price - lower) / (upper - lower)
+            if 0.15 <= pct_b <= 0.35:
+                bb_pts = 15
+            elif 0.0 <= pct_b < 0.15 or 0.35 < pct_b <= 0.5:
+                bb_pts = 9
+            elif 0.5 < pct_b <= 0.7:
+                bb_pts = 5
+            else:
+                bb_pts = 0
+            bb_detail = f"%B {pct_b:.2f}"
+    factors.append({"name": "Bollinger %B", "points": bb_pts, "max": 15, "detail": bb_detail})
+
+    # 5. Swing Low Distance (15 pts) — trailing 3-month CLOSING low as support,
+    #    mirror of cc_timing_signal.py's Swing High Distance.
+    swing_pts = 0
+    swing_detail = "Insufficient data"
+    if len(daily_closes) >= 63:
+        recent_low = float(daily_closes.iloc[-63:].min())
+        if recent_low > 0:
+            if live_price < recent_low:
+                swing_pts = 0
+                swing_detail = f"New low (${live_price:.2f} < 3M low ${recent_low:.2f})"
+            else:
+                dist_pct = (live_price - recent_low) / recent_low * 100
+                if dist_pct <= 3:
+                    swing_pts = 15
+                    swing_detail = f"At support (+{dist_pct:.1f}% above 3M low ${recent_low:.2f})"
+                elif dist_pct <= 8:
+                    swing_pts = 8
+                    swing_detail = f"Near support (+{dist_pct:.1f}% above 3M low ${recent_low:.2f})"
+                else:
+                    swing_pts = 0
+                    swing_detail = f"Well above support (+{dist_pct:.1f}% above 3M low ${recent_low:.2f})"
+    factors.append({"name": "Swing Low Distance", "points": swing_pts, "max": 15, "detail": swing_detail})
+
+    # 6. Day Color (15 pts) — red day = capturing richer put premium on the dip.
+    pct_chg = (live_price - prev_close) / prev_close * 100 if prev_close else 0.0
+    if pct_chg < -0.5:
+        day_pts = 15
+        day_detail = f"Red ({pct_chg:+.1f}%)"
+    elif pct_chg <= 0.5:
+        day_pts = 7
+        day_detail = f"Neutral ({pct_chg:+.1f}%)"
+    else:
+        day_pts = 0
+        day_detail = f"Green ({pct_chg:+.1f}%)"
+    factors.append({"name": "Day Color", "points": day_pts, "max": 15, "detail": day_detail})
+
+    total = round(sum(f["points"] for f in factors))
+
+    # Confluence bonus — reward the literal mirrored "perfect setup" beyond additive luck.
+    is_perfect_setup = (
+        rsi is not None and rsi <= 40
+        and macd == "bullish"
+        and pct_chg < -0.5
+    )
+    if is_perfect_setup:
+        total = min(100, total + 10)
+
+    if total >= 80:
+        grade = "strong"
+    elif total >= 60:
+        grade = "moderate"
+    elif total >= 40:
+        grade = "weak"
+    else:
+        grade = "wait"
+
+    return total, grade, factors
