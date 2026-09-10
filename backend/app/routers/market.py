@@ -15,6 +15,7 @@ from app.services.options_scanner import run_scan
 from app.services.price_fetcher import fetch_quote, fetch_rsi_batch, refresh_open_trades
 from app.services.technicals_fetcher import fetch_technicals, fetch_macd_crossover, fetch_rsi_signal, fetch_volume_spikes
 from app.services.cc_signal import compute_cc_signal, compute_combined_signal, compute_sp_signal, fetch_option_mid
+from app.services.cc_timing_signal import compute_cc_timing_signal
 
 router = APIRouter(prefix="/api/market", tags=["market"])
 
@@ -113,6 +114,13 @@ async def get_volume_spikes(ticker: str):
 async def get_cc_signal(ticker: str, refresh: bool = False):
     loop = asyncio.get_running_loop()
     result = await loop.run_in_executor(None, compute_cc_signal, ticker.upper(), refresh)
+    return JSONResponse(content=result)
+
+
+@router.get("/cc-timing-signal/{ticker}")
+async def get_cc_timing_signal(ticker: str, refresh: bool = False):
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(None, compute_cc_timing_signal, ticker.upper(), refresh)
     return JSONResponse(content=result)
 
 
