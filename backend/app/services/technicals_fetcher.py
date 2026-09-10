@@ -1,8 +1,67 @@
 # backend/app/services/technicals_fetcher.py
+import logging
+import math
+from datetime import date, datetime
+
+import numpy as np
 import pandas as pd
 
 from app.services.price_fetcher import _compute_rsi_14
 from app.services.schwab_client import get_schwab_client, SchwabAPIError
+
+log = logging.getLogger(__name__)
+
+
+def compute_iv_percentile_from_chain(
+    daily_closes: pd.Series, chain: dict, ticker: str = "?", contract_type: str = "CALL"
+) -> tuple[float | None, float | None]:
+    try:
+        log_returns = np.log(daily_closes / daily_closes.shift(1)).dropna()
+        if len(log_returns) < 60:
+            return None, None
+        hv30 = log_returns.rolling(window=30).std() * math.sqrt(252)
+        hv30 = hv30.dropna()
+        if len(hv30) < 30:
+            return None, None
+
+        exp_map_key = "putExpDateMap" if contract_type == "PUT" else "callExpDateMap"
+        call_exp_map = chain.get(exp_map_key, {})
+        if not call_exp_map:
+            return None, None
+
+        spot = float(chain.get("underlyingPrice", 0))
+
+        today = date.today()
+        best_exp_key = None
+        best_dist = float("inf")
+        for exp_key in call_exp_map:
+            exp_str = exp_key.split(":")[0]
+            exp_date = datetime.strptime(exp_str, "%Y-%m-%d").date()
+            dte = (exp_date - today).days
+            if dte < 14:
+                continue
+            dist = abs(dte - 37)
+            if dist < best_dist:
+                best_dist = dist
+                best_exp_key = exp_key
+
+        if best_exp_key is None:
+            return None, None
+
+        strikes = call_exp_map[best_exp_key]
+        best_strike_key = min(strikes.keys(), key=lambda s: abs(float(s) - spot))
+        atm_option = strikes[best_strike_key][0]
+        raw_iv = float(atm_option.get("volatility", 0))
+        if raw_iv <= 1.0:
+            return None, None
+        atm_iv = raw_iv / 100.0
+
+        pct = float((hv30 < atm_iv).sum()) / len(hv30) * 100
+        return round(pct, 1), atm_iv
+
+    except Exception as exc:
+        log.warning("IV percentile failed for %s: %s", ticker, exc)
+        return None, None
 
 
 def _compute_macd_weekly(close_w: pd.Series) -> dict[str, str]:
@@ -258,10 +317,14 @@ def fetch_technicals(ticker: str, return_closes: bool = False) -> dict | tuple[d
                 rsi_result = "rsi_overbought"
 
         ma_200d = round(float(close_d.rolling(200).mean().iloc[-1]), 2) if len(close_d) >= 200 else None
+        ma_100d = round(float(close_d.rolling(100).mean().iloc[-1]), 2) if len(close_d) >= 100 else None
         ma_50d = round(float(close_d.rolling(50).mean().iloc[-1]), 2) if len(close_d) >= 50 else None
+        ma_20d = round(float(close_d.rolling(20).mean().iloc[-1]), 2) if len(close_d) >= 20 else None
 
         price_vs_ma200 = ("above" if price > ma_200d else "below") if ma_200d is not None else None
+        price_vs_ma100 = ("above" if price > ma_100d else "below") if ma_100d is not None else None
         price_vs_ma50 = ("above" if price > ma_50d else "below") if ma_50d is not None else None
+        price_vs_ma20 = ("above" if price > ma_20d else "below") if ma_20d is not None else None
 
         rolling_mean = close_d.rolling(20).mean()
         rolling_std = close_d.rolling(20).std()
@@ -297,9 +360,13 @@ def fetch_technicals(ticker: str, return_closes: bool = False) -> dict | tuple[d
             "rsi_trend": rsi_crossover["trend"],
             "volume_spikes": volume_spikes,
             "ma_200d": ma_200d,
+            "ma_100d": ma_100d,
             "ma_50d": ma_50d,
+            "ma_20d": ma_20d,
             "price_vs_ma200": price_vs_ma200,
+            "price_vs_ma100": price_vs_ma100,
             "price_vs_ma50": price_vs_ma50,
+            "price_vs_ma20": price_vs_ma20,
             "bollinger_upper": b_upper,
             "bollinger_mid": b_mid,
             "bollinger_lower": b_lower,

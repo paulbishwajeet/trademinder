@@ -204,6 +204,18 @@ class SchwabClient:
             params["strikeCount"] = strike_count
         return self._get("/marketdata/v1/chains", params)
 
+    def get_instrument_fundamentals(self, ticker: str) -> dict:
+        """Returns the raw `fundamental` object from Schwab's instruments endpoint,
+        or {} if the symbol has no fundamental data on file."""
+        data = self._get("/marketdata/v1/instruments", {
+            "symbol": ticker.upper(),
+            "projection": "fundamental",
+        })
+        instruments = data.get("instruments", [])
+        if not instruments:
+            return {}
+        return instruments[0].get("fundamental", {})
+
 
 _client: Optional[SchwabClient] = None
 _client_lock = threading.Lock()
