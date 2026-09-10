@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import type { WheelSessionDetail, WheelSessionSummary, WheelSlotDetail, CCSignalResult, OptionPriceResult, TechnicalsData } from '../types'
-import { wheelApi, combinedSignalApi, optionPriceApi, ccTimingSignalApi } from '../api/wheel'
+import { wheelApi, combinedSignalApi, optionPriceApi, ccTimingSignalApi, spTimingSignalApi } from '../api/wheel'
 import { technicalsApi, type QuoteData } from '../api/technicals'
 import { timeAgo } from '../components/Screener/timeAgo'
 import { NewWheelModalV2 } from '../components/Wheel/NewWheelModalV2'
@@ -60,6 +60,7 @@ const quotesCache: Record<string, CacheEntry<QuoteData>> = {}
 const technicalsCache: Record<string, CacheEntry<TechnicalsData>> = {}
 const optionPricesCache: Record<string, CacheEntry<OptionPriceResult>> = {}
 const ccTimingCache: Record<string, CacheEntry<CCSignalResult>> = {}
+const spTimingCache: Record<string, CacheEntry<CCSignalResult>> = {}
 
 function seedFromCache<T>(cache: Record<string, CacheEntry<T>>): Record<string, T> {
   const now = Date.now()
@@ -87,6 +88,7 @@ export function WheelDashboardPage() {
   const [signals, setSignals] = useState<Record<string, CCSignalResult | 'loading' | 'error'>>(() => seedFromCache(signalsCache))
   const [spSignals, setSpSignals] = useState<Record<string, CCSignalResult | 'loading' | 'error'>>(() => seedFromCache(spSignalsCache))
   const [ccTimingSignals, setCcTimingSignals] = useState<Record<string, CCSignalResult | 'loading' | 'error'>>(() => seedFromCache(ccTimingCache))
+  const [spTimingSignals, setSpTimingSignals] = useState<Record<string, CCSignalResult | 'loading' | 'error'>>(() => seedFromCache(spTimingCache))
   const [signalDetail, setSignalDetail] = useState<string | null>(null)
   const [signalsFetching, setSignalsFetching] = useState(false)
   const [sectionFetching, setSectionFetching] = useState<Record<string, boolean>>({})
@@ -131,6 +133,7 @@ export function WheelDashboardPage() {
         setSignals(prev => ({ ...prev, [ticker]: 'loading' }))
         setSpSignals(prev => ({ ...prev, [ticker]: 'loading' }))
         setCcTimingSignals(prev => ({ ...prev, [ticker]: 'loading' }))
+        setSpTimingSignals(prev => ({ ...prev, [ticker]: 'loading' }))
         setQuotes(prev => ({ ...prev, [ticker]: 'loading' }))
         setTechnicals(prev => ({ ...prev, [ticker]: 'loading' }))
       })
@@ -140,6 +143,7 @@ export function WheelDashboardPage() {
         if (!isCacheFresh(signalsCache, ticker)) setSignals(prev => ({ ...prev, [ticker]: 'loading' }))
         if (!isCacheFresh(spSignalsCache, ticker)) setSpSignals(prev => ({ ...prev, [ticker]: 'loading' }))
         if (!isCacheFresh(ccTimingCache, ticker)) setCcTimingSignals(prev => ({ ...prev, [ticker]: 'loading' }))
+        if (!isCacheFresh(spTimingCache, ticker)) setSpTimingSignals(prev => ({ ...prev, [ticker]: 'loading' }))
         if (!isCacheFresh(quotesCache, ticker)) setQuotes(prev => ({ ...prev, [ticker]: 'loading' }))
         if (!isCacheFresh(technicalsCache, ticker)) setTechnicals(prev => ({ ...prev, [ticker]: 'loading' }))
       })
@@ -172,6 +176,14 @@ export function WheelDashboardPage() {
             ccTimingCache[ticker] = { data: result, ts: Date.now() }
           })
           .catch(() => setCcTimingSignals(prev => ({ ...prev, [ticker]: 'error' })))
+      ),
+      ...tickersToFetch.map(ticker =>
+        spTimingSignalApi.get(ticker, force)
+          .then(result => {
+            setSpTimingSignals(prev => ({ ...prev, [ticker]: result }))
+            spTimingCache[ticker] = { data: result, ts: Date.now() }
+          })
+          .catch(() => setSpTimingSignals(prev => ({ ...prev, [ticker]: 'error' })))
       ),
       ...tickersToFetch.map(ticker =>
         technicalsApi.quote(ticker)
