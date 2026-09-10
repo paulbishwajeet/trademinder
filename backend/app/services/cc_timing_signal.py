@@ -161,3 +161,77 @@ def _score_cc_timing_factors(
         grade = "wait"
 
     return total, grade, factors
+
+
+def _make_error_signal(ticker: str, exc: Exception) -> dict:
+    return {
+        "ticker": ticker, "score": 0, "grade": "wait",
+        "iv_percentile": None, "atm_iv": None, "spot_price": None,
+        "factors": [], "commentary": None, "strike_hint": None, "caution": None,
+        "cached_at": datetime.now(timezone.utc).isoformat(),
+        "fetch_status": "error", "fetch_error": str(exc),
+    }
+
+
+def _compute_cc_timing_fresh(ticker: str) -> dict:
+    technicals, close_d = fetch_technicals(ticker, return_closes=True)
+    if technicals.get("fetch_status") != "ok":
+        raise ValueError(f"Technicals fetch failed: {technicals.get('fetch_error')}")
+    if close_d.empty:
+        raise ValueError(f"No daily data for {ticker}")
+
+    client = get_schwab_client()
+    quotes = client.get_quotes([ticker])
+    quote = quotes.get(ticker, {})
+    try:
+        live_price = float(quote.get("lastPrice", close_d.iloc[-1]))
+    except Exception:
+        live_price = float(close_d.iloc[-1])
+    prev_close = float(close_d.iloc[-1])
+
+    call_chain = client.get_option_chain(ticker, contract_type="CALL", strike_count=30)
+    iv_percentile, atm_iv = compute_iv_percentile_from_chain(close_d, call_chain, ticker, contract_type="CALL")
+
+    score, grade, factors = _score_cc_timing_factors(technicals, close_d, live_price, prev_close)
+
+    commentary_data = _get_llm_commentary(ticker, score, grade, factors, technicals, iv_percentile, live_price)
+    caution = commentary_data.get("caution")
+
+    # IV Percentile gate — caps the grade and flags thin premium; not part of the score.
+    if iv_percentile is not None and iv_percentile < 20:
+        if grade == "strong":
+            grade = "moderate"
+        gate_note = "Premium is thin (low IV percentile) — a technical setup alone might not be worth trading."
+        caution = f"{caution} {gate_note}" if caution else gate_note
+
+    return {
+        "ticker": ticker,
+        "score": score,
+        "grade": grade,
+        "iv_percentile": iv_percentile,
+        "atm_iv": atm_iv,
+        "spot_price": round(live_price, 2),
+        "factors": factors,
+        "commentary": commentary_data.get("commentary"),
+        "strike_hint": commentary_data.get("strike_hint"),
+        "caution": caution,
+        "cached_at": datetime.now(timezone.utc).isoformat(),
+        "fetch_status": "ok",
+        "fetch_error": None,
+    }
+
+
+def compute_cc_timing_signal(ticker: str, force: bool = False) -> dict:
+    ticker = ticker.upper()
+    now = time.time()
+    cached = _cc_timing_cache.get(ticker)
+    if not force and cached and (now - cached[1]) < _CACHE_TTL:
+        return cached[0]
+
+    try:
+        result = _compute_cc_timing_fresh(ticker)
+        _cc_timing_cache[ticker] = (result, now)
+        return result
+    except Exception as exc:
+        log.exception("cc_timing_signal failed for %s", ticker)
+        return _make_error_signal(ticker, exc)

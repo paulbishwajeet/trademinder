@@ -153,3 +153,68 @@ def test_returns_seven_factors():
     _, _, factors = _score_cc_timing_factors(_make_technicals(), closes, live_price, prev_close)
     assert len(factors) == 6
     assert all("name" in f and "points" in f and "max" in f and "detail" in f for f in factors)
+
+
+def test_compute_fresh_applies_iv_gate_and_calls_schwab():
+    from unittest.mock import patch, MagicMock
+    from datetime import date, timedelta
+
+    closes = _make_daily_closes(n=100, base=100.0, volatility=0.001, trend=0.0)
+
+    mock_client = MagicMock()
+    mock_client.get_quotes.return_value = {"AAPL": {"lastPrice": float(closes.iloc[-1])}}
+
+    exp_date = (date.today() + timedelta(days=37)).strftime("%Y-%m-%d")
+    mock_client.get_option_chain.return_value = {
+        "underlyingPrice": float(closes.iloc[-1]),
+        "callExpDateMap": {
+            f"{exp_date}:37": {
+                str(round(float(closes.iloc[-1]))): [{"volatility": 1.2}],  # very low IV -> gate triggers
+            }
+        },
+    }
+
+    technicals = {
+        "rsi_14": 75.0,
+        "macd_signal": "bearish",
+        "macd_notes": "below 0 line",
+        "fetch_status": "ok",
+    }
+
+    with patch("app.services.cc_timing_signal.get_schwab_client", return_value=mock_client), \
+         patch("app.services.cc_timing_signal.fetch_technicals", return_value=(technicals, closes)), \
+         patch("app.services.cc_timing_signal._get_llm_commentary", return_value={"commentary": None, "strike_hint": None, "caution": None}):
+        from app.services.cc_timing_signal import _compute_cc_timing_fresh
+        result = _compute_cc_timing_fresh("AAPL")
+
+    assert result["fetch_status"] == "ok"
+    assert result["ticker"] == "AAPL"
+    mock_client.get_quotes.assert_called_once_with(["AAPL"])
+    mock_client.get_option_chain.assert_called_once_with("AAPL", contract_type="CALL", strike_count=30)
+    # IV percentile is very low (below the 20th-percentile gate) -> grade capped, caution set
+    assert result["grade"] != "strong"
+    assert result["caution"] is not None and "premium" in result["caution"].lower()
+
+
+def test_compute_cc_timing_signal_uses_cache():
+    from unittest.mock import patch
+    import app.services.cc_timing_signal as mod
+
+    mod._cc_timing_cache.clear()
+    call_count = {"n": 0}
+
+    def fake_fresh(ticker):
+        call_count["n"] += 1
+        return {"ticker": ticker, "score": 50, "grade": "moderate", "iv_percentile": None,
+                "atm_iv": None, "spot_price": 100.0, "factors": [], "commentary": None,
+                "strike_hint": None, "caution": None, "cached_at": "2026-01-01T00:00:00+00:00",
+                "fetch_status": "ok", "fetch_error": None}
+
+    with patch("app.services.cc_timing_signal._compute_cc_timing_fresh", side_effect=fake_fresh):
+        mod.compute_cc_timing_signal("AAPL")
+        mod.compute_cc_timing_signal("AAPL")  # should hit cache, not call fresh again
+    assert call_count["n"] == 1
+
+    with patch("app.services.cc_timing_signal._compute_cc_timing_fresh", side_effect=fake_fresh):
+        mod.compute_cc_timing_signal("AAPL", force=True)  # force bypasses cache
+    assert call_count["n"] == 2
