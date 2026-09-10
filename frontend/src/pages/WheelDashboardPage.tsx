@@ -365,7 +365,7 @@ export function WheelDashboardPage() {
     )
   }
 
-  function renderSignalBadge(ticker: string, sigMap: Record<string, CCSignalResult | 'loading' | 'error'>, type: 'CC' | 'SP') {
+  function renderSignalBadge(ticker: string, sigMap: Record<string, CCSignalResult | 'loading' | 'error'>, type: 'CC' | 'SP' | 'Timing') {
     const sig = sigMap[ticker]
     const detailKey = `${ticker}-${type}`
     if (sig === 'loading') return <span className="text-xs text-gray-400 animate-pulse">...</span>
@@ -384,11 +384,13 @@ export function WheelDashboardPage() {
   function renderSignalDetailRow(ticker: string, colCount = 11) {
     const ccKey = `${ticker}-CC`
     const spKey = `${ticker}-SP`
+    const timingKey = `${ticker}-Timing`
     const isCC = signalDetail === ccKey
     const isSP = signalDetail === spKey
-    if (!isCC && !isSP) return null
-    const sig = isCC ? signals[ticker] : spSignals[ticker]
-    const label = isCC ? 'CC Signal' : 'SP Signal'
+    const isTiming = signalDetail === timingKey
+    if (!isCC && !isSP && !isTiming) return null
+    const sig = isCC ? signals[ticker] : isSP ? spSignals[ticker] : ccTimingSignals[ticker]
+    const label = isCC ? 'CC Signal' : isSP ? 'SP Signal' : 'CC Timing'
     if (!sig || sig === 'loading' || sig === 'error') return null
 
     return (
@@ -512,6 +514,7 @@ export function WheelDashboardPage() {
         {renderRsiCell(ticker)}
         {renderMacdCell(ticker)}
         <td className="py-2 pr-3">{renderSignalBadge(ticker, signals, 'CC')}</td>
+        <td className="py-2 pr-3">{renderSignalBadge(ticker, ccTimingSignals, 'Timing')}</td>
         {renderGainLossCell(f)}
         <td className="py-2 text-right">
           <div className="flex items-center gap-1 justify-end">
@@ -582,6 +585,7 @@ export function WheelDashboardPage() {
                 <th className="py-2 pr-3 font-normal">RSI(D)</th>
                 <th className="py-2 pr-3 font-normal">MACD(W)</th>
                 <th className="py-2 pr-3 font-normal">CC Signal</th>
+                <th className="py-2 pr-3 font-normal">CC Timing</th>
                 <th className="py-2 pr-3 font-normal">% G/L</th>
                 <th className="py-2 pr-3 font-normal"></th>
               </tr>
@@ -591,8 +595,8 @@ export function WheelDashboardPage() {
               return (
                 <tbody key={f.slot.id} className="border-t border-gray-50">
                   {renderAwaitingCCSlotRow(f)}
-                  {renderLegRows(f, 11)}
-                  {isFirstForTicker && renderSignalDetailRow(f.ticker, 11)}
+                  {renderLegRows(f, 12)}
+                  {isFirstForTicker && renderSignalDetailRow(f.ticker, 12)}
                 </tbody>
               )
             })}
