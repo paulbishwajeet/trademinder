@@ -86,6 +86,11 @@ export const combinedSignalApi = {
   },
 }
 
+export const ccTimingSignalApi = {
+  get: (ticker: string, refresh = false) =>
+    apiFetch<CCSignalResult>(`/market/cc-timing-signal/${encodeURIComponent(ticker)}${refresh ? '?refresh=true' : ''}`),
+}
+
 export const optionPriceApi = {
   get: (ticker: string, strike: number, expiry: string, contractType: string) => {
     const qs = new URLSearchParams({ strike: String(strike), expiry, contract_type: contractType })
