@@ -76,11 +76,21 @@ def _score_cc_timing_factors(
     factors.append({"name": "RSI(D) Trend", "points": trend_pts, "max": 10, "detail": trend_detail})
 
     # 3. MACD(W) (25 pts) — bearish weekly = overhead pressure, confirms the fade thesis.
+    #    The crossover's trend matters too: a bearish read that's "fading_near_flip"
+    #    (exhausted, reversal risk) is worth less than a fresh or sustained one.
     macd = technicals.get("macd_signal", "neutral")
+    macd_trend = technicals.get("macd_weekly_trend")
     macd_map = {"bearish": 25, "neutral": 12, "bullish": 0}
     macd_pts = macd_map.get(macd, 0)
+    trend_note = ""
+    if macd == "bearish" and macd_trend == "squeezing":
+        macd_pts = 18
+        trend_note = ", squeezing"
+    elif macd == "bearish" and macd_trend == "fading_near_flip":
+        macd_pts = 12
+        trend_note = ", fading (bearish exhaustion)"
     macd_notes = technicals.get("macd_notes", "")
-    factors.append({"name": "MACD(W)", "points": macd_pts, "max": 25, "detail": f"{macd.capitalize()}, {macd_notes}"})
+    factors.append({"name": "MACD(W)", "points": macd_pts, "max": 25, "detail": f"{macd.capitalize()}, {macd_notes}{trend_note}"})
 
     # 4. Bollinger %B (15 pts) — continuous position within the bands; sweet spot is
     #    mid-to-upper without touching the extremes (overextended but not parabolic).
@@ -196,6 +206,13 @@ def _compute_cc_timing_fresh(ticker: str) -> dict:
 
     commentary_data = _get_llm_commentary(ticker, score, grade, factors, technicals, iv_percentile, live_price)
     caution = commentary_data.get("caution")
+
+    # Weekly MACD exhaustion — bearish confirmation that's fading is a reversal risk, not part of the score.
+    if technicals.get("macd_signal") == "bearish" and technicals.get("macd_weekly_trend") == "fading_near_flip":
+        periods = technicals.get("macd_weekly_periods_since_cross")
+        periods_note = f" ({periods} weeks since the last cross)" if periods is not None else ""
+        exhaustion_note = f"Weekly MACD is bearish but fading{periods_note} — reversal risk."
+        caution = f"{caution} {exhaustion_note}" if caution else exhaustion_note
 
     # IV Percentile gate — caps the grade and flags thin premium; not part of the score.
     if iv_percentile is not None and iv_percentile < 20:

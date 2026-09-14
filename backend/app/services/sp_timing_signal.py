@@ -79,11 +79,21 @@ def _score_sp_timing_factors(
     factors.append({"name": "RSI(D) Trend", "points": trend_pts, "max": 10, "detail": trend_detail})
 
     # 3. MACD(W) (25 pts) — bullish weekly = tailwind, confirms the "holds or rises" thesis.
+    #    The crossover's trend matters too: a bullish read that's "fading_near_flip"
+    #    (exhausted, reversal risk) is worth less than a fresh or sustained one.
     macd = technicals.get("macd_signal", "neutral")
+    macd_trend = technicals.get("macd_weekly_trend")
     macd_map = {"bullish": 25, "neutral": 12, "bearish": 0}
     macd_pts = macd_map.get(macd, 0)
+    trend_note = ""
+    if macd == "bullish" and macd_trend == "squeezing":
+        macd_pts = 18
+        trend_note = ", squeezing"
+    elif macd == "bullish" and macd_trend == "fading_near_flip":
+        macd_pts = 12
+        trend_note = ", fading (bullish exhaustion)"
     macd_notes = technicals.get("macd_notes", "")
-    factors.append({"name": "MACD(W)", "points": macd_pts, "max": 25, "detail": f"{macd.capitalize()}, {macd_notes}"})
+    factors.append({"name": "MACD(W)", "points": macd_pts, "max": 25, "detail": f"{macd.capitalize()}, {macd_notes}{trend_note}"})
 
     # 4. Bollinger %B (15 pts) — sweet spot is lower-mid without touching the extremes
     #    (oversold but not in freefall) — mirror reflection of CC Timing's zones about 0.5.
@@ -199,6 +209,13 @@ def _compute_sp_timing_fresh(ticker: str) -> dict:
 
     commentary_data = _get_llm_commentary(ticker, score, grade, factors, technicals, iv_percentile, live_price)
     caution = commentary_data.get("caution")
+
+    # Weekly MACD exhaustion — bullish confirmation that's fading is a reversal risk, not part of the score.
+    if technicals.get("macd_signal") == "bullish" and technicals.get("macd_weekly_trend") == "fading_near_flip":
+        periods = technicals.get("macd_weekly_periods_since_cross")
+        periods_note = f" ({periods} weeks since the last cross)" if periods is not None else ""
+        exhaustion_note = f"Weekly MACD is bullish but fading{periods_note} — reversal risk."
+        caution = f"{caution} {exhaustion_note}" if caution else exhaustion_note
 
     # IV Percentile gate — caps the grade and flags thin premium; not part of the score.
     if iv_percentile is not None and iv_percentile < 20:

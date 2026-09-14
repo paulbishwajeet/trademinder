@@ -259,6 +259,8 @@ export function WheelDashboardPage() {
       if (!eb) return -1
       return ea < eb ? -1 : ea > eb ? 1 : 0
     })
+  const activeCC = active.filter(f => f.slot.status === 'cc_active')
+  const activeSP = active.filter(f => f.slot.status === 'sold_put_active')
   const emptyWheels = sessions.filter(s => s.slots.length === 0)
 
   const resolveSlotTicker = resolveSlotId
@@ -373,6 +375,32 @@ export function WheelDashboardPage() {
         <span className={`px-2 py-0.5 rounded text-xs font-medium ${MACD_COLORS[t.macd_signal ?? 'neutral']}`}>
           {t.macd_signal ?? '—'}
         </span>
+      </td>
+    )
+  }
+
+  function renderMacdTrendCell(ticker: string) {
+    const t = technicals[ticker]
+    if (t === 'loading') return <td className="py-2 pr-3 text-xs text-gray-400 animate-pulse">...</td>
+    if (!t || t === 'error' || t.fetch_status !== 'ok') return <td className="py-2 pr-3 text-xs text-gray-300">—</td>
+    const pills: { label: string; fullLabel: string; value: string | null }[] = [
+      { label: 'D', fullLabel: 'Daily', value: t.macd_daily_signal },
+      { label: '3D', fullLabel: '3-Day', value: t.macd_3day_signal },
+      { label: 'W', fullLabel: 'Weekly', value: t.macd_signal },
+    ]
+    return (
+      <td className="py-2 pr-3">
+        <div className="flex items-center gap-1">
+          {pills.map(p => (
+            <span
+              key={p.label}
+              className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${MACD_COLORS[p.value ?? 'neutral']}`}
+              title={`${p.fullLabel}: ${p.value ?? 'unknown'}`}
+            >
+              {p.label}
+            </span>
+          ))}
+        </div>
       </td>
     )
   }
@@ -511,6 +539,113 @@ export function WheelDashboardPage() {
     )
   }
 
+  function renderActiveLegSummary(slot: WheelSlotDetail) {
+    const leg = slot.legs.find(l => l.rotation_number === slot.rotation_number && l.trade_status === 'open' && l.leg_role !== 'stock')
+    if (!leg) return null
+    const parts: string[] = []
+    if (leg.trade_expiry_date) {
+      const [y, m, d] = leg.trade_expiry_date.split('-')
+      parts.push(`${parseInt(m)}/${parseInt(d)}/${y.slice(2)}`)
+    }
+    if (leg.trade_strike_price != null) parts.push(`$${leg.trade_strike_price}`)
+    const roleLabel = leg.leg_role === 'covered_call' ? 'CC' : leg.leg_role === 'sold_put' ? 'SP' : null
+    if (!parts.length && !roleLabel) return null
+    const pillClass = leg.leg_role === 'sold_put'
+      ? 'bg-blue-100 text-blue-700'
+      : 'bg-amber-100 text-amber-700'
+    return (
+      <div className="text-xs text-gray-400 font-normal leading-tight flex items-center gap-1">
+        {parts.length > 0 && <span>{parts.join(' ')}</span>}
+        {roleLabel && <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${pillClass}`}>{roleLabel}</span>}
+      </div>
+    )
+  }
+
+  function renderActiveSlotRow(f: FlatSlot) {
+    const { slot, ticker } = f
+    const isExpanded = expandedSlot === slot.id
+
+    return (
+      <tr key={slot.id} className="group">
+        <td className="py-2 pr-3">
+          <span className="font-bold text-gray-900">{ticker}</span>
+          <span className="text-[10px] text-gray-400 align-sub ml-1">{slot.contracts}x100 R{slot.rotation_number}</span>
+          {renderActiveLegSummary(slot)}
+        </td>
+        <td className="py-2 pr-3 text-xs font-medium text-green-600">${slot.total_premium}</td>
+        {renderPriceCell(ticker)}
+        {renderChangeCell(ticker)}
+        {renderRsiCell(ticker)}
+        {renderMacdCell(ticker)}
+        {renderMacdTrendCell(ticker)}
+        <td className="py-2 pr-3">{renderSignalBadge(ticker, ccTimingSignals, 'CCTiming')}</td>
+        <td className="py-2 pr-3">{renderSignalBadge(ticker, spTimingSignals, 'SPTiming')}</td>
+        {renderPnlCell(slot)}
+        {renderGainLossCell(f)}
+        <td className="py-2 text-right">
+          <div className="flex items-center gap-1 justify-end">
+            {(slot.status === 'cc_active' || slot.status === 'sold_put_active' || slot.needs_action) && (
+              <button onClick={() => setResolveSlotId(slot.id)} className="px-2 py-0.5 text-xs bg-amber-100 text-amber-800 rounded hover:bg-amber-200">
+                Resolve
+              </button>
+            )}
+            <button
+              onClick={() => setExpandedSlot(isExpanded ? null : slot.id)}
+              className="px-1.5 py-0.5 text-xs text-gray-400 hover:text-gray-600 rounded hover:bg-gray-100"
+              title="Show legs"
+            >
+              {isExpanded ? '−' : '+'}
+            </button>
+          </div>
+        </td>
+      </tr>
+    )
+  }
+
+  function renderActiveSection(title: string, color: string, bgColor: string, borderColor: string, fetchKey: string, slots: FlatSlot[]) {
+    if (slots.length === 0) return null
+    const tickers = [...new Set(slots.map(f => f.ticker))]
+    return (
+      <section className="mb-5">
+        <div className="flex items-center gap-2 mb-2">
+          <span className={`text-sm font-bold ${color}`}>{title}</span>
+          <span className={`${bgColor} ${color} text-xs px-2 py-0.5 rounded-full font-medium`}>{slots.length}</span>
+          {renderSectionFetchControls(fetchKey, tickers, true)}
+        </div>
+        <div className={`bg-white border ${borderColor} rounded-lg overflow-x-auto`}>
+          <table className="min-w-max w-full text-sm whitespace-nowrap">
+            <thead>
+              <tr className="text-left text-xs text-gray-400 border-b border-gray-100">
+                <th className="py-2 pr-3 pl-3 font-normal">Ticker</th>
+                <th className="py-2 pr-3 font-normal">Premium</th>
+                <th className="py-2 pr-3 font-normal">Price</th>
+                <th className="py-2 pr-3 font-normal">Change%</th>
+                <th className="py-2 pr-3 font-normal">RSI(D)</th>
+                <th className="py-2 pr-3 font-normal">MACD(W)</th>
+                <th className="py-2 pr-3 font-normal">MACD Trend</th>
+                <th className="py-2 pr-3 font-normal">CC Timing</th>
+                <th className="py-2 pr-3 font-normal">SP Timing</th>
+                <th className="py-2 pr-3 font-normal">P&L %</th>
+                <th className="py-2 pr-3 font-normal">% G/L</th>
+                <th className="py-2 pr-3 font-normal"></th>
+              </tr>
+            </thead>
+            {slots.map((f, idx) => {
+              const isFirstForTicker = slots.findIndex(s => s.ticker === f.ticker) === idx
+              return (
+                <tbody key={f.slot.id} className="border-t border-gray-50">
+                  {renderActiveSlotRow(f)}
+                  {renderLegRows(f, 12)}
+                  {isFirstForTicker && renderSignalDetailRow(f.ticker, 12)}
+                </tbody>
+              )
+            })}
+          </table>
+        </div>
+      </section>
+    )
+  }
+
   function renderAwaitingCCSlotRow(f: FlatSlot) {
     const { slot, ticker } = f
     const isExpanded = expandedSlot === slot.id
@@ -527,7 +662,7 @@ export function WheelDashboardPage() {
         {renderChangeCell(ticker)}
         {renderRsiCell(ticker)}
         {renderMacdCell(ticker)}
-        <td className="py-2 pr-3">{renderSignalBadge(ticker, signals, 'CC')}</td>
+        {renderMacdTrendCell(ticker)}
         <td className="py-2 pr-3">{renderSignalBadge(ticker, ccTimingSignals, 'CCTiming')}</td>
         {renderGainLossCell(f)}
         <td className="py-2 text-right">
@@ -598,7 +733,7 @@ export function WheelDashboardPage() {
                 <th className="py-2 pr-3 font-normal">Change%</th>
                 <th className="py-2 pr-3 font-normal">RSI(D)</th>
                 <th className="py-2 pr-3 font-normal">MACD(W)</th>
-                <th className="py-2 pr-3 font-normal">CC Signal</th>
+                <th className="py-2 pr-3 font-normal">MACD Trend</th>
                 <th className="py-2 pr-3 font-normal">CC Timing</th>
                 <th className="py-2 pr-3 font-normal">% G/L</th>
                 <th className="py-2 pr-3 font-normal"></th>
@@ -636,7 +771,7 @@ export function WheelDashboardPage() {
         {renderChangeCell(ticker)}
         {renderRsiCell(ticker)}
         {renderMacdCell(ticker)}
-        <td className="py-2 pr-3">{renderSignalBadge(ticker, spSignals, 'SP')}</td>
+        {renderMacdTrendCell(ticker)}
         <td className="py-2 pr-3">{renderSignalBadge(ticker, spTimingSignals, 'SPTiming')}</td>
         {renderGainLossCell(f)}
         <td className="py-2 text-right">
@@ -681,7 +816,7 @@ export function WheelDashboardPage() {
                 <th className="py-2 pr-3 font-normal">Change%</th>
                 <th className="py-2 pr-3 font-normal">RSI(D)</th>
                 <th className="py-2 pr-3 font-normal">MACD(W)</th>
-                <th className="py-2 pr-3 font-normal">SP Signal</th>
+                <th className="py-2 pr-3 font-normal">MACD Trend</th>
                 <th className="py-2 pr-3 font-normal">SP Timing</th>
                 <th className="py-2 pr-3 font-normal">% G/L</th>
                 <th className="py-2 pr-3 font-normal"></th>
@@ -844,7 +979,8 @@ export function WheelDashboardPage() {
           {renderSection('NEEDS ACTION', 'text-amber-600', 'bg-amber-100', 'border-amber-300', needsAction)}
           {renderAwaitingCCSection(awaitingCC)}
           {renderAwaitingSPSection(awaitingSP)}
-          {renderSection('ACTIVE', 'text-blue-600', 'bg-blue-50', 'border-blue-200', active, 'active')}
+          {renderActiveSection('ACTIVE COVERED CALLS', 'text-blue-600', 'bg-blue-50', 'border-blue-200', 'activeCC', activeCC)}
+          {renderActiveSection('ACTIVE SOLD PUTS', 'text-blue-600', 'bg-blue-50', 'border-blue-200', 'activeSP', activeSP)}
         </>
       )}
 

@@ -27,6 +27,10 @@ export interface Rationale {
 export interface TechnicalsData {
   macd_signal: string | null
   macd_notes: string | null
+  macd_daily_signal: string | null
+  macd_daily_notes: string | null
+  macd_3day_signal: string | null
+  macd_3day_notes: string | null
   rsi_14: number | null
   rsi_result: string | null
   ma_200d: number | null

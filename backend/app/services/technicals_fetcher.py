@@ -83,6 +83,16 @@ def _compute_macd_weekly(close_w: pd.Series) -> dict[str, str]:
     return {"macd_signal": macd_signal, "macd_notes": macd_notes}
 
 
+def _resample_n_day_closes(close: pd.Series, n: int) -> pd.Series:
+    """Downsample daily closes to every Nth trading day, anchored so the most
+    recent close is always the last value (positional bucketing, not calendar-based,
+    since business-day series have holiday gaps that make fixed-calendar resampling uneven)."""
+    if close.empty:
+        return close
+    offset = (len(close) - 1) % n
+    return close.iloc[offset::n]
+
+
 _NONE_CROSSOVER_FIELDS: dict = {
     "cross_date": None,
     "cross_direction": None,
@@ -338,6 +348,8 @@ def fetch_technicals(ticker: str, return_closes: bool = False) -> dict | tuple[d
         )
 
         macd = _compute_macd_weekly(close_w)
+        macd_daily = _compute_macd_weekly(close_d)
+        macd_3day = _compute_macd_weekly(_resample_n_day_closes(close_d, 3))
         weekly_crossover = _macd_crossover_state(close_w)
         daily_crossover = _macd_crossover_state(close_d)
         rsi_crossover = _rsi_crossover_state(close_d)
@@ -348,6 +360,10 @@ def fetch_technicals(ticker: str, return_closes: bool = False) -> dict | tuple[d
         result = {
             "macd_signal": macd["macd_signal"],
             "macd_notes": macd["macd_notes"],
+            "macd_daily_signal": macd_daily["macd_signal"],
+            "macd_daily_notes": macd_daily["macd_notes"],
+            "macd_3day_signal": macd_3day["macd_signal"],
+            "macd_3day_notes": macd_3day["macd_notes"],
             **{f"macd_weekly_{k}": v for k, v in weekly_crossover.items()},
             **{f"macd_daily_{k}": v for k, v in daily_crossover.items()},
             "rsi_14": rsi_14,

@@ -66,6 +66,43 @@ def test_macd_weekly_bearish_scores_max():
     assert macd_bull["points"] == 0
 
 
+def test_macd_weekly_bearish_exhaustion_reduces_points():
+    from app.services.cc_timing_signal import _score_cc_timing_factors
+    closes = _make_daily_closes()
+    live_price = float(closes.iloc[-1])
+    prev_close = float(closes.iloc[-2])
+
+    _, _, factors_fresh = _score_cc_timing_factors(
+        _make_technicals({"macd_signal": "bearish", "macd_weekly_trend": "expanding"}), closes, live_price, prev_close
+    )
+    _, _, factors_squeeze = _score_cc_timing_factors(
+        _make_technicals({"macd_signal": "bearish", "macd_weekly_trend": "squeezing"}), closes, live_price, prev_close
+    )
+    _, _, factors_fade = _score_cc_timing_factors(
+        _make_technicals({"macd_signal": "bearish", "macd_weekly_trend": "fading_near_flip"}), closes, live_price, prev_close
+    )
+
+    assert next(f for f in factors_fresh if f["name"] == "MACD(W)")["points"] == 25
+    assert next(f for f in factors_squeeze if f["name"] == "MACD(W)")["points"] == 18
+    fade_factor = next(f for f in factors_fade if f["name"] == "MACD(W)")
+    assert fade_factor["points"] == 12
+    assert fade_factor["max"] == 25
+    assert "exhaustion" in fade_factor["detail"]
+
+
+def test_macd_weekly_trend_ignored_when_bullish():
+    from app.services.cc_timing_signal import _score_cc_timing_factors
+    closes = _make_daily_closes()
+    live_price = float(closes.iloc[-1])
+    prev_close = float(closes.iloc[-2])
+
+    # Trend should have no effect when macd_signal is already the "bad" direction for CC.
+    _, _, factors = _score_cc_timing_factors(
+        _make_technicals({"macd_signal": "bullish", "macd_weekly_trend": "fading_near_flip"}), closes, live_price, prev_close
+    )
+    assert next(f for f in factors if f["name"] == "MACD(W)")["points"] == 0
+
+
 def test_day_color_scoring():
     from app.services.cc_timing_signal import _score_cc_timing_factors
     closes = _make_daily_closes()

@@ -5,6 +5,7 @@ from unittest.mock import patch, MagicMock
 from app.services.technicals_fetcher import (
     fetch_technicals,
     _compute_macd_weekly,
+    _resample_n_day_closes,
     _bollinger_position,
     _infer_sentiment,
 )
@@ -89,6 +90,27 @@ def test_macd_weekly_insufficient_data():
     close = pd.Series([100.0] * 10)
     result = _compute_macd_weekly(close)
     assert result["macd_signal"] == "neutral"
+
+
+# --- unit tests for _resample_n_day_closes ---
+
+def test_resample_n_day_closes_keeps_last_value():
+    close = pd.Series([float(i) for i in range(11)])  # 0..10
+    resampled = _resample_n_day_closes(close, 3)
+    assert resampled.iloc[-1] == 10.0
+
+
+def test_resample_n_day_closes_picks_every_nth():
+    close = pd.Series([float(i) for i in range(10)])  # 0..9, len=10
+    resampled = _resample_n_day_closes(close, 3)
+    # offset = (10-1) % 3 = 0 -> indices 0, 3, 6, 9
+    assert list(resampled) == [0.0, 3.0, 6.0, 9.0]
+
+
+def test_resample_n_day_closes_empty_series():
+    close = pd.Series([], dtype=float)
+    resampled = _resample_n_day_closes(close, 3)
+    assert resampled.empty
 
 
 # --- unit tests for _macd_crossover_state ---
