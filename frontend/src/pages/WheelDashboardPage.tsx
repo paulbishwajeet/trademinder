@@ -8,6 +8,7 @@ import { NewWheelModalV2 } from '../components/Wheel/NewWheelModalV2'
 import { AddSlotModal } from '../components/Wheel/AddSlotModal'
 import { ResolveModal } from '../components/Wheel/ResolveModal'
 import { LinkLegModalV2 } from '../components/Wheel/LinkLegModalV2'
+import { CommentaryPopover } from '../components/Commentary/CommentaryPopover'
 
 interface FlatSlot {
   slot: WheelSlotDetail
@@ -25,6 +26,22 @@ function flattenSlots(sessions: WheelSessionDetail[]): FlatSlot[] {
     stockCostBasis: s.stock_cost_basis,
     stockCurrentPrice: s.stock_current_price,
   })))
+}
+
+const SIGNAL_FETCH_CONCURRENCY = 4
+
+// Runs `tasks` with at most `limit` in flight at once. Each task is expected to
+// handle its own errors (they already .catch() internally), so a rejection here
+// would indicate a bug in the caller, not a normal fetch failure.
+async function runWithConcurrency(tasks: Array<() => Promise<void>>, limit: number): Promise<void> {
+  let next = 0
+  async function worker() {
+    while (next < tasks.length) {
+      const task = tasks[next++]
+      await task()
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, tasks.length) }, worker))
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -155,8 +172,8 @@ export function WheelDashboardPage() {
     const tickersToFetch = tickers.filter(ticker => force || !isCacheFresh(signalsCache, ticker))
     const legsToFetch = activeLegs.filter(({ slotId }) => force || !isCacheFresh(optionPricesCache, slotId))
 
-    await Promise.allSettled([
-      ...tickersToFetch.map(ticker =>
+    const tasks: Array<() => Promise<void>> = [
+      ...tickersToFetch.map(ticker => () =>
         combinedSignalApi.get(ticker, force)
           .then(result => {
             setSignals(prev => ({ ...prev, [ticker]: result.cc }))
@@ -169,7 +186,7 @@ export function WheelDashboardPage() {
             setSpSignals(prev => ({ ...prev, [ticker]: 'error' }))
           })
       ),
-      ...tickersToFetch.map(ticker =>
+      ...tickersToFetch.map(ticker => () =>
         ccTimingSignalApi.get(ticker, force)
           .then(result => {
             setCcTimingSignals(prev => ({ ...prev, [ticker]: result }))
@@ -177,7 +194,7 @@ export function WheelDashboardPage() {
           })
           .catch(() => setCcTimingSignals(prev => ({ ...prev, [ticker]: 'error' })))
       ),
-      ...tickersToFetch.map(ticker =>
+      ...tickersToFetch.map(ticker => () =>
         spTimingSignalApi.get(ticker, force)
           .then(result => {
             setSpTimingSignals(prev => ({ ...prev, [ticker]: result }))
@@ -185,7 +202,7 @@ export function WheelDashboardPage() {
           })
           .catch(() => setSpTimingSignals(prev => ({ ...prev, [ticker]: 'error' })))
       ),
-      ...tickersToFetch.map(ticker =>
+      ...tickersToFetch.map(ticker => () =>
         technicalsApi.quote(ticker)
           .then(result => {
             setQuotes(prev => ({ ...prev, [ticker]: result }))
@@ -193,7 +210,7 @@ export function WheelDashboardPage() {
           })
           .catch(() => setQuotes(prev => ({ ...prev, [ticker]: 'error' })))
       ),
-      ...tickersToFetch.map(ticker =>
+      ...tickersToFetch.map(ticker => () =>
         technicalsApi.fetch(ticker)
           .then(result => {
             setTechnicals(prev => ({ ...prev, [ticker]: result }))
@@ -201,7 +218,7 @@ export function WheelDashboardPage() {
           })
           .catch(() => setTechnicals(prev => ({ ...prev, [ticker]: 'error' })))
       ),
-      ...legsToFetch.map(({ slotId, ticker, strike, expiry, contractType }) =>
+      ...legsToFetch.map(({ slotId, ticker, strike, expiry, contractType }) => () =>
         optionPriceApi.get(ticker, strike, expiry, contractType)
           .then(result => {
             setOptionPrices(prev => ({ ...prev, [slotId]: result }))
@@ -209,7 +226,11 @@ export function WheelDashboardPage() {
           })
           .catch(() => setOptionPrices(prev => ({ ...prev, [slotId]: 'error' })))
       ),
-    ])
+    ]
+
+    // Schwab's API gateway rate-limits/blocks bursts of concurrent requests, so
+    // signals for many tickers must be fetched a few at a time, not all at once.
+    await runWithConcurrency(tasks, SIGNAL_FETCH_CONCURRENCY)
   }
 
   async function fetchSection(key: string, tickers: string[], includeOptionPrices: boolean) {
@@ -582,6 +603,12 @@ export function WheelDashboardPage() {
         <td className="py-2 pr-3">{renderSignalBadge(ticker, spTimingSignals, 'SPTiming')}</td>
         {renderPnlCell(slot)}
         {renderGainLossCell(f)}
+        <td className="py-2 pr-3">
+          {(() => {
+            const leg = slot.legs.find(l => l.rotation_number === slot.rotation_number && l.trade_status === 'open' && l.leg_role !== 'stock')
+            return leg ? <CommentaryPopover tradeId={leg.trade_id} ticker={ticker} /> : null
+          })()}
+        </td>
         <td className="py-2 text-right">
           <div className="flex items-center gap-1 justify-end">
             {(slot.status === 'cc_active' || slot.status === 'sold_put_active' || slot.needs_action) && (
@@ -627,6 +654,7 @@ export function WheelDashboardPage() {
                 <th className="py-2 pr-3 font-normal">SP Timing</th>
                 <th className="py-2 pr-3 font-normal">P&L %</th>
                 <th className="py-2 pr-3 font-normal">% G/L</th>
+                <th className="py-2 pr-3 font-normal">Notes</th>
                 <th className="py-2 pr-3 font-normal"></th>
               </tr>
             </thead>
@@ -635,8 +663,8 @@ export function WheelDashboardPage() {
               return (
                 <tbody key={f.slot.id} className="border-t border-gray-50">
                   {renderActiveSlotRow(f)}
-                  {renderLegRows(f, 12)}
-                  {isFirstForTicker && renderSignalDetailRow(f.ticker, 12)}
+                  {renderLegRows(f, 13)}
+                  {isFirstForTicker && renderSignalDetailRow(f.ticker, 13)}
                 </tbody>
               )
             })}
