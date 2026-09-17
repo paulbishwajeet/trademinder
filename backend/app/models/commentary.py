@@ -3,7 +3,7 @@ from datetime import date, datetime
 from typing import Optional, TYPE_CHECKING
 from sqlalchemy import Date, Text, DateTime, ForeignKey, Index, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.dialects.postgresql import UUID, ARRAY
+from sqlalchemy.dialects.postgresql import UUID, ARRAY, JSONB
 from sqlalchemy.sql import func, text
 from app.database import Base
 
@@ -20,6 +20,7 @@ class Commentary(Base):
     entry_date: Mapped[date] = mapped_column(Date, nullable=False, server_default=func.current_date())
     note: Mapped[str] = mapped_column(Text, nullable=False)
     tags: Mapped[Optional[list[str]]] = mapped_column(ARRAY(String), nullable=True)
+    signal_snapshot: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     trade: Mapped["Trade"] = relationship(back_populates="commentary")

@@ -111,6 +111,21 @@ export interface TradeUpdate {
   session_id?: string | null
 }
 
+export interface WheelSignalSnapshot {
+  captured_at: string
+  premium: string | null
+  price: number | null
+  change_pct: number | null
+  rsi_14: number | null
+  macd_weekly: string | null
+  macd_daily: string | null
+  macd_3day: string | null
+  cc_timing: CCSignalResult | null
+  sp_timing: CCSignalResult | null
+  pnl_pct: number | null
+  gain_loss_pct: number | null
+}
+
 export interface Commentary {
   id: string
   trade_id: string
@@ -119,6 +134,7 @@ export interface Commentary {
   tags: string[] | null
   created_at: string
   rationale: Rationale | null
+  signal_snapshot: WheelSignalSnapshot | null
 }
 
 export interface Alert {

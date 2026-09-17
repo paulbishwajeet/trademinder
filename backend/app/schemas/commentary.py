@@ -1,6 +1,6 @@
 import uuid
 from datetime import date, datetime
-from typing import Optional
+from typing import Any, Optional
 from pydantic import BaseModel, ConfigDict
 from app.schemas.trade import RationaleCreate, RationaleResponse
 
@@ -9,6 +9,7 @@ class CommentaryCreate(BaseModel):
     note: str
     tags: Optional[list[str]] = None
     rationale: Optional[RationaleCreate] = None
+    signal_snapshot: Optional[dict[str, Any]] = None
 
 
 class CommentaryResponse(BaseModel):
@@ -21,3 +22,4 @@ class CommentaryResponse(BaseModel):
     tags: Optional[list[str]] = None
     created_at: datetime
     rationale: Optional[RationaleResponse] = None
+    signal_snapshot: Optional[dict[str, Any]] = None

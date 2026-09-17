@@ -33,6 +33,7 @@ async def add_commentary(trade_id: uuid.UUID, payload: CommentaryCreate, db: Asy
         trade_id=trade_id,
         note=payload.note,
         tags=payload.tags,
+        signal_snapshot=payload.signal_snapshot,
     )
     db.add(comment)
     await db.flush()  # get comment.id before creating rationale

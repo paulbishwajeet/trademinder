@@ -1,13 +1,15 @@
 import { useState } from 'react'
-import type { Commentary, Rationale, TechnicalsData } from '../../types'
+import type { Commentary, Rationale, TechnicalsData, WheelSignalSnapshot } from '../../types'
 import { commentaryApi } from '../../api/commentary'
 import { CommentaryForm } from './CommentaryForm'
+import { MarketSnapshotPreview } from './MarketSnapshotPreview'
 
 interface Props {
   tradeId: string
   ticker: string
   entries: Commentary[]
   onRefresh: () => void
+  snapshot?: WheelSignalSnapshot | null
 }
 
 const RATIONALE_LABELS: Record<string, string> = {
@@ -43,16 +45,34 @@ function RationaleChip({ rationale }: { rationale: Rationale }) {
   )
 }
 
-export function CommentaryThread({ tradeId, ticker, entries, onRefresh }: Props) {
+function SnapshotChip({ snapshot }: { snapshot: WheelSignalSnapshot }) {
+  const [expanded, setExpanded] = useState(false)
+  return (
+    <div className="mt-1">
+      <button type="button" onClick={() => setExpanded(o => !o)}
+        className="text-xs px-2 py-0.5 bg-indigo-50 text-indigo-600 rounded hover:bg-indigo-100">
+        📈 Market Snapshot {expanded ? '▲' : '▼'}
+      </button>
+      {expanded && (
+        <div className="mt-2">
+          <MarketSnapshotPreview snapshot={snapshot} />
+        </div>
+      )}
+    </div>
+  )
+}
+
+export function CommentaryThread({ tradeId, ticker, entries, onRefresh, snapshot }: Props) {
   const [error, setError] = useState<string | null>(null)
 
-  const handleAdd = async (note: string, tags: string[], rationale: TechnicalsData | null) => {
+  const handleAdd = async (note: string, tags: string[], rationale: TechnicalsData | null, signalSnapshot: WheelSignalSnapshot | null) => {
     setError(null)
     try {
       await commentaryApi.add(tradeId, {
         note,
         tags: tags.length > 0 ? tags : undefined,
         rationale: rationale ?? undefined,
+        signal_snapshot: signalSnapshot ?? undefined,
       })
       onRefresh()
     } catch {
@@ -75,7 +95,7 @@ export function CommentaryThread({ tradeId, ticker, entries, onRefresh }: Props)
     <div className="space-y-4">
       <h3 className="text-sm font-semibold text-gray-700">Journal</h3>
       {error && <p className="text-red-500 text-xs">{error}</p>}
-      <CommentaryForm ticker={ticker} onSubmit={handleAdd} />
+      <CommentaryForm ticker={ticker} snapshot={snapshot} onSubmit={handleAdd} />
       <div className="space-y-3 mt-4">
         {entries.length === 0 && <p className="text-gray-400 text-sm">No notes yet.</p>}
         {entries.map(entry => (
@@ -93,6 +113,7 @@ export function CommentaryThread({ tradeId, ticker, entries, onRefresh }: Props)
               </div>
             )}
             {entry.rationale && <RationaleChip rationale={entry.rationale} />}
+            {entry.signal_snapshot && <SnapshotChip snapshot={entry.signal_snapshot} />}
           </div>
         ))}
       </div>

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import type { WheelSessionDetail, WheelSessionSummary, WheelSlotDetail, CCSignalResult, OptionPriceResult, TechnicalsData } from '../types'
+import type { WheelSessionDetail, WheelSessionSummary, WheelSlotDetail, CCSignalResult, OptionPriceResult, TechnicalsData, WheelSignalSnapshot } from '../types'
 import { wheelApi, combinedSignalApi, optionPriceApi, ccTimingSignalApi, spTimingSignalApi } from '../api/wheel'
 import { technicalsApi, type QuoteData } from '../api/technicals'
 import { timeAgo } from '../components/Screener/timeAgo'
@@ -109,6 +109,7 @@ export function WheelDashboardPage() {
   const [signalDetail, setSignalDetail] = useState<string | null>(null)
   const [signalsFetching, setSignalsFetching] = useState(false)
   const [sectionFetching, setSectionFetching] = useState<Record<string, boolean>>({})
+  const [rowFetching, setRowFetching] = useState<Record<string, boolean>>({})
   const [optionPrices, setOptionPrices] = useState<Record<string, OptionPriceResult | 'loading' | 'error'>>(() => seedFromCache(optionPricesCache))
   const [quotes, setQuotes] = useState<Record<string, QuoteData | 'loading' | 'error'>>(() => seedFromCache(quotesCache))
   const [technicals, setTechnicals] = useState<Record<string, TechnicalsData | 'loading' | 'error'>>(() => seedFromCache(technicalsCache))
@@ -242,6 +243,15 @@ export function WheelDashboardPage() {
     }
   }
 
+  async function fetchRow(ticker: string, includeOptionPrices: boolean) {
+    setRowFetching(prev => ({ ...prev, [ticker]: true }))
+    try {
+      await loadSignals(true, { tickers: [ticker], includeOptionPrices })
+    } finally {
+      setRowFetching(prev => ({ ...prev, [ticker]: false }))
+    }
+  }
+
   async function fetchAllSignals() {
     setSignalsFetching(true)
     try {
@@ -318,6 +328,25 @@ export function WheelDashboardPage() {
     return parts.length ? parts.join(' ') : null
   }
 
+  function pnlPctFor(slot: WheelSlotDetail): number | null {
+    const isActive = slot.status === 'cc_active' || slot.status === 'sold_put_active'
+    if (!isActive) return null
+    const priceData = optionPrices[slot.id]
+    if (!priceData || priceData === 'loading' || priceData === 'error' || priceData.fetch_status !== 'ok' || priceData.mid == null) return null
+    const openLegs = slot.legs.filter(l => l.rotation_number === slot.rotation_number && l.trade_status === 'open' && l.leg_role !== 'stock')
+    const leg = openLegs[openLegs.length - 1]
+    if (!leg || leg.trade_premium == null) return null
+    const premium = Number(leg.trade_premium)
+    if (!premium) return null
+    return ((premium - priceData.mid) / premium) * 100
+  }
+
+  function gainLossPctFor(f: FlatSlot): number | null {
+    const { stockCostBasis: costBasis, stockCurrentPrice: currentPrice } = f
+    if (costBasis == null || currentPrice == null || !costBasis) return null
+    return ((currentPrice - costBasis) / costBasis) * 100
+  }
+
   function renderPnlCell(slot: WheelSlotDetail) {
     const isActive = slot.status === 'cc_active' || slot.status === 'sold_put_active'
     if (!isActive) return <td className="py-2 pr-3" />
@@ -326,19 +355,9 @@ export function WheelDashboardPage() {
     if (!priceData || priceData === 'loading') {
       return <td className="py-2 pr-3 text-xs text-gray-400 animate-pulse">...</td>
     }
-    if (priceData === 'error' || priceData.fetch_status !== 'ok' || priceData.mid == null) {
-      return <td className="py-2 pr-3 text-xs text-gray-300">—</td>
-    }
+    const pnlPct = pnlPctFor(slot)
+    if (pnlPct == null) return <td className="py-2 pr-3 text-xs text-gray-300">—</td>
 
-    const openLegs = slot.legs.filter(l => l.rotation_number === slot.rotation_number && l.trade_status === 'open' && l.leg_role !== 'stock')
-    const leg = openLegs[openLegs.length - 1]
-    if (!leg || leg.trade_premium == null) {
-      return <td className="py-2 pr-3 text-xs text-gray-300">—</td>
-    }
-
-    const premium = Number(leg.trade_premium)
-    if (!premium) return <td className="py-2 pr-3 text-xs text-gray-300">—</td>
-    const pnlPct = ((premium - priceData.mid) / premium) * 100
     const isProfit = pnlPct >= 0
     return (
       <td className={`py-2 pr-3 text-xs font-medium ${isProfit ? 'text-green-600' : 'text-red-500'}`}>
@@ -348,17 +367,38 @@ export function WheelDashboardPage() {
   }
 
   function renderGainLossCell(f: FlatSlot) {
-    const { stockCostBasis: costBasis, stockCurrentPrice: currentPrice } = f
-    if (costBasis == null || currentPrice == null || !costBasis) {
-      return <td className="py-2 pr-3 text-xs text-gray-300">—</td>
-    }
-    const pct = ((currentPrice - costBasis) / costBasis) * 100
+    const pct = gainLossPctFor(f)
+    if (pct == null) return <td className="py-2 pr-3 text-xs text-gray-300">—</td>
     const isProfit = pct >= 0
     return (
       <td className={`py-2 pr-3 text-xs font-medium ${isProfit ? 'text-green-600' : 'text-red-500'}`}>
         {isProfit ? '+' : ''}{pct.toFixed(1)}%
       </td>
     )
+  }
+
+  function buildSignalSnapshot(f: FlatSlot): WheelSignalSnapshot {
+    const { slot, ticker } = f
+    const q = quotes[ticker]
+    const t = technicals[ticker]
+    const cc = ccTimingSignals[ticker]
+    const sp = spTimingSignals[ticker]
+    const quote = q && q !== 'loading' && q !== 'error' ? q : null
+    const tech = t && t !== 'loading' && t !== 'error' && t.fetch_status === 'ok' ? t : null
+    return {
+      captured_at: new Date().toISOString(),
+      premium: slot.total_premium,
+      price: quote?.price ?? null,
+      change_pct: quote?.change_pct ?? null,
+      rsi_14: tech?.rsi_14 ?? null,
+      macd_weekly: tech?.macd_signal ?? null,
+      macd_daily: tech?.macd_daily_signal ?? null,
+      macd_3day: tech?.macd_3day_signal ?? null,
+      cc_timing: slot.status !== 'sold_put_active' && cc && cc !== 'loading' && cc !== 'error' ? cc : null,
+      sp_timing: slot.status !== 'cc_active' && sp && sp !== 'loading' && sp !== 'error' ? sp : null,
+      pnl_pct: pnlPctFor(slot),
+      gain_loss_pct: gainLossPctFor(f),
+    }
   }
 
   function renderPriceCell(ticker: string) {
@@ -606,7 +646,7 @@ export function WheelDashboardPage() {
         <td className="py-2 pr-3">
           {(() => {
             const leg = slot.legs.find(l => l.rotation_number === slot.rotation_number && l.trade_status === 'open' && l.leg_role !== 'stock')
-            return leg ? <CommentaryPopover tradeId={leg.trade_id} ticker={ticker} /> : null
+            return leg ? <CommentaryPopover tradeId={leg.trade_id} ticker={ticker} snapshot={buildSignalSnapshot(f)} /> : null
           })()}
         </td>
         <td className="py-2 text-right">
@@ -616,6 +656,14 @@ export function WheelDashboardPage() {
                 Resolve
               </button>
             )}
+            <button
+              onClick={() => fetchRow(ticker, true)}
+              disabled={rowFetching[ticker]}
+              className="px-1.5 py-0.5 text-xs text-gray-400 hover:text-gray-600 rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Fetch this row"
+            >
+              {rowFetching[ticker] ? '…' : '↻'}
+            </button>
             <button
               onClick={() => setExpandedSlot(isExpanded ? null : slot.id)}
               className="px-1.5 py-0.5 text-xs text-gray-400 hover:text-gray-600 rounded hover:bg-gray-100"
@@ -710,6 +758,14 @@ export function WheelDashboardPage() {
                 </button>
               )
             })()}
+            <button
+              onClick={() => fetchRow(ticker, false)}
+              disabled={rowFetching[ticker]}
+              className="px-1.5 py-0.5 text-xs text-gray-400 hover:text-gray-600 rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Fetch this row"
+            >
+              {rowFetching[ticker] ? '…' : '↻'}
+            </button>
             <button
               onClick={() => setExpandedSlot(isExpanded ? null : slot.id)}
               className="px-1.5 py-0.5 text-xs text-gray-400 hover:text-gray-600 rounded hover:bg-gray-100"
@@ -809,6 +865,14 @@ export function WheelDashboardPage() {
                 + Put
               </button>
             )}
+            <button
+              onClick={() => fetchRow(ticker, false)}
+              disabled={rowFetching[ticker]}
+              className="px-1.5 py-0.5 text-xs text-gray-400 hover:text-gray-600 rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Fetch this row"
+            >
+              {rowFetching[ticker] ? '…' : '↻'}
+            </button>
             <button
               onClick={() => setExpandedSlot(isExpanded ? null : slot.id)}
               className="px-1.5 py-0.5 text-xs text-gray-400 hover:text-gray-600 rounded hover:bg-gray-100"

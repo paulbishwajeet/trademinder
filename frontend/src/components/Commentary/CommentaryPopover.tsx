@@ -1,18 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import type { Commentary } from '../../types'
+import type { Commentary, WheelSignalSnapshot } from '../../types'
 import { commentaryApi } from '../../api/commentary'
 import { CommentaryThread } from './CommentaryThread'
 
 interface Props {
   tradeId: string
   ticker: string
+  snapshot?: WheelSignalSnapshot | null
 }
 
 const PANEL_WIDTH = 400
 const MARGIN = 8
 
-export function CommentaryPopover({ tradeId, ticker }: Props) {
+export function CommentaryPopover({ tradeId, ticker, snapshot }: Props) {
   const [open, setOpen] = useState(false)
   const [entries, setEntries] = useState<Commentary[]>([])
   const [loading, setLoading] = useState(true)
@@ -105,7 +106,7 @@ export function CommentaryPopover({ tradeId, ticker }: Props) {
             <button onClick={() => setOpen(false)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">×</button>
           </div>
           <div className="overflow-y-auto px-4 py-3">
-            <CommentaryThread tradeId={tradeId} ticker={ticker} entries={entries} onRefresh={fetchEntries} />
+            <CommentaryThread tradeId={tradeId} ticker={ticker} entries={entries} onRefresh={fetchEntries} snapshot={snapshot} />
           </div>
         </div>,
         document.body
