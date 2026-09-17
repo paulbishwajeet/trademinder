@@ -103,6 +103,53 @@ def test_macd_weekly_trend_ignored_when_bullish():
     assert next(f for f in factors if f["name"] == "MACD(W)")["points"] == 0
 
 
+def test_rsi_trend_bearish_cross_scores_by_freshness():
+    from app.services.cc_timing_signal import _score_cc_timing_factors
+    closes = _make_daily_closes()
+    live_price = float(closes.iloc[-1])
+    prev_close = float(closes.iloc[-2])
+
+    _, _, factors_fresh = _score_cc_timing_factors(
+        _make_technicals({"rsi_cross_direction": "bearish", "rsi_trend": "expanding"}), closes, live_price, prev_close
+    )
+    _, _, factors_squeeze = _score_cc_timing_factors(
+        _make_technicals({"rsi_cross_direction": "bearish", "rsi_trend": "squeezing"}), closes, live_price, prev_close
+    )
+    _, _, factors_fade = _score_cc_timing_factors(
+        _make_technicals({"rsi_cross_direction": "bearish", "rsi_trend": "fading_near_flip"}), closes, live_price, prev_close
+    )
+
+    assert next(f for f in factors_fresh if f["name"] == "RSI(D) Trend")["points"] == 10
+    assert next(f for f in factors_squeeze if f["name"] == "RSI(D) Trend")["points"] == 6
+    fade_factor = next(f for f in factors_fade if f["name"] == "RSI(D) Trend")
+    assert fade_factor["points"] == 3
+    assert fade_factor["max"] == 10
+
+
+def test_rsi_trend_bullish_cross_scores_zero():
+    from app.services.cc_timing_signal import _score_cc_timing_factors
+    closes = _make_daily_closes()
+    live_price = float(closes.iloc[-1])
+    prev_close = float(closes.iloc[-2])
+
+    _, _, factors = _score_cc_timing_factors(
+        _make_technicals({"rsi_cross_direction": "bullish", "rsi_trend": "expanding"}), closes, live_price, prev_close
+    )
+    assert next(f for f in factors if f["name"] == "RSI(D) Trend")["points"] == 0
+
+
+def test_rsi_trend_no_crossover_data_falls_back_to_neutral():
+    from app.services.cc_timing_signal import _score_cc_timing_factors
+    closes = _make_daily_closes()
+    live_price = float(closes.iloc[-1])
+    prev_close = float(closes.iloc[-2])
+
+    _, _, factors = _score_cc_timing_factors(
+        _make_technicals({"rsi_cross_direction": None, "rsi_trend": None}), closes, live_price, prev_close
+    )
+    assert next(f for f in factors if f["name"] == "RSI(D) Trend")["points"] == 3
+
+
 def test_day_color_scoring():
     from app.services.cc_timing_signal import _score_cc_timing_factors
     closes = _make_daily_closes()

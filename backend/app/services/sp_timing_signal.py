@@ -9,7 +9,6 @@ from datetime import datetime, timezone
 
 import pandas as pd
 
-from app.services.price_fetcher import _compute_rsi_14
 from app.services.schwab_client import get_schwab_client
 from app.services.technicals_fetcher import compute_iv_percentile_from_chain, fetch_technicals
 from app.services.cc_signal import _get_llm_commentary
@@ -47,35 +46,31 @@ def _score_sp_timing_factors(
         rsi_detail = f"RSI {rsi:.1f}"
     factors.append({"name": "RSI(D) Level", "points": rsi_pts, "max": 20, "detail": rsi_detail})
 
-    # 2. RSI(D) Trend (10 pts) — bottoming out from a depressed read = ideal.
-    trend_pts = 0
-    trend_detail = "Insufficient data"
-    if len(daily_closes) >= 20:
-        rsi_series = []
-        for i in range(6):
-            offset = len(daily_closes) - 1 - i
-            if offset < 14:
-                break
-            sub = daily_closes.iloc[: offset + 1]
-            rsi_val = _compute_rsi_14(sub)
-            if rsi_val is not None:
-                rsi_series.append(rsi_val)
-        if len(rsi_series) >= 2:
-            current_rsi = rsi_series[0]
-            oldest_rsi = rsi_series[-1]
-            was_depressed = any(r < 40 for r in rsi_series)
-            if was_depressed and current_rsi > oldest_rsi:
-                trend_pts = 10
-                trend_detail = f"Bottoming out: {oldest_rsi:.1f} → {current_rsi:.1f}"
-            elif was_depressed and current_rsi <= oldest_rsi:
-                trend_pts = 6
-                trend_detail = f"Depressed ({current_rsi:.1f}), not yet bottoming out"
-            elif current_rsi < oldest_rsi and current_rsi < 45:
-                trend_pts = 1
-                trend_detail = f"Falling strongly: {oldest_rsi:.1f} → {current_rsi:.1f}"
-            else:
-                trend_pts = 3
-                trend_detail = f"Neutral/weak ({current_rsi:.1f})"
+    # 2. RSI(D) Trend (10 pts) — direction of RSI vs its own 14-period signal line
+    #    (rsi_ma_14). A bullish cross (RSI turning up) is ideal for SP; the
+    #    freshness of that cross (rsi_trend) scales the points — exact mirror of
+    #    cc_timing_signal.py's RSI(D) Trend factor.
+    rsi_cross_direction = technicals.get("rsi_cross_direction")
+    rsi_trend = technicals.get("rsi_trend")
+    if rsi_cross_direction == "bullish":
+        if rsi_trend in ("expanding", "holding_strong"):
+            trend_pts = 10
+            trend_detail = f"Bullish cross, {rsi_trend}"
+        elif rsi_trend == "squeezing":
+            trend_pts = 6
+            trend_detail = "Bullish cross, squeezing"
+        elif rsi_trend == "fading_near_flip":
+            trend_pts = 3
+            trend_detail = "Bullish cross, fading (near flip)"
+        else:
+            trend_pts = 3
+            trend_detail = "Bullish cross"
+    elif rsi_cross_direction == "bearish":
+        trend_pts = 0
+        trend_detail = f"Bearish cross ({rsi_trend or 'n/a'})"
+    else:
+        trend_pts = 3
+        trend_detail = "No RSI crossover data"
     factors.append({"name": "RSI(D) Trend", "points": trend_pts, "max": 10, "detail": trend_detail})
 
     # 3. MACD(W) (25 pts) — bullish weekly = tailwind, confirms the "holds or rises" thesis.
