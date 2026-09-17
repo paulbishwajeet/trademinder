@@ -2,6 +2,7 @@ import { apiFetch } from './client'
 import type {
   WheelSessionSummary, WheelSessionDetail, WheelSlotDetail,
   WheelSlotLegItem, WheelActiveSlot, CCSignalResult, OptionPriceResult,
+  Commentary, TechnicalsData, WheelSignalSnapshot, WheelSlotHistoryResponse,
 } from '../types'
 
 export interface WheelSessionCreate {
@@ -62,6 +63,14 @@ export const wheelApi = {
     apiFetch<WheelSlotDetail>(`/wheel/slots/${slotId}/resolve`, { method: 'POST', body: JSON.stringify(payload) }),
 
   activeSlots: () => apiFetch<WheelActiveSlot[]>('/wheel/active-slots'),
+
+  addSlotCommentary: (slotId: string, payload: { note: string; tags?: string[]; rationale?: TechnicalsData | null; signal_snapshot?: WheelSignalSnapshot | null }) =>
+    apiFetch<Commentary>(`/wheel/slots/${slotId}/commentary`, { method: 'POST', body: JSON.stringify(payload) }),
+
+  getSlotHistory: (slotId: string, params: { limit: number; offset: number }) => {
+    const qs = new URLSearchParams({ limit: String(params.limit), offset: String(params.offset) })
+    return apiFetch<WheelSlotHistoryResponse>(`/wheel/slots/${slotId}/history?${qs}`)
+  },
 }
 
 export const ccSignalApi = {

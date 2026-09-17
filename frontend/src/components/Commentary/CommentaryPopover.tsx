@@ -1,39 +1,68 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import type { Commentary, WheelSignalSnapshot } from '../../types'
+import type { TechnicalsData, WheelSignalSnapshot, WheelSlotHistoryEntry } from '../../types'
 import { commentaryApi } from '../../api/commentary'
-import { CommentaryThread } from './CommentaryThread'
+import { wheelApi } from '../../api/wheel'
+import { SlotCommentaryThread } from './SlotCommentaryThread'
+
+type AddTarget = { type: 'trade'; tradeId: string } | { type: 'slot' }
 
 interface Props {
-  tradeId: string
+  slotId: string
   ticker: string
+  addTarget: AddTarget
   snapshot?: WheelSignalSnapshot | null
 }
 
 const PANEL_WIDTH = 400
 const MARGIN = 8
+const PAGE_SIZE = 5
 
-export function CommentaryPopover({ tradeId, ticker, snapshot }: Props) {
+export function CommentaryPopover({ slotId, ticker, addTarget, snapshot }: Props) {
   const [open, setOpen] = useState(false)
-  const [entries, setEntries] = useState<Commentary[]>([])
+  const [entries, setEntries] = useState<WheelSlotHistoryEntry[]>([])
+  const [total, setTotal] = useState(0)
+  const [hasMore, setHasMore] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [style, setStyle] = useState<React.CSSProperties>({})
   const buttonRef = useRef<HTMLButtonElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
 
-  const fetchEntries = useCallback(async () => {
-    setLoading(true)
+  const fetchPage = useCallback(async (offset: number, append: boolean) => {
+    if (append) setLoadingMore(true)
+    else setLoading(true)
     try {
-      const data = await commentaryApi.list(tradeId)
-      setEntries(data)
+      const res = await wheelApi.getSlotHistory(slotId, { limit: PAGE_SIZE, offset })
+      setEntries(prev => append ? [...prev, ...res.items] : res.items)
+      setTotal(res.total)
+      setHasMore(res.has_more)
     } finally {
-      setLoading(false)
+      if (append) setLoadingMore(false)
+      else setLoading(false)
     }
-  }, [tradeId])
+  }, [slotId])
 
   useEffect(() => {
-    fetchEntries()
-  }, [fetchEntries])
+    fetchPage(0, false)
+  }, [fetchPage])
+
+  const handleLoadMore = () => fetchPage(entries.length, true)
+
+  const handleAdd = async (note: string, tags: string[], rationale: TechnicalsData | null, signalSnapshot: WheelSignalSnapshot | null) => {
+    const payload = { note, tags: tags.length > 0 ? tags : undefined, rationale: rationale ?? undefined, signal_snapshot: signalSnapshot ?? undefined }
+    if (addTarget.type === 'trade') {
+      await commentaryApi.add(addTarget.tradeId, payload)
+    } else {
+      await wheelApi.addSlotCommentary(slotId, payload)
+    }
+    await fetchPage(0, false)
+  }
+
+  const handleDelete = async (id: string) => {
+    await commentaryApi.delete(id)
+    await fetchPage(0, false)
+  }
 
   const positionPanel = useCallback(() => {
     const btn = buttonRef.current
@@ -92,7 +121,7 @@ export function CommentaryPopover({ tradeId, ticker, snapshot }: Props) {
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
             d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
         </svg>
-        <span className="text-xs font-medium">{loading ? '…' : entries.length}</span>
+        <span className="text-xs font-medium">{loading ? '…' : total}</span>
       </button>
 
       {open && createPortal(
@@ -106,7 +135,17 @@ export function CommentaryPopover({ tradeId, ticker, snapshot }: Props) {
             <button onClick={() => setOpen(false)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">×</button>
           </div>
           <div className="overflow-y-auto px-4 py-3">
-            <CommentaryThread tradeId={tradeId} ticker={ticker} entries={entries} onRefresh={fetchEntries} snapshot={snapshot} />
+            <SlotCommentaryThread
+              ticker={ticker}
+              entries={entries}
+              total={total}
+              hasMore={hasMore}
+              loadingMore={loadingMore}
+              snapshot={snapshot}
+              onLoadMore={handleLoadMore}
+              onAdd={handleAdd}
+              onDelete={handleDelete}
+            />
           </div>
         </div>,
         document.body

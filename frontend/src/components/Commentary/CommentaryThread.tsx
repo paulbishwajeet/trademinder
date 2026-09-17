@@ -19,7 +19,7 @@ const RATIONALE_LABELS: Record<string, string> = {
   next_earnings_date: 'Earnings', notes: 'Notes',
 }
 
-function RationaleChip({ rationale }: { rationale: Rationale }) {
+export function RationaleChip({ rationale }: { rationale: Rationale }) {
   const [expanded, setExpanded] = useState(false)
   const fields = Object.entries(RATIONALE_LABELS)
     .map(([k, label]) => ({ key: k, label, value: (rationale as unknown as Record<string, unknown>)[k] }))
@@ -45,7 +45,7 @@ function RationaleChip({ rationale }: { rationale: Rationale }) {
   )
 }
 
-function SnapshotChip({ snapshot }: { snapshot: WheelSignalSnapshot }) {
+export function SnapshotChip({ snapshot }: { snapshot: WheelSignalSnapshot }) {
   const [expanded, setExpanded] = useState(false)
   return (
     <div className="mt-1">

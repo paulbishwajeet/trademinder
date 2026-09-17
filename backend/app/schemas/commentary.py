@@ -16,7 +16,8 @@ class CommentaryResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
-    trade_id: uuid.UUID
+    trade_id: Optional[uuid.UUID] = None
+    slot_id: Optional[uuid.UUID] = None
     entry_date: date
     note: str
     tags: Optional[list[str]] = None

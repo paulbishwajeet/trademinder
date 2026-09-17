@@ -128,13 +128,26 @@ export interface WheelSignalSnapshot {
 
 export interface Commentary {
   id: string
-  trade_id: string
+  trade_id: string | null
+  slot_id: string | null
   entry_date: string
   note: string
   tags: string[] | null
   created_at: string
   rationale: Rationale | null
   signal_snapshot: WheelSignalSnapshot | null
+}
+
+export interface WheelSlotHistoryEntry extends Commentary {
+  origin: 'slot' | 'leg'
+  leg_role: string | null
+  rotation_number: number | null
+}
+
+export interface WheelSlotHistoryResponse {
+  items: WheelSlotHistoryEntry[]
+  total: number
+  has_more: boolean
 }
 
 export interface Alert {

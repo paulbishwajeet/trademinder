@@ -385,6 +385,10 @@ export function WheelDashboardPage() {
     const sp = spTimingSignals[ticker]
     const quote = q && q !== 'loading' && q !== 'error' ? q : null
     const tech = t && t !== 'loading' && t !== 'error' && t.fetch_status === 'ok' ? t : null
+    // Only the timing signal shown in whichever box this row lives in gets captured —
+    // ACTIVE COVERED CALLS/AWAITING CC only ever show CC Timing, and the SP counterparts only SP Timing.
+    const showCC = slot.status === 'cc_active' || slot.status === 'awaiting_cc'
+    const showSP = slot.status === 'sold_put_active' || slot.status === 'awaiting_sold_put'
     return {
       captured_at: new Date().toISOString(),
       premium: slot.total_premium,
@@ -394,8 +398,8 @@ export function WheelDashboardPage() {
       macd_weekly: tech?.macd_signal ?? null,
       macd_daily: tech?.macd_daily_signal ?? null,
       macd_3day: tech?.macd_3day_signal ?? null,
-      cc_timing: slot.status !== 'sold_put_active' && cc && cc !== 'loading' && cc !== 'error' ? cc : null,
-      sp_timing: slot.status !== 'cc_active' && sp && sp !== 'loading' && sp !== 'error' ? sp : null,
+      cc_timing: showCC && cc && cc !== 'loading' && cc !== 'error' ? cc : null,
+      sp_timing: showSP && sp && sp !== 'loading' && sp !== 'error' ? sp : null,
       pnl_pct: pnlPctFor(slot),
       gain_loss_pct: gainLossPctFor(f),
     }
@@ -646,7 +650,8 @@ export function WheelDashboardPage() {
         <td className="py-2 pr-3">
           {(() => {
             const leg = slot.legs.find(l => l.rotation_number === slot.rotation_number && l.trade_status === 'open' && l.leg_role !== 'stock')
-            return leg ? <CommentaryPopover tradeId={leg.trade_id} ticker={ticker} snapshot={buildSignalSnapshot(f)} /> : null
+            const addTarget = leg ? { type: 'trade' as const, tradeId: leg.trade_id } : { type: 'slot' as const }
+            return <CommentaryPopover slotId={slot.id} ticker={ticker} addTarget={addTarget} snapshot={buildSignalSnapshot(f)} />
           })()}
         </td>
         <td className="py-2 text-right">
@@ -741,6 +746,9 @@ export function WheelDashboardPage() {
         {renderMacdTrendCell(ticker)}
         <td className="py-2 pr-3">{renderSignalBadge(ticker, ccTimingSignals, 'CCTiming')}</td>
         {renderGainLossCell(f)}
+        <td className="py-2 pr-3">
+          <CommentaryPopover slotId={slot.id} ticker={ticker} addTarget={{ type: 'slot' }} snapshot={buildSignalSnapshot(f)} />
+        </td>
         <td className="py-2 text-right">
           <div className="flex items-center gap-1 justify-end">
             {!slot.needs_action && (() => {
@@ -820,6 +828,7 @@ export function WheelDashboardPage() {
                 <th className="py-2 pr-3 font-normal">MACD Trend</th>
                 <th className="py-2 pr-3 font-normal">CC Timing</th>
                 <th className="py-2 pr-3 font-normal">% G/L</th>
+                <th className="py-2 pr-3 font-normal">Notes</th>
                 <th className="py-2 pr-3 font-normal"></th>
               </tr>
             </thead>
@@ -828,8 +837,8 @@ export function WheelDashboardPage() {
               return (
                 <tbody key={f.slot.id} className="border-t border-gray-50">
                   {renderAwaitingCCSlotRow(f)}
-                  {renderLegRows(f, 12)}
-                  {isFirstForTicker && renderSignalDetailRow(f.ticker, 12)}
+                  {renderLegRows(f, 13)}
+                  {isFirstForTicker && renderSignalDetailRow(f.ticker, 13)}
                 </tbody>
               )
             })}
@@ -858,6 +867,9 @@ export function WheelDashboardPage() {
         {renderMacdTrendCell(ticker)}
         <td className="py-2 pr-3">{renderSignalBadge(ticker, spTimingSignals, 'SPTiming')}</td>
         {renderGainLossCell(f)}
+        <td className="py-2 pr-3">
+          <CommentaryPopover slotId={slot.id} ticker={ticker} addTarget={{ type: 'slot' }} snapshot={buildSignalSnapshot(f)} />
+        </td>
         <td className="py-2 text-right">
           <div className="flex items-center gap-1 justify-end">
             {!slot.needs_action && (
@@ -911,6 +923,7 @@ export function WheelDashboardPage() {
                 <th className="py-2 pr-3 font-normal">MACD Trend</th>
                 <th className="py-2 pr-3 font-normal">SP Timing</th>
                 <th className="py-2 pr-3 font-normal">% G/L</th>
+                <th className="py-2 pr-3 font-normal">Notes</th>
                 <th className="py-2 pr-3 font-normal"></th>
               </tr>
             </thead>
@@ -919,8 +932,8 @@ export function WheelDashboardPage() {
               return (
                 <tbody key={f.slot.id} className="border-t border-gray-50">
                   {renderAwaitingSPSlotRow(f)}
-                  {renderLegRows(f, 12)}
-                  {isFirstForTicker && renderSignalDetailRow(f.ticker, 12)}
+                  {renderLegRows(f, 13)}
+                  {isFirstForTicker && renderSignalDetailRow(f.ticker, 13)}
                 </tbody>
               )
             })}

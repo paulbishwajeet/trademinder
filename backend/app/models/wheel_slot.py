@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from app.models.wheel_session import WheelSession
     from app.models.wheel_slot_leg import WheelSlotLeg
     from app.models.wheel_premium_log import WheelPremiumLog
+    from app.models.commentary import Commentary
 
 
 class WheelSlot(Base):
@@ -30,6 +31,7 @@ class WheelSlot(Base):
     session: Mapped["WheelSession"] = relationship("WheelSession", back_populates="slots")
     legs: Mapped[list["WheelSlotLeg"]] = relationship("WheelSlotLeg", back_populates="slot", cascade="all, delete-orphan")
     premium_logs: Mapped[list["WheelPremiumLog"]] = relationship("WheelPremiumLog", back_populates="slot", cascade="all, delete-orphan")
+    commentary: Mapped[list["Commentary"]] = relationship("Commentary", back_populates="slot", cascade="all, delete-orphan")
 
     __table_args__ = (
         Index("idx_wheel_slots_session", "session_id"),

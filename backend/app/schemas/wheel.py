@@ -3,6 +3,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
 from pydantic import BaseModel, ConfigDict
+from app.schemas.commentary import CommentaryResponse
 
 
 class WheelSessionCreate(BaseModel):
@@ -115,3 +116,15 @@ class WheelSessionDetail(WheelSessionSummary):
     total_premium: Decimal = Decimal("0")
     stock_cost_basis: Optional[Decimal] = None
     stock_current_price: Optional[Decimal] = None
+
+
+class WheelSlotHistoryEntry(CommentaryResponse):
+    origin: str  # "slot" | "leg"
+    leg_role: Optional[str] = None
+    rotation_number: Optional[int] = None
+
+
+class WheelSlotHistoryResponse(BaseModel):
+    items: list[WheelSlotHistoryEntry]
+    total: int
+    has_more: bool

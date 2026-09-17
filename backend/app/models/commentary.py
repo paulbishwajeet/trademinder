@@ -10,20 +10,23 @@ from app.database import Base
 if TYPE_CHECKING:
     from app.models.trade import Trade
     from app.models.rationale import Rationale
+    from app.models.wheel_slot import WheelSlot
 
 
 class Commentary(Base):
     __tablename__ = "commentary"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    trade_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("trades.id", ondelete="CASCADE"), nullable=False)
+    trade_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("trades.id", ondelete="CASCADE"), nullable=True)
+    slot_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("wheel_slots.id", ondelete="CASCADE"), nullable=True)
     entry_date: Mapped[date] = mapped_column(Date, nullable=False, server_default=func.current_date())
     note: Mapped[str] = mapped_column(Text, nullable=False)
     tags: Mapped[Optional[list[str]]] = mapped_column(ARRAY(String), nullable=True)
     signal_snapshot: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
-    trade: Mapped["Trade"] = relationship(back_populates="commentary")
+    trade: Mapped[Optional["Trade"]] = relationship(back_populates="commentary")
+    slot: Mapped[Optional["WheelSlot"]] = relationship(back_populates="commentary")
     rationale: Mapped[Optional["Rationale"]] = relationship(
         back_populates="commentary",
         foreign_keys="[Rationale.commentary_id]",
@@ -33,5 +36,6 @@ class Commentary(Base):
 
     __table_args__ = (
         Index("idx_commentary_trade", "trade_id"),
+        Index("idx_commentary_slot", "slot_id"),
         Index("idx_commentary_date", text("entry_date DESC")),
     )

@@ -4,7 +4,7 @@ from decimal import Decimal
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func as sqla_func
+from sqlalchemy import select, func as sqla_func, or_
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
@@ -13,12 +13,15 @@ from app.models.wheel_slot import WheelSlot
 from app.models.wheel_slot_leg import WheelSlotLeg
 from app.models.wheel_premium_log import WheelPremiumLog
 from app.models.trade import Trade
+from app.models.commentary import Commentary
+from app.schemas.commentary import CommentaryCreate, CommentaryResponse
 from app.schemas.wheel import (
     WheelSessionCreate, WheelSessionUpdate, WheelSessionSummary, WheelSessionDetail,
     WheelSlotCreate, WheelSlotSummary, WheelSlotDetail,
     WheelSlotLegCreate, WheelSlotLegItem,
     WheelResolveRequest,
     WheelPremiumLogItem, WheelActiveSlotItem,
+    WheelSlotHistoryEntry, WheelSlotHistoryResponse,
 )
 
 router = APIRouter(prefix="/api/wheel", tags=["wheel"])
@@ -363,3 +366,69 @@ async def resolve_slot(slot_id: uuid.UUID, payload: WheelResolveRequest, db: Asy
     await db.commit()
     await db.refresh(slot)
     return slot
+
+
+@router.post("/slots/{slot_id}/commentary", response_model=CommentaryResponse, status_code=201)
+async def add_slot_commentary(slot_id: uuid.UUID, payload: CommentaryCreate, db: AsyncSession = Depends(get_db)):
+    slot = await db.get(WheelSlot, slot_id)
+    if slot is None:
+        raise HTTPException(status_code=404, detail="Slot not found")
+
+    comment = Commentary(
+        slot_id=slot_id,
+        note=payload.note,
+        tags=payload.tags,
+        signal_snapshot=payload.signal_snapshot,
+    )
+    db.add(comment)
+    await db.commit()
+
+    stmt = select(Commentary).where(Commentary.id == comment.id).options(selectinload(Commentary.rationale))
+    result = await db.execute(stmt)
+    return result.scalar_one()
+
+
+@router.get("/slots/{slot_id}/history", response_model=WheelSlotHistoryResponse)
+async def get_slot_history(
+    slot_id: uuid.UUID,
+    limit: int = Query(5, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_db),
+):
+    slot = await db.get(WheelSlot, slot_id)
+    if slot is None:
+        raise HTTPException(status_code=404, detail="Slot not found")
+
+    legs_result = await db.execute(select(WheelSlotLeg).where(WheelSlotLeg.slot_id == slot_id))
+    leg_by_trade_id = {leg.trade_id: leg for leg in legs_result.scalars().all()}
+    trade_ids = list(leg_by_trade_id.keys())
+
+    conditions = [Commentary.slot_id == slot_id]
+    if trade_ids:
+        conditions.append(Commentary.trade_id.in_(trade_ids))
+    stmt = (
+        select(Commentary)
+        .where(or_(*conditions))
+        .options(selectinload(Commentary.rationale))
+        .order_by(Commentary.created_at.desc())
+    )
+    result = await db.execute(stmt)
+    all_entries = result.scalars().all()
+
+    total = len(all_entries)
+    page = all_entries[offset: offset + limit]
+
+    items: list[WheelSlotHistoryEntry] = []
+    for entry in page:
+        entry_dict = CommentaryResponse.model_validate(entry).model_dump()
+        if entry.slot_id is not None:
+            items.append(WheelSlotHistoryEntry(**entry_dict, origin="slot", leg_role=None, rotation_number=None))
+        else:
+            leg = leg_by_trade_id.get(entry.trade_id)
+            items.append(WheelSlotHistoryEntry(
+                **entry_dict, origin="leg",
+                leg_role=leg.leg_role if leg else None,
+                rotation_number=leg.rotation_number if leg else None,
+            ))
+
+    return WheelSlotHistoryResponse(items=items, total=total, has_more=offset + limit < total)
