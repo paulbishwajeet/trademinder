@@ -17,7 +17,7 @@ from app.models.commentary import Commentary
 from app.schemas.commentary import CommentaryCreate, CommentaryResponse
 from app.schemas.wheel import (
     WheelSessionCreate, WheelSessionUpdate, WheelSessionSummary, WheelSessionDetail,
-    WheelSlotCreate, WheelSlotSummary, WheelSlotDetail,
+    WheelSlotCreate, WheelSlotUpdate, WheelSlotSummary, WheelSlotDetail,
     WheelSlotLegCreate, WheelSlotLegItem,
     WheelResolveRequest,
     WheelPremiumLogItem, WheelActiveSlotItem,
@@ -241,6 +241,25 @@ async def delete_slot(slot_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Slot not found")
     await db.delete(slot)
     await db.commit()
+
+
+@router.patch("/slots/{slot_id}", response_model=WheelSlotSummary)
+async def update_slot(slot_id: uuid.UUID, payload: WheelSlotUpdate, db: AsyncSession = Depends(get_db)):
+    slot = await db.get(WheelSlot, slot_id)
+    if slot is None:
+        raise HTTPException(status_code=404, detail="Slot not found")
+    if slot.status not in ("awaiting_cc", "awaiting_sold_put"):
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot change contracts while a leg is active — resolve or close the current leg first.",
+        )
+    if payload.contracts < 1:
+        raise HTTPException(status_code=400, detail="Contracts must be at least 1")
+
+    slot.contracts = payload.contracts
+    await db.commit()
+    await db.refresh(slot)
+    return slot
 
 
 @router.post("/slots/{slot_id}/legs", response_model=WheelSlotLegItem, status_code=201)

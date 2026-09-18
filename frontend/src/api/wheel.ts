@@ -56,6 +56,9 @@ export const wheelApi = {
   deleteSlot: (slotId: string) =>
     apiFetch<void>(`/wheel/slots/${slotId}`, { method: 'DELETE' }),
 
+  updateSlot: (slotId: string, payload: { contracts: number }) =>
+    apiFetch<void>(`/wheel/slots/${slotId}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+
   linkLeg: (slotId: string, payload: WheelLegLink) =>
     apiFetch<WheelSlotLegItem>(`/wheel/slots/${slotId}/legs`, { method: 'POST', body: JSON.stringify(payload) }),
 

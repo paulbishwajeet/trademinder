@@ -34,6 +34,10 @@ class WheelSlotCreate(BaseModel):
     status: str
 
 
+class WheelSlotUpdate(BaseModel):
+    contracts: int
+
+
 class WheelSlotSummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: uuid.UUID

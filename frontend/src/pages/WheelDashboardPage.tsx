@@ -101,6 +101,9 @@ export function WheelDashboardPage() {
   const [addSlotSessionId, setAddSlotSessionId] = useState<string | null>(null)
   const [resolveSlotId, setResolveSlotId] = useState<string | null>(null)
   const [linkSlotId, setLinkSlotId] = useState<string | null>(null)
+  const [editingContractsSlotId, setEditingContractsSlotId] = useState<string | null>(null)
+  const [contractsInput, setContractsInput] = useState('')
+  const [savingContracts, setSavingContracts] = useState(false)
   const [expandedSlot, setExpandedSlot] = useState<string | null>(null)
   const [signals, setSignals] = useState<Record<string, CCSignalResult | 'loading' | 'error'>>(() => seedFromCache(signalsCache))
   const [spSignals, setSpSignals] = useState<Record<string, CCSignalResult | 'loading' | 'error'>>(() => seedFromCache(spSignalsCache))
@@ -252,6 +255,38 @@ export function WheelDashboardPage() {
     }
   }
 
+  async function handleDeleteSlot(slotId: string, ticker: string) {
+    if (!confirm(`Delete this ${ticker} slot? This removes its leg links and premium history (the underlying trades are not deleted).`)) return
+    await wheelApi.deleteSlot(slotId)
+    await load()
+  }
+
+  function startEditContracts(slotId: string, currentContracts: number) {
+    setEditingContractsSlotId(slotId)
+    setContractsInput(String(currentContracts))
+  }
+
+  function cancelEditContracts() {
+    setEditingContractsSlotId(null)
+    setContractsInput('')
+  }
+
+  async function saveContracts(slotId: string) {
+    const contracts = parseInt(contractsInput, 10)
+    if (!Number.isInteger(contracts) || contracts < 1) return
+    setSavingContracts(true)
+    try {
+      await wheelApi.updateSlot(slotId, { contracts })
+      setEditingContractsSlotId(null)
+      setContractsInput('')
+      await load()
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Failed to update contracts')
+    } finally {
+      setSavingContracts(false)
+    }
+  }
+
   async function fetchAllSignals() {
     setSignalsFetching(true)
     try {
@@ -373,6 +408,50 @@ export function WheelDashboardPage() {
     return (
       <td className={`py-2 pr-3 text-xs font-medium ${isProfit ? 'text-green-600' : 'text-red-500'}`}>
         {isProfit ? '+' : ''}{pct.toFixed(1)}%
+      </td>
+    )
+  }
+
+  function renderEditableSizeCell(slot: WheelSlotDetail) {
+    if (editingContractsSlotId === slot.id) {
+      return (
+        <td className="py-2 pr-3">
+          <div className="flex items-center gap-1">
+            <input
+              type="number"
+              min={1}
+              value={contractsInput}
+              onChange={e => setContractsInput(e.target.value)}
+              className="w-12 border border-gray-300 rounded px-1 py-0.5 text-xs"
+              autoFocus
+            />
+            <button
+              onClick={() => saveContracts(slot.id)}
+              disabled={savingContracts}
+              className="text-green-600 hover:text-green-700 text-xs disabled:opacity-50"
+              title="Save"
+            >
+              ✓
+            </button>
+            <button onClick={cancelEditContracts} className="text-gray-400 hover:text-gray-600 text-xs" title="Cancel">
+              ✗
+            </button>
+          </div>
+        </td>
+      )
+    }
+    return (
+      <td className="py-2 pr-3 text-gray-500 text-xs">
+        <span className="inline-flex items-center gap-1">
+          {slot.contracts}x100
+          <button
+            onClick={() => startEditContracts(slot.id, slot.contracts)}
+            className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-gray-600"
+            title="Edit contracts"
+          >
+            ✎
+          </button>
+        </span>
       </td>
     )
   }
@@ -736,7 +815,7 @@ export function WheelDashboardPage() {
         <td className="py-2 pr-3">
           <span className="font-bold text-gray-900">{ticker}</span>
         </td>
-        <td className="py-2 pr-3 text-gray-500 text-xs">{slot.contracts}x100</td>
+        {renderEditableSizeCell(slot)}
         <td className="py-2 pr-3 text-xs text-gray-400">R{slot.rotation_number}</td>
         <td className="py-2 pr-3 text-xs font-medium text-green-600">${slot.total_premium}</td>
         {renderPriceCell(ticker)}
@@ -780,6 +859,13 @@ export function WheelDashboardPage() {
               title="Show legs"
             >
               {isExpanded ? '−' : '+'}
+            </button>
+            <button
+              onClick={() => handleDeleteSlot(slot.id, ticker)}
+              className="px-1.5 py-0.5 text-xs text-gray-400 hover:text-red-600 rounded hover:bg-red-50"
+              title="Delete slot"
+            >
+              ×
             </button>
           </div>
         </td>
@@ -857,7 +943,7 @@ export function WheelDashboardPage() {
         <td className="py-2 pr-3">
           <span className="font-bold text-gray-900">{ticker}</span>
         </td>
-        <td className="py-2 pr-3 text-gray-500 text-xs">{slot.contracts}x100</td>
+        {renderEditableSizeCell(slot)}
         <td className="py-2 pr-3 text-xs text-gray-400">R{slot.rotation_number}</td>
         <td className="py-2 pr-3 text-xs font-medium text-green-600">${slot.total_premium}</td>
         {renderPriceCell(ticker)}
@@ -891,6 +977,13 @@ export function WheelDashboardPage() {
               title="Show legs"
             >
               {isExpanded ? '−' : '+'}
+            </button>
+            <button
+              onClick={() => handleDeleteSlot(slot.id, ticker)}
+              className="px-1.5 py-0.5 text-xs text-gray-400 hover:text-red-600 rounded hover:bg-red-50"
+              title="Delete slot"
+            >
+              ×
             </button>
           </div>
         </td>
