@@ -8,6 +8,7 @@ import { ScannerPage } from './pages/ScannerPage'
 import { WheelDashboardPage } from './pages/WheelDashboardPage'
 import { SpreadsDashboardPage } from './pages/SpreadsDashboardPage'
 import { ScreenerPage } from './pages/ScreenerPage'
+import { ChainPage } from './pages/ChainPage'
 
 function NavItem({ to, label }: { to: string; label: string }) {
   return (
@@ -35,6 +36,7 @@ export default function App() {
           <NavItem to="/margin" label="Margin" />
           <NavItem to="/scanner" label="Scanner" />
           <NavItem to="/screener" label="Screener" />
+          <NavItem to="/chain" label="Chain" />
         </nav>
         <main>
           <Routes>
@@ -46,6 +48,7 @@ export default function App() {
             <Route path="/margin" element={<MarginDashboardPage />} />
             <Route path="/scanner" element={<ScannerPage />} />
             <Route path="/screener" element={<ScreenerPage />} />
+            <Route path="/chain" element={<ChainPage />} />
           </Routes>
         </main>
       </div>
