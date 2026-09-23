@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { ApiError } from '../api/client'
 import { screenChain } from '../api/chain'
-import type { ChainScreenResult } from '../api/chain'
+import type { ChainScreenResult, ChainCandidate, ChainExpiry } from '../api/chain'
 
 const STRATEGIES = [
   { value: 'sell_put', label: 'Selling Short Puts' },
@@ -12,6 +12,81 @@ const STRATEGIES = [
   { value: 'buy_call_12_24m', label: 'Buying 12-24mo Calls (coming soon)' },
   { value: 'sell_put_3_6m', label: 'Selling 3-6mo Puts (coming soon)' },
 ]
+
+function factorPillClass(points: number, max: number): string {
+  const pct = max > 0 ? points / max : 0
+  if (pct >= 0.7) return 'bg-green-100 text-green-700'
+  if (pct >= 0.4) return 'bg-amber-100 text-amber-700'
+  return 'bg-red-100 text-red-700'
+}
+
+function CandidateCard({ candidate, isBest }: { candidate: ChainCandidate; isBest: boolean }) {
+  return (
+    <div className={`border rounded-lg p-3 ${isBest ? 'border-blue-400 bg-blue-50' : 'border-gray-200 bg-white'}`}>
+      <div className="flex items-center justify-between">
+        <span className="font-bold text-gray-900">${candidate.strike.toFixed(2)}</span>
+        <span className="text-xs text-gray-400">Score {candidate.score.toFixed(1)}</span>
+      </div>
+      <div className="grid grid-cols-2 gap-x-4 gap-y-1 mt-2 text-xs">
+        <div><span className="text-gray-400">Delta: </span><span className="text-gray-700">{candidate.delta.toFixed(3)}</span></div>
+        <div><span className="text-gray-400">ARR: </span><span className="text-gray-700">{candidate.arr_pct.toFixed(1)}%</span></div>
+        <div><span className="text-gray-400">Bid/Ask: </span><span className="text-gray-700">${candidate.bid.toFixed(2)}/${candidate.ask.toFixed(2)} ({(candidate.spread_pct * 100).toFixed(1)}%)</span></div>
+        <div><span className="text-gray-400">Last: </span><span className="text-gray-700">${candidate.last.toFixed(2)}</span></div>
+        <div><span className="text-gray-400">Volume: </span><span className="text-gray-700">{candidate.volume}</span></div>
+        <div><span className="text-gray-400">OI: </span><span className="text-gray-700">{candidate.open_interest}</span></div>
+        <div><span className="text-gray-400">Breakeven: </span><span className="text-gray-700">${candidate.breakeven.toFixed(2)}</span></div>
+        <div><span className="text-gray-400">Cushion: </span><span className="text-gray-700">{candidate.downside_cushion_pct.toFixed(1)}%</span></div>
+        <div className="col-span-2"><span className="text-gray-400">Capital: </span><span className="text-gray-700">${candidate.capital_required.toLocaleString()}</span></div>
+      </div>
+      <div className="flex flex-wrap gap-1 mt-2">
+        {candidate.factors.map(f => (
+          <span key={f.name} title={f.detail} className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${factorPillClass(f.points, f.max)}`}>
+            {f.name} {f.points}/{f.max}
+          </span>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function ExpiryBox({ expiry }: { expiry: ChainExpiry }) {
+  return (
+    <section className="mb-5">
+      <div className="flex items-center gap-2 mb-2">
+        <span className="text-sm font-bold text-gray-700">{expiry.expiration_date} ({expiry.day_of_week}, {expiry.dte}d)</span>
+        {expiry.earnings_in_window && (
+          <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-red-100 text-red-800 border border-red-300">
+            Earnings {expiry.earnings_date}
+          </span>
+        )}
+      </div>
+      {expiry.candidates.length === 0 ? (
+        <p className="text-sm text-gray-400 italic">No strikes in target delta band for this expiry.</p>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          {expiry.candidates.map((c, i) => (
+            <CandidateCard key={c.strike} candidate={c} isBest={i === 0} />
+          ))}
+        </div>
+      )}
+    </section>
+  )
+}
+
+function SignalStrip({ result }: { result: ChainScreenResult }) {
+  const timing = result.sp_timing_signal
+  return (
+    <div className="flex items-center gap-4 mb-6 text-sm">
+      <span className="text-gray-700">Spot: <span className="font-bold">${result.spot?.toFixed(2) ?? '—'}</span></span>
+      {timing && (
+        <span className="text-gray-700">
+          SP Timing: <span className="font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">{timing.grade} {timing.score}</span>
+        </span>
+      )}
+      <span className="text-gray-700">IV Percentile: <span className="font-bold">{result.iv_percentile != null ? `${result.iv_percentile}%` : '—'}</span></span>
+    </div>
+  )
+}
 
 interface FormState {
   ticker: string
@@ -174,9 +249,10 @@ export function ChainPage() {
         <p className="text-red-600 text-sm mb-4">{screenState.message}</p>
       )}
       {screenState.status === 'success' && (
-        <pre className="text-xs bg-gray-50 border border-gray-200 rounded p-4 overflow-x-auto">
-          {JSON.stringify(screenState.result, null, 2)}
-        </pre>
+        <>
+          <SignalStrip result={screenState.result} />
+          {screenState.result.expiries.map(e => <ExpiryBox key={e.expiration_date} expiry={e} />)}
+        </>
       )}
     </div>
   )
