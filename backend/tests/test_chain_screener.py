@@ -219,3 +219,20 @@ def test_compute_chain_screen_empty_band_reports_no_candidates():
         result = compute_chain_screen("NVDA", strategy="sell_put", num_expiries=1)
 
     assert result["expiries"][0]["candidates"] == []
+
+
+async def test_get_chain_screen_returns_result(client):
+    mock_result = {
+        "ticker": "NVDA", "spot": 224.85, "strategy": "sell_put",
+        "sp_timing_signal": None, "iv_percentile": None,
+        "fetched_at": "2026-09-23T14:00:00+00:00", "expiries": [],
+    }
+    with patch("app.routers.chain.compute_chain_screen", return_value=mock_result):
+        response = await client.get("/api/chain/NVDA?strategy=sell_put")
+    assert response.status_code == 200
+    assert response.json()["ticker"] == "NVDA"
+
+
+async def test_get_chain_screen_rejects_unsupported_strategy(client):
+    response = await client.get("/api/chain/NVDA?strategy=sell_call")
+    assert response.status_code == 400
