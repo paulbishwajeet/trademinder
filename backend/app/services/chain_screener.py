@@ -1,5 +1,11 @@
 # backend/app/services/chain_screener.py
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
+
+from app.services.schwab_client import get_schwab_client
+from app.services.sp_timing_signal import compute_sp_timing_signal
+from app.services.options_scanner import _fetch_earnings_dates
+
+STRATEGY_CONTRACT_TYPE = {"sell_put": "PUT"}
 
 
 def _select_friday_expiries(exp_map: dict, num_expiries: int) -> list[dict]:
@@ -91,4 +97,86 @@ def _score_candidate(
         "downside_cushion_pct": round(downside_cushion_pct, 2),
         "capital_required": round(capital_required, 2),
         "score": score, "factors": factors,
+    }
+
+
+def compute_chain_screen(
+    ticker: str,
+    strategy: str = "sell_put",
+    num_expiries: int = 3,
+    candidates_per_expiry: int = 3,
+    target_delta: float = 0.2,
+    delta_tolerance: float = 0.1,
+    min_arr_pct: float = 30.0,
+    min_volume: int = 200,
+    min_oi: int = 500,
+) -> dict:
+    if strategy not in STRATEGY_CONTRACT_TYPE:
+        raise ValueError(f"Strategy '{strategy}' not yet implemented")
+
+    ticker = ticker.upper()
+    contract_type = STRATEGY_CONTRACT_TYPE[strategy]
+
+    timing = compute_sp_timing_signal(ticker)
+    spot = timing.get("spot_price")
+    iv_percentile = timing.get("iv_percentile")
+
+    client = get_schwab_client()
+    to_date = (date.today() + timedelta(days=num_expiries * 7 + 10)).isoformat()
+    chain = client.get_option_chain(
+        ticker, contract_type=contract_type,
+        from_date=date.today().isoformat(), to_date=to_date,
+    )
+    if spot is None:
+        spot = chain.get("underlyingPrice")
+
+    exp_map_key = "putExpDateMap" if contract_type == "PUT" else "callExpDateMap"
+    exp_map = chain.get(exp_map_key, {})
+    selected_expiries = _select_friday_expiries(exp_map, num_expiries)
+
+    earnings_dates = _fetch_earnings_dates(ticker)
+    today = date.today()
+
+    band_lo = target_delta - delta_tolerance * 1.5
+    band_hi = target_delta + delta_tolerance * 1.5
+
+    expiries_out = []
+    for entry in selected_expiries:
+        exp_date = date.fromisoformat(entry["expiration_date"])
+        window_earnings = [ed for ed in earnings_dates if today <= ed <= exp_date]
+        earnings_in_window = len(window_earnings) > 0
+        earnings_date = window_earnings[0].isoformat() if window_earnings else None
+
+        strikes = exp_map.get(entry["exp_key"], {})
+        scored = []
+        for strike_str, contracts in strikes.items():
+            contract = contracts[0]
+            delta = contract.get("delta")
+            if delta is None:
+                continue
+            if not (band_lo <= abs(float(delta)) <= band_hi):
+                continue
+            scored.append(_score_candidate(
+                contract, float(strike_str), entry["dte"], spot,
+                target_delta, delta_tolerance, min_arr_pct, min_volume, min_oi,
+            ))
+        scored.sort(key=lambda c: c["score"], reverse=True)
+
+        expiries_out.append({
+            "expiration_date": entry["expiration_date"],
+            "dte": entry["dte"],
+            "day_of_week": "Friday",
+            "earnings_in_window": earnings_in_window,
+            "earnings_date": earnings_date,
+            "candidates": scored[:candidates_per_expiry],
+        })
+
+    return {
+        "ticker": ticker,
+        "spot": spot,
+        "strategy": strategy,
+        "sp_timing_signal": timing if timing.get("fetch_status") == "ok" else None,
+        "iv_percentile": iv_percentile,
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+        "expiries": expiries_out,
     }
