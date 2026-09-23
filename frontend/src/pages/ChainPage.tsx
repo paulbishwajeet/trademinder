@@ -75,15 +75,50 @@ function ExpiryBox({ expiry }: { expiry: ChainExpiry }) {
 
 function SignalStrip({ result }: { result: ChainScreenResult }) {
   const timing = result.sp_timing_signal
+  const [expanded, setExpanded] = useState(false)
   return (
-    <div className="flex items-center gap-4 mb-6 text-sm">
-      <span className="text-gray-700">Spot: <span className="font-bold">${result.spot?.toFixed(2) ?? '—'}</span></span>
-      {timing && (
-        <span className="text-gray-700">
-          SP Timing: <span className="font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">{timing.grade} {timing.score}</span>
-        </span>
+    <div className="mb-6">
+      <div className="flex items-center gap-4 text-sm">
+        <span className="text-gray-700">Spot: <span className="font-bold">${result.spot?.toFixed(2) ?? '—'}</span></span>
+        {timing && (
+          <span className="text-gray-700">
+            SP Timing:{' '}
+            <button
+              type="button"
+              onClick={() => setExpanded(e => !e)}
+              className="font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 hover:opacity-80"
+            >
+              {timing.grade} {timing.score}
+            </button>
+          </span>
+        )}
+        <span className="text-gray-700">IV Percentile: <span className="font-bold">{result.iv_percentile != null ? `${result.iv_percentile}%` : '—'}</span></span>
+      </div>
+      {timing && expanded && (
+        <div className="mt-2 border border-gray-200 rounded-lg p-3 bg-gray-50 text-xs space-y-2 max-w-2xl">
+          <p className="font-medium text-gray-500 mb-1">SP Timing breakdown</p>
+          <div className="grid grid-cols-2 gap-x-6 gap-y-1">
+            {timing.factors.map(f => (
+              <div key={f.name} className="flex justify-between">
+                <span className="text-gray-500">{f.name}</span>
+                <span className="text-gray-700 font-medium">
+                  {f.points}/{f.max}{' '}
+                  <span className="text-gray-400 font-normal">{f.detail}</span>
+                </span>
+              </div>
+            ))}
+          </div>
+          {timing.commentary && (
+            <p className="text-gray-700 pt-1 border-t border-gray-200">{timing.commentary}</p>
+          )}
+          {timing.strike_hint && (
+            <p className="text-blue-700">{timing.strike_hint}</p>
+          )}
+          {timing.caution && (
+            <p className="text-amber-700 font-medium">{timing.caution}</p>
+          )}
+        </div>
       )}
-      <span className="text-gray-700">IV Percentile: <span className="font-bold">{result.iv_percentile != null ? `${result.iv_percentile}%` : '—'}</span></span>
     </div>
   )
 }
@@ -251,7 +286,18 @@ export function ChainPage() {
       {screenState.status === 'success' && (
         <>
           <SignalStrip result={screenState.result} />
-          {screenState.result.expiries.map(e => <ExpiryBox key={e.expiration_date} expiry={e} />)}
+          {screenState.result.expiries.length === 0 ? (
+            <p className="text-sm text-gray-500 mb-3">No Friday expiries found in the requested window.</p>
+          ) : (
+            <>
+              {screenState.result.expiries.length < form.numExpiries && (
+                <p className="text-sm text-gray-500 mb-3">
+                  Found {screenState.result.expiries.length} of {form.numExpiries} requested expiries.
+                </p>
+              )}
+              {screenState.result.expiries.map(e => <ExpiryBox key={e.expiration_date} expiry={e} />)}
+            </>
+          )}
         </>
       )}
     </div>

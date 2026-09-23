@@ -1,8 +1,11 @@
 # backend/app/routers/chain.py
 import asyncio
+import logging
 from fastapi import APIRouter, HTTPException, Query
 from app.services.chain_screener import compute_chain_screen
 from app.schemas.chain import ChainScreenResponse
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/chain", tags=["chain"])
 
@@ -33,5 +36,6 @@ async def get_chain_screen(
             ),
         )
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Failed to screen chain: {exc}")
+        log.exception("Chain screen failed for %s", ticker)
+        raise HTTPException(status_code=502, detail=f"Failed to screen chain: {exc}") from exc
     return result
