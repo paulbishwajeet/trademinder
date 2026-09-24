@@ -2,9 +2,9 @@
 
 **Feature:** Chain Screener
 **Context File:** context/feature-chain-screener.md
-**Branch:** feature/chain-screener (not yet created — still on `develop`)
+**Branch:** merged to `develop` (feature/chain-screener deleted after merge)
 **Session Started:** 2026-09-23
-**Status:** Not started. Design spec approved and committed (`docs/superpowers/specs/2026-09-23-chain-screener-design.md`). No code written yet — next step is `writing-plans` against the spec. See context/feature-chain-screener.md for full detail.
+**Status:** Shipped and merged. One small uncommitted follow-up in progress: a deep link from the Wheel dashboard's SP Timing panel into Chain (`frontend/src/pages/WheelDashboardPage.tsx`), tsc-clean but not yet live-verified or committed. See context/feature-chain-screener.md "Current State" for the exact next action.
 
 ---
 

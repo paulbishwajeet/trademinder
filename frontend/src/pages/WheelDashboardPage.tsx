@@ -583,7 +583,14 @@ export function WheelDashboardPage() {
       <tr key={`${ticker}-signal-detail`}>
         <td colSpan={colCount} className="py-3 px-4 bg-gray-50 border-t border-gray-200">
           <div className="space-y-2 text-xs">
-            <p className="font-medium text-gray-500 mb-1">{label} breakdown</p>
+            <p className="font-medium text-gray-500 mb-1 flex items-center justify-between">
+              <span>{label} breakdown</span>
+              {isSPTiming && (
+                <Link to={`/chain?symbol=${ticker}&strategy=sell_put`} className="text-blue-600 hover:underline font-normal">
+                  Screen strikes on Chain &rarr;
+                </Link>
+              )}
+            </p>
             <div className="grid grid-cols-2 gap-x-6 gap-y-1">
               {sig.factors.map(f => (
                 <div key={f.name} className="flex justify-between">
