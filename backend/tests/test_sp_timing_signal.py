@@ -74,6 +74,9 @@ def test_macd_weekly_bullish_exhaustion_reduces_points():
     _, _, factors_fresh = _score_sp_timing_factors(
         _make_technicals({"macd_signal": "bullish", "macd_weekly_trend": "expanding"}), closes, live_price, prev_close
     )
+    _, _, factors_holding = _score_sp_timing_factors(
+        _make_technicals({"macd_signal": "bullish", "macd_weekly_trend": "holding_strong"}), closes, live_price, prev_close
+    )
     _, _, factors_squeeze = _score_sp_timing_factors(
         _make_technicals({"macd_signal": "bullish", "macd_weekly_trend": "squeezing"}), closes, live_price, prev_close
     )
@@ -81,25 +84,53 @@ def test_macd_weekly_bullish_exhaustion_reduces_points():
         _make_technicals({"macd_signal": "bullish", "macd_weekly_trend": "fading_near_flip"}), closes, live_price, prev_close
     )
 
-    assert next(f for f in factors_fresh if f["name"] == "MACD(W)")["points"] == 25
-    assert next(f for f in factors_squeeze if f["name"] == "MACD(W)")["points"] == 18
+    pts_fresh = next(f for f in factors_fresh if f["name"] == "MACD(W)")["points"]
+    pts_holding = next(f for f in factors_holding if f["name"] == "MACD(W)")["points"]
+    pts_squeeze = next(f for f in factors_squeeze if f["name"] == "MACD(W)")["points"]
     fade_factor = next(f for f in factors_fade if f["name"] == "MACD(W)")
+
+    assert pts_fresh == 25
+    assert pts_holding == 22
+    assert pts_squeeze == 18
     assert fade_factor["points"] == 12
     assert fade_factor["max"] == 25
     assert "exhaustion" in fade_factor["detail"]
+    assert pts_fresh > pts_holding > pts_squeeze > fade_factor["points"]
 
 
-def test_macd_weekly_trend_ignored_when_bearish():
+def test_macd_weekly_bearish_trend_scores_up_as_it_exhausts():
     from app.services.sp_timing_signal import _score_sp_timing_factors
     closes = _make_daily_closes()
     live_price = float(closes.iloc[-1])
     prev_close = float(closes.iloc[-2])
 
-    # Trend should have no effect when macd_signal is already the "bad" direction for SP.
-    _, _, factors = _score_sp_timing_factors(
+    # Bearish is the "wrong" direction for SP, but a bearish trend that's running out of
+    # steam is good news (a bullish flip may be near) — points should scale UP as it exhausts.
+    _, _, factors_expanding = _score_sp_timing_factors(
+        _make_technicals({"macd_signal": "bearish", "macd_weekly_trend": "expanding"}), closes, live_price, prev_close
+    )
+    _, _, factors_holding = _score_sp_timing_factors(
+        _make_technicals({"macd_signal": "bearish", "macd_weekly_trend": "holding_strong"}), closes, live_price, prev_close
+    )
+    _, _, factors_squeeze = _score_sp_timing_factors(
+        _make_technicals({"macd_signal": "bearish", "macd_weekly_trend": "squeezing"}), closes, live_price, prev_close
+    )
+    _, _, factors_fade = _score_sp_timing_factors(
         _make_technicals({"macd_signal": "bearish", "macd_weekly_trend": "fading_near_flip"}), closes, live_price, prev_close
     )
-    assert next(f for f in factors if f["name"] == "MACD(W)")["points"] == 0
+
+    pts_expanding = next(f for f in factors_expanding if f["name"] == "MACD(W)")["points"]
+    pts_holding = next(f for f in factors_holding if f["name"] == "MACD(W)")["points"]
+    pts_squeeze = next(f for f in factors_squeeze if f["name"] == "MACD(W)")["points"]
+    fade_factor = next(f for f in factors_fade if f["name"] == "MACD(W)")
+
+    assert pts_expanding == 0
+    assert pts_holding == 3
+    assert pts_squeeze == 10
+    assert fade_factor["points"] == 18
+    assert fade_factor["max"] == 25
+    assert "exhaustion" in fade_factor["detail"]
+    assert pts_expanding < pts_holding < pts_squeeze < fade_factor["points"]
 
 
 def test_rsi_trend_bullish_cross_scores_by_freshness():

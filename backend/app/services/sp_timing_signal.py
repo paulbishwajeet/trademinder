@@ -74,19 +74,39 @@ def _score_sp_timing_factors(
     factors.append({"name": "RSI(D) Trend", "points": trend_pts, "max": 10, "detail": trend_detail})
 
     # 3. MACD(W) (25 pts) — bullish weekly = tailwind, confirms the "holds or rises" thesis.
-    #    The crossover's trend matters too: a bullish read that's "fading_near_flip"
-    #    (exhausted, reversal risk) is worth less than a fresh or sustained one.
+    #    The crossover's trend matters too, in BOTH directions:
+    #    - bullish (ideal) fading toward a flip is a reversal risk, worth less than fresh/sustained.
+    #    - bearish (wrong direction) fading toward a flip is the opposite: the bad trend is running
+    #      out of steam and a bullish flip may be near, so points scale UP as it exhausts.
     macd = technicals.get("macd_signal", "neutral")
     macd_trend = technicals.get("macd_weekly_trend")
     macd_map = {"bullish": 25, "neutral": 12, "bearish": 0}
     macd_pts = macd_map.get(macd, 0)
     trend_note = ""
-    if macd == "bullish" and macd_trend == "squeezing":
+    if macd == "bullish" and macd_trend == "expanding":
+        macd_pts = 25
+        trend_note = ", expanding (bullish still building)"
+    elif macd == "bullish" and macd_trend == "holding_strong":
+        macd_pts = 22
+        trend_note = ", holding strong"
+    elif macd == "bullish" and macd_trend == "squeezing":
         macd_pts = 18
         trend_note = ", squeezing"
     elif macd == "bullish" and macd_trend == "fading_near_flip":
         macd_pts = 12
         trend_note = ", fading (bullish exhaustion)"
+    elif macd == "bearish" and macd_trend == "expanding":
+        macd_pts = 0
+        trend_note = ", expanding (bearish still building)"
+    elif macd == "bearish" and macd_trend == "holding_strong":
+        macd_pts = 3
+        trend_note = ", holding strong"
+    elif macd == "bearish" and macd_trend == "squeezing":
+        macd_pts = 10
+        trend_note = ", squeezing"
+    elif macd == "bearish" and macd_trend == "fading_near_flip":
+        macd_pts = 18
+        trend_note = ", fading (bearish exhaustion)"
     macd_notes = technicals.get("macd_notes", "")
     factors.append({"name": "MACD(W)", "points": macd_pts, "max": 25, "detail": f"{macd.capitalize()}, {macd_notes}{trend_note}"})
 

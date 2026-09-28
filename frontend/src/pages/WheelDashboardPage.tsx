@@ -57,6 +57,22 @@ const MACD_COLORS: Record<string, string> = {
   neutral: 'bg-gray-100 text-gray-600',
 }
 
+const MACD_FADING_COLOR = 'bg-amber-100 text-amber-700'
+
+function macdWeeklyDisplay(signal: string | null | undefined, trend: string | null | undefined) {
+  if (trend === 'fading_near_flip' && (signal === 'bullish' || signal === 'bearish')) {
+    const arrow = signal === 'bearish' ? '↗' : '↘'
+    const flipsTo = signal === 'bearish' ? 'bullish' : 'bearish'
+    return {
+      label: `${signal === 'bearish' ? 'Bearish' : 'Bullish'} ${arrow}`,
+      colorClass: MACD_FADING_COLOR,
+      title: `${signal === 'bearish' ? 'Bearish' : 'Bullish'}, but momentum fading — may flip ${flipsTo} soon`,
+    }
+  }
+  const label = signal ? signal.charAt(0).toUpperCase() + signal.slice(1) : '—'
+  return { label, colorClass: MACD_COLORS[signal ?? 'neutral'], title: label }
+}
+
 const GRADE_COLORS: Record<string, string> = {
   strong: 'bg-green-100 text-green-800 border-green-300',
   moderate: 'bg-amber-100 text-amber-800 border-amber-300',
@@ -514,10 +530,11 @@ export function WheelDashboardPage() {
     const t = technicals[ticker]
     if (t === 'loading') return <td className="py-2 pr-3 text-xs text-gray-400 animate-pulse">...</td>
     if (!t || t === 'error' || t.fetch_status !== 'ok') return <td className="py-2 pr-3 text-xs text-gray-300">—</td>
+    const { label, colorClass, title } = macdWeeklyDisplay(t.macd_signal, t.macd_weekly_trend)
     return (
       <td className="py-2 pr-3">
-        <span className={`px-2 py-0.5 rounded text-xs font-medium ${MACD_COLORS[t.macd_signal ?? 'neutral']}`}>
-          {t.macd_signal ?? '—'}
+        <span className={`px-2 py-0.5 rounded text-xs font-medium ${colorClass}`} title={title}>
+          {label}
         </span>
       </td>
     )
@@ -527,10 +544,11 @@ export function WheelDashboardPage() {
     const t = technicals[ticker]
     if (t === 'loading') return <td className="py-2 pr-3 text-xs text-gray-400 animate-pulse">...</td>
     if (!t || t === 'error' || t.fetch_status !== 'ok') return <td className="py-2 pr-3 text-xs text-gray-300">—</td>
-    const pills: { label: string; fullLabel: string; value: string | null }[] = [
-      { label: 'D', fullLabel: 'Daily', value: t.macd_daily_signal },
-      { label: '3D', fullLabel: '3-Day', value: t.macd_3day_signal },
-      { label: 'W', fullLabel: 'Weekly', value: t.macd_signal },
+    const weekly = macdWeeklyDisplay(t.macd_signal, t.macd_weekly_trend)
+    const pills: { label: string; fullLabel: string; colorClass: string; title: string }[] = [
+      { label: 'D', fullLabel: 'Daily', colorClass: MACD_COLORS[t.macd_daily_signal ?? 'neutral'], title: `Daily: ${t.macd_daily_signal ?? 'unknown'}` },
+      { label: '3D', fullLabel: '3-Day', colorClass: MACD_COLORS[t.macd_3day_signal ?? 'neutral'], title: `3-Day: ${t.macd_3day_signal ?? 'unknown'}` },
+      { label: 'W', fullLabel: 'Weekly', colorClass: weekly.colorClass, title: `Weekly: ${weekly.title}` },
     ]
     return (
       <td className="py-2 pr-3">
@@ -538,8 +556,8 @@ export function WheelDashboardPage() {
           {pills.map(p => (
             <span
               key={p.label}
-              className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${MACD_COLORS[p.value ?? 'neutral']}`}
-              title={`${p.fullLabel}: ${p.value ?? 'unknown'}`}
+              className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${p.colorClass}`}
+              title={p.title}
             >
               {p.label}
             </span>
@@ -592,15 +610,18 @@ export function WheelDashboardPage() {
               )}
             </p>
             <div className="grid grid-cols-2 gap-x-6 gap-y-1">
-              {sig.factors.map(f => (
-                <div key={f.name} className="flex justify-between">
-                  <span className="text-gray-500">{f.name}</span>
-                  <span className="text-gray-700 font-medium">
-                    {f.points}/{f.max}{' '}
-                    <span className="text-gray-400 font-normal">{f.detail}</span>
-                  </span>
-                </div>
-              ))}
+              {sig.factors.map(f => {
+                const isFadingMacd = f.name === 'MACD(W)' && f.detail.includes('fading')
+                return (
+                  <div key={f.name} className="flex justify-between">
+                    <span className="text-gray-500">{f.name}</span>
+                    <span className={`font-medium ${isFadingMacd ? 'text-amber-700' : 'text-gray-700'}`}>
+                      {f.points}/{f.max}{' '}
+                      <span className={`font-normal ${isFadingMacd ? 'text-amber-600' : 'text-gray-400'}`}>{f.detail}</span>
+                    </span>
+                  </div>
+                )
+              })}
             </div>
             {sig.commentary && (
               <p className="text-gray-700 pt-1 border-t border-gray-200">{sig.commentary}</p>
