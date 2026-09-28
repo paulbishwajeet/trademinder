@@ -448,6 +448,92 @@ def test_fetch_technicals_schwab_error_returns_error():
     assert "network error" in result["fetch_error"]
 
 
+# --- _append_live_bar ---
+
+from app.services.technicals_fetcher import _append_live_bar
+
+
+def _quote(last_price: float, quote_date) -> dict:
+    quote_time_ms = int(pd.Timestamp(quote_date, tz="UTC").timestamp() * 1000)
+    return {"lastPrice": last_price, "quoteTime": quote_time_ms}
+
+
+def test_append_live_bar_adds_new_session():
+    close_d = _make_daily_df(60)["Close"]
+    last_date = close_d.index[-1].date()
+    next_date = last_date + pd.Timedelta(days=1)
+    mock_client = MagicMock()
+    mock_client.get_quotes.return_value = {"AAPL": _quote(999.0, next_date)}
+
+    result = _append_live_bar(close_d, "AAPL", mock_client)
+
+    assert len(result) == len(close_d) + 1
+    assert result.iloc[-1] == 999.0
+    assert result.index[-1].date() == next_date
+
+
+def test_append_live_bar_noop_when_quote_not_newer():
+    close_d = _make_daily_df(60)["Close"]
+    last_date = close_d.index[-1].date()
+    mock_client = MagicMock()
+    mock_client.get_quotes.return_value = {"AAPL": _quote(999.0, last_date)}
+
+    result = _append_live_bar(close_d, "AAPL", mock_client)
+
+    pd.testing.assert_series_equal(result, close_d)
+
+
+def test_append_live_bar_noop_on_missing_quote():
+    close_d = _make_daily_df(60)["Close"]
+    mock_client = MagicMock()
+    mock_client.get_quotes.return_value = {}
+
+    result = _append_live_bar(close_d, "AAPL", mock_client)
+
+    pd.testing.assert_series_equal(result, close_d)
+
+
+def test_append_live_bar_noop_on_client_exception():
+    close_d = _make_daily_df(60)["Close"]
+    mock_client = MagicMock()
+    mock_client.get_quotes.side_effect = RuntimeError("boom")
+
+    result = _append_live_bar(close_d, "AAPL", mock_client)
+
+    pd.testing.assert_series_equal(result, close_d)
+
+
+def test_fetch_technicals_uses_live_price_for_rsi_and_price_action():
+    daily_df = _make_daily_df(200)
+    weekly_df = _make_weekly_df(60)
+    close_d = daily_df["Close"]
+    next_date = close_d.index[-1].date() + pd.Timedelta(days=1)
+    # A sharp live drop, well below the steady uptrend baked into _make_daily_df.
+    live_price = float(close_d.iloc[-1]) * 0.85
+
+    mock_client = MagicMock()
+    mock_client.get_price_history.side_effect = [daily_df, weekly_df]
+    mock_client.get_quotes.return_value = {"AAPL": _quote(live_price, next_date)}
+
+    with patch("app.services.technicals_fetcher.get_schwab_client", return_value=mock_client), \
+         patch("yfinance.Ticker") as mock_ticker:
+        mock_ticker.return_value.calendar = {}
+        result_live = fetch_technicals("AAPL")
+
+    mock_client_stale = MagicMock()
+    mock_client_stale.get_price_history.side_effect = [daily_df, weekly_df]
+    mock_client_stale.get_quotes.return_value = {}
+    with patch("app.services.technicals_fetcher.get_schwab_client", return_value=mock_client_stale), \
+         patch("yfinance.Ticker") as mock_ticker:
+        mock_ticker.return_value.calendar = {}
+        result_stale = fetch_technicals("AAPL")
+
+    assert result_live["price_action"] == str(round(live_price, 2))
+    assert result_stale["price_action"] == str(round(float(close_d.iloc[-1]), 2))
+    assert result_live["rsi_14"] < result_stale["rsi_14"]
+    assert result_live["day_color"] == "red"
+
+
 # --- fetch_macd_crossover (standalone) ---
 
 from app.services.technicals_fetcher import fetch_macd_crossover

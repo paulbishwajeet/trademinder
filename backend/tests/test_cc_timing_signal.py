@@ -277,7 +277,6 @@ def test_compute_fresh_applies_iv_gate_and_calls_schwab():
     closes = _make_daily_closes(n=100, base=100.0, volatility=0.001, trend=0.0)
 
     mock_client = MagicMock()
-    mock_client.get_quotes.return_value = {"AAPL": {"lastPrice": float(closes.iloc[-1])}}
 
     exp_date = (date.today() + timedelta(days=37)).strftime("%Y-%m-%d")
     mock_client.get_option_chain.return_value = {
@@ -304,7 +303,10 @@ def test_compute_fresh_applies_iv_gate_and_calls_schwab():
 
     assert result["fetch_status"] == "ok"
     assert result["ticker"] == "AAPL"
-    mock_client.get_quotes.assert_called_once_with(["AAPL"])
+    # spot_price comes straight from the last bar of `closes` (today's live price, appended
+    # by fetch_technicals's _append_live_bar) — no separate get_quotes call needed here.
+    mock_client.get_quotes.assert_not_called()
+    assert result["spot_price"] == round(float(closes.iloc[-1]), 2)
     mock_client.get_option_chain.assert_called_once_with("AAPL", contract_type="CALL", strike_count=30)
     # IV percentile is very low (below the 20th-percentile gate) -> grade capped, caution set
     assert result["grade"] != "strong"

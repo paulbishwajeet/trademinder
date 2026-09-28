@@ -205,14 +205,13 @@ def _compute_cc_timing_fresh(ticker: str) -> dict:
     if close_d.empty:
         raise ValueError(f"No daily data for {ticker}")
 
+    # close_d's last bar is today's live price when the market is open (see
+    # _append_live_bar in technicals_fetcher.py) — reuse it rather than re-fetching
+    # a second quote, so "live price" and "previous close" stay in sync with what
+    # fetch_technicals already used for RSI/MACD-daily/day_color.
     client = get_schwab_client()
-    quotes = client.get_quotes([ticker])
-    quote = quotes.get(ticker, {})
-    try:
-        live_price = float(quote.get("lastPrice", close_d.iloc[-1]))
-    except Exception:
-        live_price = float(close_d.iloc[-1])
-    prev_close = float(close_d.iloc[-1])
+    live_price = float(close_d.iloc[-1])
+    prev_close = float(close_d.iloc[-2])
 
     call_chain = client.get_option_chain(ticker, contract_type="CALL", strike_count=30)
     iv_percentile, atm_iv = compute_iv_percentile_from_chain(close_d, call_chain, ticker, contract_type="CALL")

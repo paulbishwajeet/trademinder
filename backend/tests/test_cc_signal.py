@@ -274,9 +274,15 @@ def _day_pts(pct_chg: float, scorer: str):
     closes = _make_daily_closes()
     prev_close = float(closes.iloc[-1])
     live_price = prev_close * (1 + pct_chg / 100)
+    # daily_closes' last bar is always today's live price in production (see
+    # _append_live_bar in technicals_fetcher.py) — mirror that here so prev_close
+    # is read from the correct (second-to-last) bar.
+    closes_with_live = pd.concat(
+        [closes, pd.Series([live_price], index=[closes.index[-1] + pd.Timedelta(days=1)])]
+    )
     technicals = _make_technicals({"price_action": str(round(live_price, 2))})
     fn = _score_factors if scorer == "cc" else _score_sp_factors
-    _, _, factors = fn(technicals, iv_percentile=55.0, atm_iv=0.30, daily_closes=closes)
+    _, _, factors = fn(technicals, iv_percentile=55.0, atm_iv=0.30, daily_closes=closes_with_live)
     return next(f for f in factors if f["name"] == "Day Color")["points"]
 
 

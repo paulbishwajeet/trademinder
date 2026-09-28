@@ -1,7 +1,7 @@
 # backend/app/services/technicals_fetcher.py
 import logging
 import math
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 
 import numpy as np
 import pandas as pd
@@ -10,6 +10,25 @@ from app.services.price_fetcher import _compute_rsi_14
 from app.services.schwab_client import get_schwab_client, SchwabAPIError
 
 log = logging.getLogger(__name__)
+
+
+def _append_live_bar(close_d: pd.Series, ticker: str, client) -> pd.Series:
+    """Appends today's live quote as a synthetic daily bar so RSI/MACD-daily reflect the
+    current session instead of lagging to last night's close, mirroring what a live chart
+    shows intraday. No-ops once the real daily bar for today lands in price history (or on
+    any quote/API failure), so it never double-counts or fights the settled bar."""
+    try:
+        quote = client.get_quotes([ticker]).get(ticker)
+        if not quote or "lastPrice" not in quote or "quoteTime" not in quote:
+            return close_d
+        quote_date = datetime.fromtimestamp(quote["quoteTime"] / 1000, tz=timezone.utc).date()
+        if quote_date <= close_d.index[-1].date():
+            return close_d
+        live_price = float(quote["lastPrice"])
+        live_bar = pd.Series([live_price], index=[pd.Timestamp(quote_date, tz=close_d.index.tz)])
+        return pd.concat([close_d, live_bar])
+    except Exception:
+        return close_d
 
 
 def compute_iv_percentile_from_chain(
@@ -306,6 +325,8 @@ def fetch_technicals(ticker: str, return_closes: bool = False) -> dict | tuple[d
         if len(close_d) < 2:
             err = {"fetch_status": "error", "fetch_error": f"Insufficient daily history for {ticker}"}
             return (err, pd.Series(dtype=float)) if return_closes else err
+
+        close_d = _append_live_bar(close_d, ticker, client)
 
         volume_d = df_d["Volume"].dropna()
 

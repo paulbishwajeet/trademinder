@@ -227,7 +227,9 @@ def _compute_combined_fresh(ticker: str, dte: Optional[int] = None) -> dict:
     call_chain = client.get_option_chain(ticker, contract_type="CALL", strike_count=30)
     put_chain = client.get_option_chain(ticker, contract_type="PUT", strike_count=30)
 
-    prev_close = float(close_d.iloc[-1])
+    # close_d's last bar is today's live price when the market is open (see
+    # _append_live_bar in technicals_fetcher.py), so the previous close is one bar back.
+    prev_close = float(close_d.iloc[-2])
     technicals = dict(technicals)
     technicals["day_color"] = "green" if live_price > prev_close else "red"
     technicals["price_action"] = str(round(live_price, 2))
@@ -368,7 +370,7 @@ def _score_factors(
     day_detail = "N/A"
     try:
         live_price = float(technicals.get("price_action") or 0)
-        prev_close = float(daily_closes.iloc[-1]) if not daily_closes.empty else 0
+        prev_close = float(daily_closes.iloc[-2]) if len(daily_closes) >= 2 else 0
         pct_chg = (live_price - prev_close) / prev_close * 100 if prev_close else 0
         if pct_chg > 0.5:
             day_pts = 5
@@ -589,7 +591,7 @@ def _score_sp_factors(
     day_detail = "N/A"
     try:
         live_price = float(technicals.get("price_action") or 0)
-        prev_close = float(daily_closes.iloc[-1]) if not daily_closes.empty else 0
+        prev_close = float(daily_closes.iloc[-2]) if len(daily_closes) >= 2 else 0
         pct_chg = (live_price - prev_close) / prev_close * 100 if prev_close else 0
         if pct_chg < -0.5:
             day_pts = 5
