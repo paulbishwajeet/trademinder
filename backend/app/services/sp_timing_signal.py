@@ -27,7 +27,7 @@ def _score_sp_timing_factors(
 ) -> tuple[int, str, list[dict]]:
     factors: list[dict] = []
 
-    # 1. RSI(D) Level (20 pts) — ideal at <=40 (oversold), mirrored curve re-centered
+    # 1. RSI(D) Level (25 pts) — ideal at <=40 (oversold), mirrored curve re-centered
     #    so the ideal edge sits at 40 instead of CC Timing's 70.
     rsi = technicals.get("rsi_14")
     rsi_pts = 0.0
@@ -35,16 +35,16 @@ def _score_sp_timing_factors(
     if rsi is not None:
         rsi = float(rsi)
         if rsi <= 40:
-            rsi_pts = 20.0
+            rsi_pts = 25.0
         elif rsi <= 60:
-            rsi_pts = 14.0 + (60 - rsi) * 0.3
+            rsi_pts = 17.5 + (60 - rsi) * 0.375
         elif rsi <= 80:
-            rsi_pts = (80 - rsi) * 0.7
+            rsi_pts = (80 - rsi) * 0.875
         else:
             rsi_pts = 0.0
         rsi_pts = round(rsi_pts, 1)
         rsi_detail = f"RSI {rsi:.1f}"
-    factors.append({"name": "RSI(D) Level", "points": rsi_pts, "max": 20, "detail": rsi_detail})
+    factors.append({"name": "RSI(D) Level", "points": rsi_pts, "max": 25, "detail": rsi_detail})
 
     # 2. RSI(D) Trend (10 pts) — direction of RSI vs its own 14-period signal line
     #    (rsi_ma_14). A bullish cross (RSI turning up) is ideal for SP; the
@@ -73,42 +73,42 @@ def _score_sp_timing_factors(
         trend_detail = "No RSI crossover data"
     factors.append({"name": "RSI(D) Trend", "points": trend_pts, "max": 10, "detail": trend_detail})
 
-    # 3. MACD(W) (25 pts) — bullish weekly = tailwind, confirms the "holds or rises" thesis.
+    # 3. MACD(W) (30 pts) — bullish weekly = tailwind, confirms the "holds or rises" thesis.
     #    The crossover's trend matters too, in BOTH directions:
     #    - bullish (ideal) fading toward a flip is a reversal risk, worth less than fresh/sustained.
     #    - bearish (wrong direction) fading toward a flip is the opposite: the bad trend is running
     #      out of steam and a bullish flip may be near, so points scale UP as it exhausts.
     macd = technicals.get("macd_signal", "neutral")
     macd_trend = technicals.get("macd_weekly_trend")
-    macd_map = {"bullish": 25, "neutral": 12, "bearish": 0}
+    macd_map = {"bullish": 30, "neutral": 14, "bearish": 0}
     macd_pts = macd_map.get(macd, 0)
     trend_note = ""
     if macd == "bullish" and macd_trend == "expanding":
-        macd_pts = 25
+        macd_pts = 30
         trend_note = ", expanding (bullish still building)"
     elif macd == "bullish" and macd_trend == "holding_strong":
-        macd_pts = 22
+        macd_pts = 26
         trend_note = ", holding strong"
     elif macd == "bullish" and macd_trend == "squeezing":
-        macd_pts = 18
+        macd_pts = 22
         trend_note = ", squeezing"
     elif macd == "bullish" and macd_trend == "fading_near_flip":
-        macd_pts = 12
+        macd_pts = 14
         trend_note = ", fading (bullish exhaustion)"
     elif macd == "bearish" and macd_trend == "expanding":
         macd_pts = 0
         trend_note = ", expanding (bearish still building)"
     elif macd == "bearish" and macd_trend == "holding_strong":
-        macd_pts = 3
+        macd_pts = 4
         trend_note = ", holding strong"
     elif macd == "bearish" and macd_trend == "squeezing":
-        macd_pts = 10
+        macd_pts = 12
         trend_note = ", squeezing"
     elif macd == "bearish" and macd_trend == "fading_near_flip":
-        macd_pts = 18
+        macd_pts = 22
         trend_note = ", fading (bearish exhaustion)"
     macd_notes = technicals.get("macd_notes", "")
-    factors.append({"name": "MACD(W)", "points": macd_pts, "max": 25, "detail": f"{macd.capitalize()}, {macd_notes}{trend_note}"})
+    factors.append({"name": "MACD(W)", "points": macd_pts, "max": 30, "detail": f"{macd.capitalize()}, {macd_notes}{trend_note}"})
 
     # 4. Bollinger %B (15 pts) — sweet spot is lower-mid without touching the extremes
     #    (oversold but not in freefall) — mirror reflection of CC Timing's zones about 0.5.
@@ -132,41 +132,18 @@ def _score_sp_timing_factors(
             bb_detail = f"%B {pct_b:.2f}"
     factors.append({"name": "Bollinger %B", "points": bb_pts, "max": 15, "detail": bb_detail})
 
-    # 5. Swing Low Distance (15 pts) — trailing 3-month CLOSING low as support,
-    #    mirror of cc_timing_signal.py's Swing High Distance.
-    swing_pts = 0
-    swing_detail = "Insufficient data"
-    if len(daily_closes) >= 63:
-        recent_low = float(daily_closes.iloc[-63:].min())
-        if recent_low > 0:
-            if live_price < recent_low:
-                swing_pts = 0
-                swing_detail = f"New low (${live_price:.2f} < 3M low ${recent_low:.2f})"
-            else:
-                dist_pct = (live_price - recent_low) / recent_low * 100
-                if dist_pct <= 3:
-                    swing_pts = 15
-                    swing_detail = f"At support (+{dist_pct:.1f}% above 3M low ${recent_low:.2f})"
-                elif dist_pct <= 8:
-                    swing_pts = 8
-                    swing_detail = f"Near support (+{dist_pct:.1f}% above 3M low ${recent_low:.2f})"
-                else:
-                    swing_pts = 0
-                    swing_detail = f"Well above support (+{dist_pct:.1f}% above 3M low ${recent_low:.2f})"
-    factors.append({"name": "Swing Low Distance", "points": swing_pts, "max": 15, "detail": swing_detail})
-
-    # 6. Day Color (15 pts) — red day = capturing richer put premium on the dip.
+    # 5. Day Color (20 pts) — red day = capturing richer put premium on the dip.
     pct_chg = (live_price - prev_close) / prev_close * 100 if prev_close else 0.0
     if pct_chg < -0.5:
-        day_pts = 15
+        day_pts = 20
         day_detail = f"Red ({pct_chg:+.1f}%)"
     elif pct_chg <= 0.5:
-        day_pts = 7
+        day_pts = 9
         day_detail = f"Neutral ({pct_chg:+.1f}%)"
     else:
         day_pts = 0
         day_detail = f"Green ({pct_chg:+.1f}%)"
-    factors.append({"name": "Day Color", "points": day_pts, "max": 15, "detail": day_detail})
+    factors.append({"name": "Day Color", "points": day_pts, "max": 20, "detail": day_detail})
 
     total = round(sum(f["points"] for f in factors))
 

@@ -37,10 +37,10 @@ def test_rsi_level_curve():
     rsi_mid = next(f for f in factors_mid if f["name"] == "RSI(D) Level")
     rsi_low = next(f for f in factors_low if f["name"] == "RSI(D) Level")
 
-    assert rsi_high["points"] == 20
-    assert rsi_mid["points"] == pytest_approx(17.0)  # 14 + (60-50)*0.3
-    assert rsi_low["points"] == pytest_approx(7.0)    # (40-30)*0.7
-    assert rsi_high["max"] == 20
+    assert rsi_high["points"] == 25
+    assert rsi_mid["points"] == pytest_approx(21.2)  # 17.5 + (60-50)*0.375, rounded to 1dp
+    assert rsi_low["points"] == pytest_approx(8.8)   # (40-30)*0.875, rounded to 1dp
+    assert rsi_high["max"] == 25
 
 
 def pytest_approx(value, tol=0.01):
@@ -58,8 +58,8 @@ def test_macd_weekly_bearish_scores_max():
 
     _, _, factors = _score_cc_timing_factors(_make_technicals({"macd_signal": "bearish"}), closes, live_price, prev_close)
     macd = next(f for f in factors if f["name"] == "MACD(W)")
-    assert macd["points"] == 25
-    assert macd["max"] == 25
+    assert macd["points"] == 30
+    assert macd["max"] == 30
 
     _, _, factors_bull = _score_cc_timing_factors(_make_technicals({"macd_signal": "bullish"}), closes, live_price, prev_close)
     macd_bull = next(f for f in factors_bull if f["name"] == "MACD(W)")
@@ -90,11 +90,11 @@ def test_macd_weekly_bearish_exhaustion_reduces_points():
     pts_squeeze = next(f for f in factors_squeeze if f["name"] == "MACD(W)")["points"]
     fade_factor = next(f for f in factors_fade if f["name"] == "MACD(W)")
 
-    assert pts_fresh == 25
-    assert pts_holding == 22
-    assert pts_squeeze == 18
-    assert fade_factor["points"] == 12
-    assert fade_factor["max"] == 25
+    assert pts_fresh == 30
+    assert pts_holding == 26
+    assert pts_squeeze == 22
+    assert fade_factor["points"] == 14
+    assert fade_factor["max"] == 30
     assert "exhaustion" in fade_factor["detail"]
     assert pts_fresh > pts_holding > pts_squeeze > fade_factor["points"]
 
@@ -126,10 +126,10 @@ def test_macd_weekly_bullish_trend_scores_up_as_it_exhausts():
     fade_factor = next(f for f in factors_fade if f["name"] == "MACD(W)")
 
     assert pts_expanding == 0
-    assert pts_holding == 3
-    assert pts_squeeze == 10
-    assert fade_factor["points"] == 18
-    assert fade_factor["max"] == 25
+    assert pts_holding == 4
+    assert pts_squeeze == 12
+    assert fade_factor["points"] == 22
+    assert fade_factor["max"] == 30
     assert "exhaustion" in fade_factor["detail"]
     assert pts_expanding < pts_holding < pts_squeeze < fade_factor["points"]
 
@@ -191,31 +191,21 @@ def test_day_color_scoring():
 
     day_green = next(f for f in factors_green if f["name"] == "Day Color")
     day_red = next(f for f in factors_red if f["name"] == "Day Color")
-    assert day_green["points"] == 15
+    assert day_green["points"] == 20
+    assert day_green["max"] == 20
     assert day_red["points"] == 0
 
 
-def test_swing_high_distance_new_high_scores_zero():
+def test_swing_high_distance_factor_removed():
+    """Swing High Distance was dropped; its 15 pts went to RSI(D) Level, MACD(W) and Day Color."""
     from app.services.cc_timing_signal import _score_cc_timing_factors
     closes = _make_daily_closes(n=100, base=100.0, volatility=0.001, trend=0.0)
-    recent_high = float(closes.iloc[-63:].max())
-    live_price = recent_high * 1.02  # above the 3M high
+    live_price = float(closes.iloc[-1])
 
     _, _, factors = _score_cc_timing_factors(_make_technicals(), closes, live_price, prev_close=live_price)
-    swing = next(f for f in factors if f["name"] == "Swing High Distance")
-    assert swing["points"] == 0
-    assert "New high" in swing["detail"]
 
-
-def test_swing_high_distance_at_resistance_scores_max():
-    from app.services.cc_timing_signal import _score_cc_timing_factors
-    closes = _make_daily_closes(n=100, base=100.0, volatility=0.001, trend=0.0)
-    recent_high = float(closes.iloc[-63:].max())
-    live_price = recent_high * 0.99  # 1% below the 3M high
-
-    _, _, factors = _score_cc_timing_factors(_make_technicals(), closes, live_price, prev_close=live_price)
-    swing = next(f for f in factors if f["name"] == "Swing High Distance")
-    assert swing["points"] == 15
+    assert not any(f["name"] == "Swing High Distance" for f in factors)
+    assert sum(f["max"] for f in factors) == 100
 
 
 def test_confluence_bonus_applied_for_perfect_setup():
@@ -260,13 +250,13 @@ def test_grade_thresholds():
     assert score < 40
 
 
-def test_returns_seven_factors():
+def test_returns_five_factors():
     from app.services.cc_timing_signal import _score_cc_timing_factors
     closes = _make_daily_closes()
     live_price = float(closes.iloc[-1])
     prev_close = float(closes.iloc[-2])
     _, _, factors = _score_cc_timing_factors(_make_technicals(), closes, live_price, prev_close)
-    assert len(factors) == 6
+    assert len(factors) == 5
     assert all("name" in f and "points" in f and "max" in f and "detail" in f for f in factors)
 
 
