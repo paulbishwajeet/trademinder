@@ -760,6 +760,7 @@ const CATEGORY_PILL_LABELS = {
   LEAP: 'Leap',
   SKIP: 'Skip',
   HOPS: 'Hops',
+  BUY_WRITE: 'Buy-Write',
 };
 
 // Explicit bg/text/border triples per category — distinct hues with enough
@@ -772,6 +773,7 @@ const CATEGORY_PILL_STYLES = {
   LEAP: { bg: '#EDE9FE', color: '#5B21B6', border: '#C4B5FD' }, // violet
   SKIP: { bg: '#F3F4F6', color: '#374151', border: '#D1D5DB' }, // gray
   HOPS: { bg: '#ECFCCB', color: '#3F6212', border: '#BEF264' }, // lime
+  BUY_WRITE: { bg: '#CCFBF1', color: '#115E59', border: '#5EEAD4' }, // teal
 };
 
 function renderCategoryPill(status) {
