@@ -1,6 +1,8 @@
 # backend/app/services/technicals_fetcher.py
 import logging
 import math
+import threading
+import time
 from datetime import date, datetime, timezone
 
 import numpy as np
@@ -296,20 +298,71 @@ def _infer_sentiment(macd_signal: str, price: float, ma_50d: float | None, rsi_1
     return "neutral"
 
 
-def _get_next_earnings(ticker: str) -> str | None:
+# Earnings is the one technical we can't source from Schwab, so it rides on a live
+# Yahoo call that intermittently rate-limits us. Cache per ticker: earnings dates move
+# quarterly at most, so a long TTL both cuts the call volume that triggers the limiting
+# and leaves a last-known value to serve when a refresh does fail.
+_EARNINGS_TTL_SECONDS = 6 * 60 * 60
+_earnings_cache: dict[str, tuple[str | None, float]] = {}
+_earnings_cache_lock = threading.Lock()
+
+
+def _reset_earnings_cache() -> None:
+    """Test helper: drop every cached earnings date."""
+    with _earnings_cache_lock:
+        _earnings_cache.clear()
+
+
+def _expire_earnings_cache() -> None:
+    """Test helper: age every entry past its TTL without discarding the value."""
+    with _earnings_cache_lock:
+        for ticker, (value, _) in _earnings_cache.items():
+            _earnings_cache[ticker] = (value, 0.0)
+
+
+def _fetch_next_earnings_uncached(ticker: str) -> str | None:
     import yfinance as yf
-    try:
-        cal = yf.Ticker(ticker).calendar
-        if not cal:
-            return None
-        dates = cal.get("Earnings Date")
-        if not dates:
-            return None
-        if isinstance(dates, list) and dates:
-            return str(dates[0])[:10]
-        return str(dates)[:10]
-    except Exception:
+    cal = yf.Ticker(ticker).calendar
+    if not cal:
         return None
+    dates = cal.get("Earnings Date")
+    if not dates:
+        return None
+    if isinstance(dates, list) and dates:
+        return str(dates[0])[:10]
+    return str(dates)[:10]
+
+
+def _get_next_earnings(ticker: str) -> str | None:
+    key = ticker.upper()
+    with _earnings_cache_lock:
+        cached = _earnings_cache.get(key)
+    if cached is not None and (time.monotonic() - cached[1]) < _EARNINGS_TTL_SECONDS:
+        return cached[0]
+
+    try:
+        value = _fetch_next_earnings_uncached(ticker)
+    except Exception as exc:
+        return _earnings_fallback(key, f"lookup failed ({exc})", cached)
+
+    # A blank calendar is indistinguishable from a soft rate-limit, so treat it as a miss
+    # rather than a result: caching it would serve an empty field for the whole TTL and,
+    # being a "success", would do so without logging anything.
+    if value is None:
+        return _earnings_fallback(key, "returned no earnings date", cached)
+
+    with _earnings_cache_lock:
+        _earnings_cache[key] = (value, time.monotonic())
+    return value
+
+
+def _earnings_fallback(key: str, reason: str, cached: tuple[str | None, float] | None) -> str | None:
+    """Serve the last known date when a refresh comes back empty or errors, else None."""
+    if cached is not None and cached[0] is not None:
+        log.warning("Earnings lookup for %s %s; serving last known date %s", key, reason, cached[0])
+        return cached[0]
+    log.warning("Earnings lookup for %s %s; no cached date available", key, reason)
+    return None
 
 
 def fetch_technicals(ticker: str, return_closes: bool = False) -> dict | tuple[dict, pd.Series]:

@@ -1,14 +1,27 @@
+import logging
+
 import pandas as pd
 import pytest
 from unittest.mock import patch, MagicMock
 
 from app.services.technicals_fetcher import (
     fetch_technicals,
+    _get_next_earnings,
+    _reset_earnings_cache,
+    _expire_earnings_cache,
     _compute_macd_weekly,
     _resample_n_day_closes,
     _bollinger_position,
     _infer_sentiment,
 )
+
+
+@pytest.fixture(autouse=True)
+def _clear_earnings_cache():
+    """The earnings cache is module-level; keep it from leaking between tests."""
+    _reset_earnings_cache()
+    yield
+    _reset_earnings_cache()
 
 
 def _make_daily_df(n: int = 200, base: float = 100.0, step: float = 0.25) -> pd.DataFrame:
@@ -751,3 +764,78 @@ def test_compute_iv_percentile_from_chain_success():
     assert pct is not None
     assert 0 <= pct <= 100
     assert atm_iv == 0.25
+
+
+# --- next earnings date: caching + failure visibility ---
+
+def test_next_earnings_caches_and_avoids_refetch():
+    """A second lookup for the same ticker is served from cache, not a new Yahoo call."""
+    with patch("yfinance.Ticker") as mock_ticker:
+        mock_ticker.return_value.calendar = {"Earnings Date": ["2026-08-15"]}
+        assert _get_next_earnings("AAPL") == "2026-08-15"
+        assert _get_next_earnings("AAPL") == "2026-08-15"
+
+    assert mock_ticker.call_count == 1
+
+
+def test_next_earnings_serves_stale_cache_when_yahoo_fails():
+    """A transient Yahoo failure falls back to the last known date instead of None."""
+    with patch("yfinance.Ticker") as mock_ticker:
+        mock_ticker.return_value.calendar = {"Earnings Date": ["2026-08-15"]}
+        assert _get_next_earnings("AAPL") == "2026-08-15"
+
+    # Expire the entry, then make Yahoo blow up on the refresh.
+    _expire_earnings_cache()
+    with patch("yfinance.Ticker", side_effect=RuntimeError("Too Many Requests")):
+        assert _get_next_earnings("AAPL") == "2026-08-15"
+
+
+def test_next_earnings_returns_none_and_logs_when_no_cache(caplog):
+    """With nothing cached, a failure still returns None but is no longer silent."""
+    _reset_earnings_cache()
+    with caplog.at_level(logging.WARNING, logger="app.services.technicals_fetcher"), \
+         patch("yfinance.Ticker", side_effect=RuntimeError("Too Many Requests")):
+        assert _get_next_earnings("NVDA") is None
+
+    assert "NVDA" in caplog.text
+    assert "Too Many Requests" in caplog.text
+
+
+def test_next_earnings_cache_is_per_ticker():
+    with patch("yfinance.Ticker") as mock_ticker:
+        mock_ticker.return_value.calendar = {"Earnings Date": ["2026-08-15"]}
+        assert _get_next_earnings("AAPL") == "2026-08-15"
+        mock_ticker.return_value.calendar = {"Earnings Date": ["2026-09-01"]}
+        assert _get_next_earnings("MSFT") == "2026-09-01"
+
+    assert mock_ticker.call_count == 2
+
+
+def test_next_earnings_does_not_cache_a_blank_result():
+    """An empty calendar must not poison the cache - the next call retries Yahoo."""
+    with patch("yfinance.Ticker") as mock_ticker:
+        mock_ticker.return_value.calendar = {}
+        assert _get_next_earnings("PLTR") is None
+        mock_ticker.return_value.calendar = {"Earnings Date": ["2026-11-02"]}
+        assert _get_next_earnings("PLTR") == "2026-11-02"
+
+
+def test_next_earnings_keeps_last_known_date_when_calendar_goes_blank():
+    """A blank calendar after a good read serves the known date, not an empty field."""
+    with patch("yfinance.Ticker") as mock_ticker:
+        mock_ticker.return_value.calendar = {"Earnings Date": ["2026-11-02"]}
+        assert _get_next_earnings("NVDA") == "2026-11-02"
+
+    _expire_earnings_cache()
+    with patch("yfinance.Ticker") as mock_ticker:
+        mock_ticker.return_value.calendar = {}
+        assert _get_next_earnings("NVDA") == "2026-11-02"
+
+
+def test_next_earnings_logs_when_calendar_is_blank(caplog):
+    with caplog.at_level(logging.WARNING, logger="app.services.technicals_fetcher"), \
+         patch("yfinance.Ticker") as mock_ticker:
+        mock_ticker.return_value.calendar = {}
+        assert _get_next_earnings("PLTR") is None
+
+    assert "PLTR" in caplog.text
