@@ -21,10 +21,17 @@ def _append_live_bar(close_d: pd.Series, ticker: str, client) -> pd.Series:
         quote = client.get_quotes([ticker]).get(ticker)
         if not quote or "lastPrice" not in quote or "quoteTime" not in quote:
             return close_d
-        quote_date = datetime.fromtimestamp(quote["quoteTime"] / 1000, tz=timezone.utc).date()
+        # Prefer the regular-session print: a daily bar is the regular session, so a thin
+        # after-hours move must not set it (it would flip day_color against the day's actual
+        # close and feed extended-hours noise into RSI/MACD-daily). During market hours the
+        # two agree, so this only changes behaviour outside it.
+        price_key, time_key = "lastPrice", "quoteTime"
+        if quote.get("regularMarketLastPrice") is not None and quote.get("regularMarketTradeTime") is not None:
+            price_key, time_key = "regularMarketLastPrice", "regularMarketTradeTime"
+        quote_date = datetime.fromtimestamp(quote[time_key] / 1000, tz=timezone.utc).date()
         if quote_date <= close_d.index[-1].date():
             return close_d
-        live_price = float(quote["lastPrice"])
+        live_price = float(quote[price_key])
         live_bar = pd.Series([live_price], index=[pd.Timestamp(quote_date, tz=close_d.index.tz)])
         return pd.concat([close_d, live_bar])
     except Exception:

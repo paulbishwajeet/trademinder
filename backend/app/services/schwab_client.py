@@ -140,18 +140,22 @@ class SchwabClient:
         return resp.json()
 
     def get_quotes(self, tickers: list[str]) -> dict[str, dict]:
-        """Returns {original_ticker: quote_dict} where quote_dict has lastPrice, closePrice, etc."""
+        """Returns {original_ticker: quote_dict} where quote_dict has lastPrice, closePrice, etc.
+
+        The `regular` block is merged in alongside, so callers that need the regular-session
+        price (`regularMarketLastPrice`) rather than an extended-hours `lastPrice` can reach
+        it from the same dict."""
         alias_map = {_SCHWAB_ALIASES.get(t.upper(), t.upper()): t.upper() for t in tickers}
         data = self._get("/marketdata/v1/quotes", {
             "symbols": ",".join(alias_map.keys()),
-            "fields": "quote",
+            "fields": "quote,regular",
         })
         result: dict[str, dict] = {}
         for schwab_sym, orig in alias_map.items():
             entry = data.get(schwab_sym) or data.get(orig) or {}
             quote = entry.get("quote", {})
             if quote:
-                result[orig] = quote
+                result[orig] = {**quote, **entry.get("regular", {})}
         return result
 
     def get_price_history(

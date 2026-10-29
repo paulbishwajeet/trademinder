@@ -751,3 +751,67 @@ def test_compute_iv_percentile_from_chain_success():
     assert pct is not None
     assert 0 <= pct <= 100
     assert atm_iv == 0.25
+
+
+# --- daily bar must reflect the regular session, not extended hours ---
+
+def _quote_with_regular(last_price: float, regular_price: float, quote_date) -> dict:
+    ts = int(pd.Timestamp(quote_date, tz="UTC").timestamp() * 1000)
+    return {
+        "lastPrice": last_price,
+        "quoteTime": ts,
+        "regularMarketLastPrice": regular_price,
+        "regularMarketTradeTime": ts,
+    }
+
+
+def test_append_live_bar_prefers_regular_session_price():
+    """After-hours prints must not set the daily bar - a daily candle is the regular session."""
+    close_d = _make_daily_df(60)["Close"]
+    next_date = close_d.index[-1].date() + pd.Timedelta(days=1)
+    mock_client = MagicMock()
+    # Closed green in the regular session, sold off after hours (the SOFI/HOOD case).
+    mock_client.get_quotes.return_value = {
+        "SOFI": _quote_with_regular(last_price=16.92, regular_price=17.61, quote_date=next_date)
+    }
+
+    result = _append_live_bar(close_d, "SOFI", mock_client)
+
+    assert result.iloc[-1] == 17.61
+
+
+def test_append_live_bar_falls_back_to_last_price_without_regular_block():
+    close_d = _make_daily_df(60)["Close"]
+    next_date = close_d.index[-1].date() + pd.Timedelta(days=1)
+    mock_client = MagicMock()
+    mock_client.get_quotes.return_value = {"AAPL": _quote(999.0, next_date)}
+
+    result = _append_live_bar(close_d, "AAPL", mock_client)
+
+    assert result.iloc[-1] == 999.0
+
+
+def test_day_color_follows_regular_session_not_after_hours():
+    """Green regular close + after-hours selloff must still report green."""
+    daily_df = _make_daily_df(200)
+    weekly_df = _make_weekly_df(60)
+    close_d = daily_df["Close"]
+    prev_close = float(close_d.iloc[-1])
+    next_date = close_d.index[-1].date() + pd.Timedelta(days=1)
+
+    mock_client = MagicMock()
+    mock_client.get_price_history.side_effect = [daily_df, weekly_df]
+    mock_client.get_quotes.return_value = {
+        "SOFI": _quote_with_regular(
+            last_price=prev_close * 0.97,   # after hours: below prev close
+            regular_price=prev_close * 1.02,  # regular session: above prev close
+            quote_date=next_date,
+        )
+    }
+
+    with patch("app.services.technicals_fetcher.get_schwab_client", return_value=mock_client), \
+         patch("yfinance.Ticker") as mock_ticker:
+        mock_ticker.return_value.calendar = {}
+        result = fetch_technicals("SOFI")
+
+    assert result["day_color"] == "green"
