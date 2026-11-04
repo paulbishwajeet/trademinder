@@ -24,7 +24,18 @@ wheel state machine, E*TRADE DOM handling.
 - `backend/app/services/ownership.py`, `backend/app/services/accounts.py`
 - `backend/app/routers/accounts.py` + every router touching user data
 - `backend/tests/test_isolation.py`, `test_accounts.py`, `test_migration_multi_account.py`
-- `frontend/src/types/index.ts`, `frontend/src/api/accounts.ts`
+- `frontend/src/types/index.ts`, `frontend/src/api/accounts.ts`; `account_id` added to create types in
+  `frontend/src/api/wheel.ts`, `frontend/src/api/sessions.ts`
+- Routers changed: `trades.py`, `wheel.py`, `sessions.py` (spreads), `positions.py` (status/reconcile/dashboard),
+  `screener.py` (rewritten: memberships, per-account notes, owner-only jobs), `commentary.py` (summary cache fix),
+  `alerts.py`, `signals.py`, `categories.py`, `market.py`; `backend/app/main.py` registers `accounts`
+- Scheduler services: `backend/app/services/alert_engine.py`, `signal_engine.py`, `price_fetcher.py`
+- Test infra: `backend/tests/conftest.py` (owner + default-account fixtures, `act_as(user)` switch),
+  `test_reconcile.py` (account-scoping tests)
+- Config: `backend/app/config.py` (`owner_email`, `owner_display_name`), `.env.example`, `docker-compose.prod.yml`
+  (`OWNER_EMAIL` required), `.gitignore` (`backups/`)
+- Docs: `README.md`, `docs/TradeMinder-Context.md` (now tracked; was untracked before this branch)
+- Live-DB backup: `backups/trademinder-pre-016-20261103-2122.dump` (git-ignored, pg_dump custom format)
 
 ## Technical Approach
 - UUID ids throughout (matches codebase). `user_id` on every user-owned table; `account_id` only on the
@@ -58,14 +69,24 @@ wheel state machine, E*TRADE DOM handling.
 | One-open-trade-per-E*TRADE-symbol rescoped per account | Same contract can be open in two accounts; other users must never collide |
 | Child lists (trade commentary / signals / alerts) keep returning `[]` for unknown or foreign trades | Existing contract (pinned by a test); user filter makes unknown and foreign indistinguishable |
 | Manual market/signal refresh endpoints run for the caller only; scheduler runs for everyone | Counts would otherwise reveal other users' trade volume |
+| Owner email is `bjeet.pauls@gmail.com` (set in `.env`, seeded in `users`) | The address the user will sign in with via Google in Part 5 |
+| Live DB migrated to 016 only after a full `pg_dump` backup and explicit user approval | It is the only copy of real data; migration was first proven on `createdb -T trademinder` copies |
+| SPECULATIVE category committed separately, before the feature | Unrelated work that was uncommitted in the working tree; keeps history reviewable |
+| `docs/TradeMinder-Context.md` committed as part of the feature | The brief treats it as the in-repo master context and it was updated for multi-user |
 
 ## Open Questions
 1. Merge the duplicate active wheels so `(account_id, ticker) WHERE status <> 'closed'` can be enforced?
 2. Require a trade's category to be in its account's category list? (not enforced in Part 1)
 3. Unarchive endpoint (needed by Part 2 UI).
 4. Category-library seeding for a newly signed-up user (Part 5).
-5. The uncommitted SPECULATIVE category work (migration 014 + extension + categories.ts) is carried in this
-   branch's working tree — commit it separately first.
+5. ~~Uncommitted SPECULATIVE work~~ — resolved: committed as `92447f1`.
+6. The E*TRADE extension overlay and Reconcile have NOT been exercised in a real browser against the migrated live
+   DB (only via API parity tests on a copy). Needs a manual check.
+7. Wheel/spread/dashboard lists have no tie-breaking sort key, so rows with equal ticker / open_date /
+   triggered_at may come back in a different order than before the migration rewrote the rows. Add `id` as a
+   secondary ORDER BY if the UI order matters.
+8. `docker-compose.prod.yml` now fails to start without `OWNER_EMAIL` — the QNAP deployment's env must be updated
+   before this ships there.
 
 ## Progress Log
 - 2026-11-03: Branch created off develop. Inventory done (see spec). Spec + plan written.
@@ -81,11 +102,30 @@ wheel state machine, E*TRADE DOM handling.
   byte-identical schema, re-upgrade works. Owner parity old-vs-new code on live data: identical apart from tie order.
 - 2026-11-03: Frontend types + `src/api/accounts.ts` (tsc: no new errors; 2 pre-existing unused-var errors remain).
   README + docs/TradeMinder-Context.md updated.
+- 2026-11-03: Live dev DB backed up (`backups/trademinder-pre-016-20261103-2122.dump`) and migrated 014 → 016 with
+  `OWNER_EMAIL=bjeet.pauls@gmail.com`; API verified: 440 trades, 65 wheels, 39 screener rows, 12 categories, 833 alerts.
+- 2026-11-03: Committed `92447f1` (SPECULATIVE category) and `c7c2893` (this feature) on
+  `feature/multi-account-foundation`. Not pushed.
 
 ## Current State
-Part 1 implemented and verified; nothing committed (per instructions).
-**Live dev DB is NOT migrated yet.** The running `uvicorn --reload` dev server already picked up the new code and
-returns 500 on data endpoints until `OWNER_EMAIL` is set in `.env` and `alembic upgrade head` is run (or the server
-is pointed back at develop). Next: set OWNER_EMAIL, back up and migrate the live DB, smoke-test the app + extension
-overlay + Reconcile, commit the SPECULATIVE work separately, then commit this branch. Part 2 (account container UI)
-starts from `src/api/accounts.ts`; Part 3 replaces the default-account pinning in `routers/positions.py`.
+**Part 1 is complete and committed; the branch is not pushed or merged.**
+
+- Branch `feature/multi-account-foundation` (off `develop`) has two commits on top of develop's `4872ac1`:
+  `92447f1` feat(categories): SPECULATIVE category, and `c7c2893` feat(accounts): multi-account foundation.
+  Working tree is clean apart from pre-existing untracked `.claude/worktrees/` and `docs/learnings/` (not ours).
+- The local live DB (`trademinder` in the `trademinder-db-1` container) is at Alembic revision **016**. Owner user
+  `bjeet.pauls@gmail.com` (admin, active) owns everything via one default account nicknamed "E*TRADE".
+  `.env` holds `OWNER_EMAIL` / `OWNER_DISPLAY_NAME` (required: `get_current_user` 500s without it).
+- The user's dev server (`uvicorn --reload --port 5431`, cwd `backend/`, miniconda python) is running this
+  branch's code against the migrated DB and returns all data.
+- To roll back if something is wrong: `cd backend && alembic downgrade 014` (proven to restore the exact schema),
+  or restore `backups/trademinder-pre-016-20261103-2122.dump` with `pg_restore --clean`.
+- Tests: `cd backend && source venv/bin/activate && python -m pytest tests -q` → 362 passed, 6 known pre-existing
+  failures (test_cc_signal ×4, test_market_router_p2::test_prefetch_still_501, test_schwab_client::test_schwab_alias_maps_spx).
+
+**Single next action:** manually smoke-test the E*TRADE extension overlay (badges, commentary hover, add-trade
+modal) and run Reconcile once against the migrated live DB; if both behave as before, push
+`feature/multi-account-foundation` and open a PR into `develop` (never directly to master).
+
+After that: Part 2 (account container UI) builds on `frontend/src/api/accounts.ts`; Part 3 replaces the
+default-account pinning in `backend/app/routers/positions.py` using `brokerage_accounts.external_ref`.

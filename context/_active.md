@@ -4,7 +4,7 @@
 **Context File:** context/feature-multi-account-foundation.md
 **Branch:** feature/multi-account-foundation (off develop)
 **Session Started:** 2026-11-03
-**Status:** In progress — schema + backend + frontend types; no UI changes.
+**Status:** Part 1 complete, committed (92447f1, c7c2893), not pushed. Live DB migrated to 016. Next: smoke-test extension overlay + Reconcile, then PR into develop.
 
 ---
 
