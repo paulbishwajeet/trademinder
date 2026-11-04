@@ -105,14 +105,26 @@ Reconcile, Schwab/market data (Part 4), signal scoring, wheel state machine.
 - 2026-11-04: With the user's approval, backed up the live DB to
   `backups/trademinder-pre-017-20261104-1233.dump` (pg_dump -Fc) and migrated it 016 → 017. 443 trades intact;
   the running Part 2 app is unaffected (the new columns are additive).
+- 2026-11-04: Committed Part 3 as `00eb5cc` on `feature/extension-account-awareness`, removed the worktree and
+  switched the main checkout to the branch. Live check after the dev servers reloaded:
+  - `GET /api/accounts` returns `link` and no `external_ref`;
+  - `POST /api/accounts/links/resolve` answers (probed with a dummy fingerprint; no write);
+  - reconcile without `account_id` returns 422;
+  - the SPA loads through Vite on 5430, including Settings → Accounts.
+
+  The real E*TRADE run hasn't happened yet.
+- 2026-11-04: The user tested on real E*TRADE. First-time linking and the reset on account switch work as
+  intended. Feedback: the toolbar filter left gaps where non-matching rows were hidden, so the filter now dims
+  them instead (`applyFilter` toggles `.tm-filtered-out`; `content.css`). The user confirmed it looks good; committed.
 
 ## Current State
 **Part 3 is committed on `feature/extension-account-awareness` (not pushed), and the main checkout is switched to
 it. The live DB is at 017.**
 
 - **Branch:**
-  - `feature/extension-account-awareness` = develop + Part 1 (3 commits) + Part 2 (`b7e094f`) + the Part 3 commit.
-    None of it is pushed or in develop.
+  - `feature/extension-account-awareness` = develop + Part 1 (3 commits) + Part 2 (`b7e094f`) + Part 3
+    (`00eb5cc`). None of it is pushed or in develop.
+  - The filter-dimming change and these context updates are committed on top of `00eb5cc`.
   - The worktree `.claude/worktrees/extension-account-awareness` was removed after the commit.
 - **Live environment:**
   - The user's dev servers (`uvicorn --reload` on 5431, Vite on 5430) run from the main checkout, so they now serve
@@ -121,7 +133,13 @@ it. The live DB is at 017.**
 - **Verification:**
   - pytest: 400 passed / 6 known failures. `tsc -b`: only the 2 pre-existing errors.
   - Fixture runs (June capture and the fresh Nov captures): all checklist items pass.
-- **Not yet done:** the run on the real E*TRADE page with the unpacked extension loaded.
+  - The live endpoints answer as expected after the switch (see the Progress Log).
+- **Not yet done:** the run on the real E*TRADE page with the unpacked extension loaded. The old extension build may
+  still be loaded in Chrome until it's reloaded; it calls reconcile without `account_id`, which now gets a 422,
+  so its Reconcile button fails until the reload.
+- **Open:**
+  - Parts 1–3 still need to land in develop: push the branches and PR them in order.
+  - The fingerprint-strength question (Open Question 3) is still undecided.
 
 **Single next action:**
 1. Reload the extension from `extension/` at `chrome://extensions`.
@@ -132,3 +150,4 @@ it. The live DB is at 017.**
    - switch between the views;
    - check that Reconcile is disabled in the All view and works in a single account;
    - remove and reload the extension.
+4. Record the results in the spec's Results table.

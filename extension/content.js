@@ -220,7 +220,7 @@ function resetOverlay() {
   document.querySelectorAll(ETRADE.positionRows).forEach(row => {
     clearTMFromRow(row);
     row.querySelectorAll('.tm-wheel-pill, .tm-strategy-pill, .tm-category-pill').forEach(el => el.remove());
-    row.style.display = '';
+    row.classList.remove('tm-filtered-out');
   });
 }
 
@@ -2024,13 +2024,12 @@ function makeFilterBtn(label, filterValue) {
   return btn;
 }
 
+// E*TRADE's grid absolutely positions every row and only renders the rows near the viewport,
+// so hiding a row leaves a gap (and the rows that aren't rendered can't be filtered at all).
+// Non-matching rows are dimmed instead: no gaps, and virtual scrolling keeps working.
 function applyFilter(row, status) {
-  if (activeFilter === 'all') {
-    row.style.display = '';
-    return;
-  }
   const catName = status?.category_name || '';
-  row.style.display = catName === activeFilter ? '' : 'none';
+  row.classList.toggle('tm-filtered-out', activeFilter !== 'all' && catName !== activeFilter);
 }
 
 function applyFiltersToAll() {

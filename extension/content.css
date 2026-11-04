@@ -886,3 +886,13 @@
 }
 #tm-choose button:hover { background: #eff6ff; border-color: #93c5fd; }
 #tm-choose .tm-choose-cancel { color: #6b7280; text-align: center; }
+
+/* Category filter: dim rows outside the active filter (hiding them leaves gaps in E*TRADE's
+   absolutely-positioned virtual grid). Hover brings a dimmed row back to full strength. */
+[role="row"].tm-filtered-out {
+  opacity: 0.22;
+  transition: opacity 0.12s ease;
+}
+[role="row"].tm-filtered-out:hover {
+  opacity: 0.75;
+}
