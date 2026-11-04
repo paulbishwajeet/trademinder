@@ -11,9 +11,10 @@
   </div>
 
   <div class="section">
-    <label class="label">Backend URL</label>
-    <input type="text" id="apiUrl" class="input" placeholder="http://127.0.0.1:5431">
-    <div id="statusDot" class="status-dot"></div>
+    <label class="label" for="apiUrl">TradeMinder server address</label>
+    <input type="text" id="apiUrl" class="input" placeholder="http://127.0.0.1:5431" spellcheck="false">
+    <div class="status-row"><span id="statusDot" class="status-dot"></span><span id="statusText" class="status-text">Checking…</span></div>
+    <div class="hint">Signed in as the TradeMinder owner. Sign-in arrives in a later version.</div>
   </div>
 
   <div class="section">

@@ -242,7 +242,7 @@ Injects into the E\*TRADE positions page in four stages, each independently togg
 
 Plus **wheel pills** from `/api/wheel/active-slots` (60s TTL) with a GOOG/GOOGL ticker alias map, an add-trade modal, an edit modal, a session picker, and **Reconcile**.
 
-The E\*TRADE grid is a **div-based virtual scroll list** (`#rdt_3`), not a table — only ~32 rows exist in the DOM at a time and row IDs are recycled. The extension handles this with a `MutationObserver` (150ms debounce) plus a two-level cache (`rowId → cacheKey`, `cacheKey → status`). Option symbols parse as `/^([A-Z]+)-{1,4}(\d{6})([CP])(\d{8})$/` where ticker+dashes is always 6 chars and the strike is the 8-digit field ÷ 1000.
+The E\*TRADE grid is a **div-based virtual scroll list** (`[role="grid"][aria-label="Portfolios"]` — the `rdt_N` id is not stable; it was `rdt_2` in captures, not `rdt_3`), not a table — only ~32 rows exist in the DOM at a time and row IDs are recycled. The extension handles this with a `MutationObserver` (150ms debounce) plus a two-level cache (`rowId → cacheKey`, `cacheKey → status`). Option symbols parse as `/^([A-Z]+)-{1,4}(\d{6})([CP])(\d{8})$/` where ticker+dashes is always 6 chars and the strike is the 8-digit field ÷ 1000.
 
 **Reconcile** scrolls the entire page to accumulate *all* positions before snapshotting (the grid virtualizes against page scroll, so a naive `querySelectorAll` only ever saw ~50 rows), sends the complete snapshot, and the backend backdates anything absent as closed. All extension network calls go through a `bgFetch` relay to the service worker — direct `fetch()` from the content script is silently blocked by Chrome's Local Network Access policy.
 

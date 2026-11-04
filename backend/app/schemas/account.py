@@ -1,12 +1,26 @@
+import re
 import uuid
 from datetime import datetime
 from typing import Annotated, Optional
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
 # Broker is free text; this is the list the UI offers.
 KNOWN_BROKERS = ["E*TRADE", "Schwab", "Fidelity", "Robinhood", "Other"]
 
 LastFour = Annotated[str, Field(pattern=r"^[0-9]{4}$")]
+
+# Hex SHA-256 of broker + full account number, computed by the extension.
+Fingerprint = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+
+
+def _no_account_number(label: str) -> str:
+    # Dropdown labels end in the last four only; a long digit run would be a full account number.
+    if re.search(r"\d{6,}", label):
+        raise ValueError("label must not contain an account number")
+    return label.strip()
+
+
+ExternalLabel = Annotated[str, Field(min_length=1, max_length=100), AfterValidator(_no_account_number)]
 
 
 class AccountSummary(BaseModel):
@@ -19,8 +33,14 @@ class AccountSummary(BaseModel):
     last_four: Optional[str] = None
 
 
+class AccountLinkInfo(BaseModel):
+    """E*TRADE link details shown in Settings. The fingerprint itself is never returned."""
+    label: Optional[str] = None
+    last_seen_at: Optional[datetime] = None
+
+
 class AccountResponse(AccountSummary):
-    external_ref: Optional[str] = None
+    link: Optional[AccountLinkInfo] = None
     default_category_id: Optional[uuid.UUID] = None
     is_default: bool
     sort_order: int
@@ -58,3 +78,25 @@ class AccountCategoriesUpdate(BaseModel):
 
 class AccountOrderUpdate(BaseModel):
     account_ids: list[uuid.UUID]
+
+
+class AccountLinkResolveRequest(BaseModel):
+    fingerprint: Fingerprint
+    label: Optional[ExternalLabel] = None
+
+
+class AccountLinkResolveResponse(BaseModel):
+    linked: bool
+    account: Optional[AccountSummary] = None
+    is_archived: bool = False
+
+
+class AccountLinkRequest(BaseModel):
+    fingerprint: Fingerprint
+    label: ExternalLabel
+
+
+class AccountCreateAndLink(BaseModel):
+    fingerprint: Fingerprint
+    label: ExternalLabel
+    account: AccountCreate

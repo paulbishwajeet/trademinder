@@ -84,10 +84,32 @@ Chrome MV3 content script that overlays TradeMinder data directly onto the E*TRA
 
 ## E*TRADE DOM — Critical Facts
 
+Verified against `docs/DOMSample.html` (June 2026) and fresh masked captures of a single account and the All view
+(2026-11-04, not committed); see the Part 3 spec
+(`docs/superpowers/specs/2026-11-04-extension-account-awareness-design.md`) for the full table and the
+masked-capture procedure.
+
+**Account selector:**
+- `select#accountDropdown` (class `AccountList---account-list-select---<hash>`), single optgroup
+  `"E*TRADE from Morgan Stanley accounts"`.
+- Account option `value` = full account number + `-` + label, e.g. `<9 digits>-Individual Brokerage -1020`.
+  The label contains hyphens too — split on the first hyphen only. Visible text = label, ending in `-<last four>`.
+- Combined view: value `all-All brokerage accounts`, label "All brokerage accounts".
+- React-controlled: the selection is only in the live `.value`; no `selected` attribute in the HTML.
+- Two accounts can share the last four (`Individual Brokerage -1020` / `Stock Plan (AVGO) -1020`) — last four is never an id.
+- `select#positionsView` ("Standard Views" / "Saved Custom Views") is a column-layout picker, not an account.
+
 **Grid structure:**
-- Grid root: `#rdt_3`
-- Content area (MutationObserver target): `.Content---root---D2Ylg`
-- Position rows: `[role="row"][level="0"]:not(.Row---placeholderRow---2t5Gs)`
+- Grid root: `[role="grid"][aria-label="Portfolios"]` (fallback `PortfoliosTable---table---*`). Its id is **not stable**
+  (`rdt_2` in captures; the extension used to assume `#rdt_3`, which silently skipped the filter toolbar).
+- Rows carry **no account information** in any view: no account column, no group rows, all rows `level="0"`.
+- **All view differences:** rows have no "Trade Actions" split button, so take the full symbol from the quote link
+  `…snapshot.asp?symbol=<SYMBOL>`. The filter bar has no Customize or Edit Lots, only "Reset Sort" in
+  `PortfoliosFilters---links-container---*`, which is where Reconcile goes when Customize is missing.
+- Class names end in a build hash (`SymbolCellRenderer---content---mcwCT`): match the stable prefix
+  (`cls('SymbolCellRenderer---content---')` in content.js), never the full class.
+- Content area (MutationObserver target): `Content---root---*` inside the grid
+- Position rows: `[role="row"][level="0"]` excluding `Row---placeholderRow---*`
 - Rows use `position:absolute; transform:translateY(Xpx)` — virtual scroll
 - Row `overflow` is `visible` by default (columns can bleed outside row bounds)
 - Columns are flex children with `min-width`/`width` only (no absolute positioning per column)
@@ -95,9 +117,9 @@ Chrome MV3 content script that overlays TradeMinder data directly onto the E*TRA
 **Key column selectors:**
 - `col="1"` = Actions column (65px wide, contains Alert + Note buttons inside `ActionsCellRenderer---root---sNuFp`)
 - Column header text (after `&nbsp;` normalization): `"qty #"`, `"price paid $"` — resolved via `buildColumnMap()`
-- Symbol cell: `.SymbolCellRenderer---content---mcwCT`, link: `a.SymbolCellRenderer---symbol---_S70m`
-- Option detection: class `SymbolCellRenderer---option---qIlje` on the symbol root
-- ITM detection: class `SymbolCellRenderer---in-the-money---AQRUo`
+- Symbol cell: `SymbolCellRenderer---content---*`, link: `a.SymbolCellRenderer---symbol---*`
+- Option detection: class prefix `SymbolCellRenderer---option---` on the symbol root
+- ITM detection: class prefix `SymbolCellRenderer---in-the-money---`
 
 **E*TRADE click behavior:**
 - E*TRADE uses **capture-phase** click listeners on rows to expand them

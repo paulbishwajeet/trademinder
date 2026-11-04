@@ -5,6 +5,8 @@ from decimal import Decimal
 from typing import Optional
 from pydantic import BaseModel
 
+from app.schemas.account import AccountSummary
+
 
 class PositionInput(BaseModel):
     ticker: str
@@ -17,12 +19,23 @@ class PositionInput(BaseModel):
 
 class PositionsStatusRequest(BaseModel):
     positions: list[PositionInput]
+    # Set: match only this account's trades. Omitted: match across all of the user's accounts.
+    account_id: Optional[uuid.UUID] = None
 
 
 class ActiveSignal(BaseModel):
     type: str
     notes: Optional[str] = None
     signal_value: Optional[Decimal] = None
+
+
+class PositionMatch(BaseModel):
+    """One account's trade matching a position (several in E*TRADE's All view)."""
+    account: AccountSummary
+    trade_id: uuid.UUID
+    category_name: Optional[str] = None
+    category_color: Optional[str] = None
+    alert_severity: Optional[str] = None
 
 
 class PositionStatus(BaseModel):
@@ -54,6 +67,10 @@ class PositionStatus(BaseModel):
     strike_price: Optional[Decimal] = None
     dte: Optional[int] = None
     exit_strategy: Optional[str] = None
+    # Account of the primary match (the one the fields above describe)
+    account: Optional[AccountSummary] = None
+    # Every matching trade, one per account, primary first
+    matches: list[PositionMatch] = []
 
 
 class DashboardTodayItem(BaseModel):
@@ -71,6 +88,8 @@ class DashboardTodayItem(BaseModel):
 
 class ReconcileRequest(BaseModel):
     positions: list[PositionInput]
+    # Required: Reconcile backdate-closes missing trades, so it only ever runs against one account.
+    account_id: uuid.UUID
 
 
 class UnmatchedEtradeItem(BaseModel):

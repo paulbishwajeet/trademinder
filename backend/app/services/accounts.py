@@ -60,14 +60,17 @@ def _check_default_category(default_category_id: Optional[uuid.UUID], category_i
         raise HTTPException(status_code=400, detail="Default category must be one of the account's categories")
 
 
-async def _reload(db: AsyncSession, account_id: uuid.UUID) -> BrokerageAccount:
+async def reload_account(db: AsyncSession, account_id: uuid.UUID) -> BrokerageAccount:
     db.expire_all()
     stmt = select(BrokerageAccount).where(BrokerageAccount.id == account_id)
     account = (await db.execute(stmt)).scalar_one()
     return (await with_can_delete(db, [account]))[0]
 
 
-async def create_account(db: AsyncSession, user: User, payload: AccountCreate) -> BrokerageAccount:
+async def create_account(
+    db: AsyncSession, user: User, payload: AccountCreate, commit: bool = True,
+) -> BrokerageAccount:
+    """With commit=False the new account is only flushed, so a caller can extend the same transaction."""
     if payload.category_ids is None:
         result = await db.execute(select(Category.id).where(Category.user_id == user.id))
         category_ids = [row[0] for row in result.all()]
@@ -97,8 +100,11 @@ async def create_account(db: AsyncSession, user: User, payload: AccountCreate) -
         db.add(AccountCategory(account_id=account.id, category_id=cid))
     if payload.is_default or first_account:
         await _make_default(db, user, account)
+    if not commit:
+        await db.flush()
+        return account
     await db.commit()
-    return await _reload(db, account.id)
+    return await reload_account(db, account.id)
 
 
 async def update_account(db: AsyncSession, user: User, account_id: uuid.UUID, payload: AccountUpdate) -> BrokerageAccount:
@@ -122,7 +128,7 @@ async def update_account(db: AsyncSession, user: User, account_id: uuid.UUID, pa
             continue
         setattr(account, field, value)
     await db.commit()
-    return await _reload(db, account.id)
+    return await reload_account(db, account.id)
 
 
 async def set_account_categories(
@@ -136,7 +142,7 @@ async def set_account_categories(
     if account.default_category_id is not None and account.default_category_id not in wanted:
         account.default_category_id = None
     await db.commit()
-    return await _reload(db, account.id)
+    return await reload_account(db, account.id)
 
 
 async def link_category_to_active_accounts(db: AsyncSession, user: User, category_id: uuid.UUID) -> None:
@@ -172,12 +178,12 @@ async def _move_default_off(db: AsyncSession, user: User, account: BrokerageAcco
 async def archive_account(db: AsyncSession, user: User, account_id: uuid.UUID) -> BrokerageAccount:
     account = await get_account(db, user, account_id)
     if account.is_archived:
-        return await _reload(db, account.id)
+        return await reload_account(db, account.id)
     await _ensure_not_last_active(db, user, account)
     await _move_default_off(db, user, account)
     account.is_archived = True
     await db.commit()
-    return await _reload(db, account.id)
+    return await reload_account(db, account.id)
 
 
 async def restore_account(db: AsyncSession, user: User, account_id: uuid.UUID) -> BrokerageAccount:
@@ -188,7 +194,7 @@ async def restore_account(db: AsyncSession, user: User, account_id: uuid.UUID) -
         if not any(a.is_default for a in await _active_accounts(db, user)):
             account.is_default = True
         await db.commit()
-    return await _reload(db, account.id)
+    return await reload_account(db, account.id)
 
 
 async def reorder_accounts(db: AsyncSession, user: User, account_ids: list[uuid.UUID]) -> list[BrokerageAccount]:
