@@ -3,6 +3,7 @@ import { apiFetch } from './client'
 import type { SessionSummary, SessionWithLegs, SessionLookupResponse } from '../types'
 
 export interface SessionCreate {
+  account_id?: string | null  // omitted → the user's default account
   ticker: string
   strategy: string
   status: string   // broadened: was a narrow union; IC/PBWB use 'open', WHEEL uses put_open etc.

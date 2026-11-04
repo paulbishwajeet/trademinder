@@ -2,7 +2,7 @@
 import uuid
 from datetime import datetime
 from typing import Optional, TYPE_CHECKING
-from sqlalchemy import String, Boolean, Integer, DateTime
+from sqlalchemy import String, Boolean, Integer, DateTime, ForeignKey, Index, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
@@ -16,7 +16,8 @@ class Category(Base):
     __tablename__ = "categories"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    name: Mapped[str] = mapped_column(String(50), nullable=False, unique=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    name: Mapped[str] = mapped_column(String(50), nullable=False)
     color: Mapped[str] = mapped_column(String(7), nullable=False, default="#6B7280")
     icon: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
     is_system: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
@@ -24,3 +25,8 @@ class Category(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     trades: Mapped[list["Trade"]] = relationship(back_populates="category_obj")
+
+    __table_args__ = (
+        Index("idx_categories_user", "user_id"),
+        UniqueConstraint("user_id", "name", name="uq_categories_user_name"),
+    )

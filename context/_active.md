@@ -1,12 +1,15 @@
 # Active Feature
 
-**Feature:** Chain Screener
-**Context File:** context/feature-chain-screener.md
-**Branch:** merged to `develop` (feature/chain-screener deleted after merge)
-**Session Started:** 2026-09-23
-**Status:** Shipped and merged. One small uncommitted follow-up in progress: a deep link from the Wheel dashboard's SP Timing panel into Chain (`frontend/src/pages/WheelDashboardPage.tsx`), tsc-clean but not yet live-verified or committed. See context/feature-chain-screener.md "Current State" for the exact next action.
+**Feature:** Multi-Account & Multi-User Foundation (Part 1 of 5)
+**Context File:** context/feature-multi-account-foundation.md
+**Branch:** feature/multi-account-foundation (off develop)
+**Session Started:** 2026-11-03
+**Status:** In progress — schema + backend + frontend types; no UI changes.
 
 ---
+
+**Previous feature:** Chain Screener — context/feature-chain-screener.md — shipped and merged to develop.
+
 
 **Previous feature:** WHEEL Strategy Dashboard v2 — context/feature-wheel-dashboard.md — active development, several sessions of commentary/slot-management work committed and pushed to `origin/develop` as of 2026-09-18; CC/SP Timing badges and ACTIVE box redesign still not manually verified in a live browser (see its Open Questions).
 

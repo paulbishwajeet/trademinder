@@ -3,6 +3,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
 from pydantic import BaseModel, ConfigDict
+from app.schemas.account import AccountSummary
 
 
 class ScreenerFetchedFields(BaseModel):
@@ -37,6 +38,7 @@ class ScreenerPreviewResponse(ScreenerFetchedFields):
 
 
 class ScreenerRowCreate(BaseModel):
+    account_id: Optional[uuid.UUID] = None  # None → the user's default account
     symbol: str
     category: Optional[str] = None
     precomputed: Optional[ScreenerFetchedFields] = None
@@ -55,9 +57,11 @@ class ScreenerRowResponse(ScreenerFetchedFields):
     category: Optional[str] = None
     last_fetched_at: Optional[datetime] = None
     created_at: datetime
+    account_ids: list[uuid.UUID] = []
 
 
 class ScreenerCommentaryCreate(BaseModel):
+    account_id: Optional[uuid.UUID] = None  # None → the user's default account
     note: str
     tags: Optional[list[str]] = None
 
@@ -72,6 +76,8 @@ class ScreenerCommentaryResponse(BaseModel):
 
     id: uuid.UUID
     screener_id: uuid.UUID
+    account_id: uuid.UUID
+    account: AccountSummary
     note: str
     tags: Optional[list[str]] = None
     created_at: datetime

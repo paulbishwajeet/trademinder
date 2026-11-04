@@ -17,6 +17,7 @@ class Commentary(Base):
     __tablename__ = "commentary"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     trade_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("trades.id", ondelete="CASCADE"), nullable=True)
     slot_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("wheel_slots.id", ondelete="CASCADE"), nullable=True)
     entry_date: Mapped[date] = mapped_column(Date, nullable=False, server_default=func.current_date())
@@ -35,6 +36,7 @@ class Commentary(Base):
     )
 
     __table_args__ = (
+        Index("idx_commentary_user", "user_id"),
         Index("idx_commentary_trade", "trade_id"),
         Index("idx_commentary_slot", "slot_id"),
         Index("idx_commentary_date", text("entry_date DESC")),

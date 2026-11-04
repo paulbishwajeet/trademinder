@@ -4,6 +4,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
+from app.schemas.account import AccountSummary
 
 
 class RationaleCreate(BaseModel):
@@ -56,10 +57,12 @@ class RationaleResponse(BaseModel):
 
 
 class TradeCreate(BaseModel):
+    account_id: Optional[uuid.UUID] = None  # None → the user's default account
     wheel_id: Optional[uuid.UUID] = None
     session_id: Optional[uuid.UUID] = None
     type: Annotated[str, Field(min_length=1, max_length=10)]
-    category: Annotated[str, Field(min_length=1, max_length=20)]
+    # None → the account's default category (422 if the account has none)
+    category: Optional[Annotated[str, Field(min_length=1, max_length=20)]] = None
     strategy: Annotated[str, Field(min_length=1, max_length=30)]
     ticker: Annotated[str, Field(min_length=1, max_length=10)]
     open_date: date
@@ -98,6 +101,8 @@ class TradeListItem(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
+    account_id: uuid.UUID
+    account: AccountSummary
     wheel_id: Optional[uuid.UUID] = None
     session_id: Optional[uuid.UUID] = None
     type: str

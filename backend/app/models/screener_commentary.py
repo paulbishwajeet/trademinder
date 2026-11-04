@@ -8,6 +8,7 @@ from sqlalchemy.sql import func
 from app.database import Base
 
 if TYPE_CHECKING:
+    from app.models.brokerage_account import BrokerageAccount
     from app.models.screener import Screener
 
 
@@ -15,6 +16,8 @@ class ScreenerCommentary(Base):
     __tablename__ = "screener_commentary"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    account_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("brokerage_accounts.id", ondelete="RESTRICT"), nullable=False)
     screener_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("screener.id", ondelete="CASCADE"), nullable=False
     )
@@ -25,6 +28,10 @@ class ScreenerCommentary(Base):
 
     screener: Mapped["Screener"] = relationship(back_populates="commentary")
 
+    account: Mapped["BrokerageAccount"] = relationship("BrokerageAccount", lazy="selectin")
+
     __table_args__ = (
+        Index("idx_screener_commentary_user", "user_id"),
+        Index("idx_screener_commentary_account", "account_id"),
         Index("idx_screener_commentary_screener", "screener_id"),
     )

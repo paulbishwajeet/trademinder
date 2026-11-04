@@ -16,6 +16,7 @@ class WheelSlotLeg(Base):
     __tablename__ = "wheel_slot_legs"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     slot_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("wheel_slots.id", ondelete="CASCADE"), nullable=False)
     trade_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("trades.id", ondelete="CASCADE"), nullable=False)
     leg_role: Mapped[str] = mapped_column(String(20), nullable=False)
@@ -26,6 +27,7 @@ class WheelSlotLeg(Base):
     trade: Mapped["Trade"] = relationship("Trade", back_populates="wheel_slot_legs")
 
     __table_args__ = (
+        Index("idx_wheel_slot_legs_user", "user_id"),
         Index("idx_wheel_slot_legs_slot", "slot_id"),
         Index("idx_wheel_slot_legs_trade", "trade_id"),
     )

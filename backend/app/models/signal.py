@@ -17,6 +17,7 @@ class TechnicalSignal(Base):
     __tablename__ = "technical_signals"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     trade_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("trades.id", ondelete="CASCADE"), nullable=False)
     signal_type: Mapped[str] = mapped_column(String(30), nullable=False)
     signal_value: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 4), nullable=True)
@@ -27,6 +28,7 @@ class TechnicalSignal(Base):
     trade: Mapped["Trade"] = relationship(back_populates="signals")
 
     __table_args__ = (
+        Index("idx_technical_signals_user", "user_id"),
         Index("idx_signals_trade", "trade_id"),
         Index("idx_signals_active", "is_active", postgresql_where=text("is_active")),
     )

@@ -4,9 +4,11 @@ from datetime import date
 from decimal import Decimal
 from typing import Optional
 from pydantic import BaseModel, ConfigDict
+from app.schemas.account import AccountSummary
 
 
 class SessionCreate(BaseModel):
+    account_id: Optional[uuid.UUID] = None  # None → the user's default account
     ticker: str
     strategy: str = "WHEEL"
     status: str
@@ -24,6 +26,8 @@ class SessionSummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
+    account_id: uuid.UUID
+    account: AccountSummary
     ticker: str
     strategy: str
     status: str

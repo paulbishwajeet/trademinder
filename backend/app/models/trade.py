@@ -9,6 +9,7 @@ from sqlalchemy.sql import func, text
 from app.database import Base
 
 if TYPE_CHECKING:
+    from app.models.brokerage_account import BrokerageAccount
     from app.models.rationale import Rationale
     from app.models.commentary import Commentary
     from app.models.alert import Alert
@@ -22,6 +23,8 @@ class Trade(Base):
     __tablename__ = "trades"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    account_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("brokerage_accounts.id", ondelete="RESTRICT"), nullable=False)
     wheel_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
     session_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
@@ -74,7 +77,15 @@ class Trade(Base):
         cascade="all, delete-orphan",
     )
 
+    account: Mapped["BrokerageAccount"] = relationship("BrokerageAccount", lazy="selectin")
+
     __table_args__ = (
+        Index("idx_trades_user", "user_id"),
+        Index("idx_trades_account", "account_id"),
+        Index(
+            "idx_trades_account_etrade_symbol_open", "account_id", "etrade_symbol", unique=True,
+            postgresql_where=text("etrade_symbol IS NOT NULL AND status = 'open'"),
+        ),
         Index("idx_trades_ticker", "ticker"),
         Index("idx_trades_wheel_id", "wheel_id"),
         Index("idx_trades_status", "status"),

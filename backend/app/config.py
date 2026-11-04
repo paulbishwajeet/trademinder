@@ -14,6 +14,11 @@ class Settings(BaseSettings):
     schwab_app_key: str = ""
     schwab_app_secret: str = ""
 
+    # Used only by migration 015 to seed the first (admin) user, and by the
+    # current-user seam to find that user until real login lands (Part 5).
+    owner_email: str = ""
+    owner_display_name: str = "Owner"
+
     alert_engine_interval_minutes: int = 15
     market_hours_start: str = "09:30"
     market_hours_end: str = "16:00"

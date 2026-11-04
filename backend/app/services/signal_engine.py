@@ -1,5 +1,7 @@
 # backend/app/services/signal_engine.py
+import uuid
 from datetime import datetime, timezone
+from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -34,13 +36,16 @@ def _signal_value(trade: Trade, signal_type: str) -> float | None:
     return None
 
 
-async def run(db: AsyncSession) -> dict:
-    """Evaluate signal rules for all open trades. Activate/deactivate signals."""
+async def run(db: AsyncSession, user_id: Optional[uuid.UUID] = None) -> dict:
+    """Evaluate signal rules for all open trades (every user's, or one user's when user_id is
+    given). Activate/deactivate signals."""
     stmt = (
         select(Trade)
         .where(Trade.status == "open")
         .options(selectinload(Trade.rationale), selectinload(Trade.signals))
     )
+    if user_id is not None:
+        stmt = stmt.where(Trade.user_id == user_id)
     result = await db.execute(stmt)
     trades = result.scalars().all()
 
@@ -63,6 +68,7 @@ async def run(db: AsyncSession) -> dict:
                 if existing_signal is None:
                     # Create new active signal
                     sig = TechnicalSignal(
+                        user_id=trade.user_id,
                         trade_id=trade.id,
                         signal_type=signal_type,
                         signal_value=_signal_value(trade, signal_type),

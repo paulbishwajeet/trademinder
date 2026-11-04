@@ -7,6 +7,9 @@ from sqlalchemy.orm import selectinload
 from fastapi import APIRouter, Depends
 
 from app.database import get_db
+from app.deps import get_current_user
+from app.models.user import User
+from app.services.ownership import get_default_account
 from app.models.trade import Trade
 from app.models.alert import Alert
 from app.models.commentary import Commentary
@@ -23,13 +26,22 @@ router = APIRouter(prefix="/api", tags=["positions"])
 async def positions_status(
     payload: PositionsStatusRequest,
     db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> dict[str, PositionStatus]:
+    # The overlay is pinned to the user's default account for now.
+    # Part 3 replaces this with explicit account linking (brokerage_accounts.external_ref).
+    account = await get_default_account(db, user)
     tickers = list({p.ticker.upper() for p in payload.positions})
 
     # Load open trades for all tickers, eagerly load rationale, category_obj, signals
     stmt = (
         select(Trade)
-        .where(Trade.status == "open", Trade.ticker.in_(tickers))
+        .where(
+            Trade.user_id == user.id,
+            Trade.account_id == account.id,
+            Trade.status == "open",
+            Trade.ticker.in_(tickers),
+        )
         .options(
             selectinload(Trade.rationale),
             selectinload(Trade.category_obj),
@@ -48,6 +60,7 @@ async def positions_status(
     alert_stmt = (
         select(Alert)
         .where(
+            Alert.user_id == user.id,
             Alert.trade_id.in_(trade_ids),
             Alert.is_dismissed == False,  # noqa: E712
             (Alert.snoozed_until == None) | (Alert.snoozed_until <= now),  # noqa: E711
@@ -73,7 +86,7 @@ async def positions_status(
             func.count(Commentary.id).label("cnt"),
             func.max(Commentary.created_at).label("last_at"),
         )
-        .where(Commentary.trade_id.in_(trade_ids))
+        .where(Commentary.user_id == user.id, Commentary.trade_id.in_(trade_ids))
         .group_by(Commentary.trade_id)
     )
     commentary_result = await db.execute(commentary_stmt)
@@ -85,7 +98,7 @@ async def positions_status(
     # Get the actual last note text
     last_note_stmt = (
         select(Commentary)
-        .where(Commentary.trade_id.in_(trade_ids))
+        .where(Commentary.user_id == user.id, Commentary.trade_id.in_(trade_ids))
         .order_by(Commentary.trade_id, Commentary.created_at.desc())
         .distinct(Commentary.trade_id)
     )
@@ -167,9 +180,19 @@ async def positions_status(
 async def reconcile_positions(
     payload: ReconcileRequest,
     db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> ReconcileResponse:
-    # Single query: all open trades (needed for both matching and stale detection)
-    all_open_stmt = select(Trade).where(Trade.status == "open")
+    # Reconcile resolves to the user's default account for now and must only ever touch
+    # (match or backdate-close) that account's trades — never another account's or user's.
+    # Part 3 replaces this with explicit account linking.
+    account = await get_default_account(db, user)
+
+    # Single query: all open trades in the account (needed for both matching and stale detection)
+    all_open_stmt = select(Trade).where(
+        Trade.user_id == user.id,
+        Trade.account_id == account.id,
+        Trade.status == "open",
+    )
     all_result = await db.execute(all_open_stmt)
     all_open_trades = all_result.scalars().all()
 
@@ -298,7 +321,10 @@ def _pick_best_trade(trades: list[Trade], pos_input, strict: bool = False) -> Tr
 
 
 @router.get("/dashboard/today", response_model=list[DashboardTodayItem])
-async def dashboard_today(db: AsyncSession = Depends(get_db)):
+async def dashboard_today(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     """Return action queue: open trades with active alerts, sorted by urgency."""
     now = datetime.now(timezone.utc)
     severity_order = {"urgent": 0, "warning": 1, "info": 2, "ok": 3}
@@ -307,6 +333,8 @@ async def dashboard_today(db: AsyncSession = Depends(get_db)):
         select(Alert)
         .join(Trade, Alert.trade_id == Trade.id)
         .where(
+            Alert.user_id == user.id,
+            Trade.user_id == user.id,
             Trade.status == "open",
             Alert.is_dismissed == False,  # noqa: E712
             (Alert.snoozed_until == None) | (Alert.snoozed_until <= now),  # noqa: E711

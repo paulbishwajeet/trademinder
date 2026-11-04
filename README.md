@@ -146,6 +146,8 @@ Copy `.env.example` to `.env`.
 | `ALERT_ENGINE_INTERVAL_MINUTES` | `15` | How often the alert engine runs |
 | `PRICE_REFRESH_INTERVAL_MINUTES` | `15` | How often prices are fetched |
 | `BRIEFING_GENERATE_TIME` | `08:00` | Daily briefing generation time |
+| `OWNER_EMAIL` | _(required)_ | Seeds the first (admin) user in migration 015 — the migration fails without it. Until login lands every request runs as this user |
+| `OWNER_DISPLAY_NAME` | `Owner` | Display name for the seeded owner |
 
 ---
 
@@ -153,6 +155,17 @@ Copy `.env.example` to `.env`.
 
 ### Design Philosophy
 Each individual trade (buy, sell, assign) is its own `Trade` record. Trades on the same ticker within a wheel cycle are linked via `wheel_id`. This keeps inserts simple while enabling grouped views.
+
+### Users and Brokerage Accounts (migrations 015–016)
+
+Ownership is **user → brokerage account → trades / wheels / spreads**.
+
+- **`users`** — tenant root. The tenant key is the internal UUID `id`; `email` is unique case-insensitively but never a key, and `external_subject` (nullable) will hold the Google identity once login lands. `role` is `admin` | `user`, `status` is `pending` | `active` | `disabled`. Migration 015 seeds the owner as the first active admin from `OWNER_EMAIL`.
+- **`brokerage_accounts`** — one user owns many, including several at the same broker (e.g. "E\*TRADE Hold" and "E\*TRADE Wheel"). Fields: `broker` (free text; UI offers E\*TRADE, Schwab, Fidelity, Robinhood, Other), `nickname`, `last_four` (only the last four digits — full account numbers are never stored), `external_ref` (links a broker-side account in a later part), `default_category_id`, `is_default` (exactly one per user), `sort_order`, `is_archived`. An account with trades, wheels or spreads can only be archived.
+- **`account_categories`** — categories are a per-user library; each account picks the ones it uses and may set a default for new trades.
+- **`screener_account_memberships`** — one screener row per user per symbol (market data fetched once); each symbol belongs to one or more accounts. Screener notes carry an `account_id` because a note reflects one account's situation.
+- Every user-owned table carries `user_id`. `trades`, `wheel_sessions`, `trade_sessions` (spreads) and `screener_commentary` also carry `account_id`; slots, legs, premium logs, rationale, commentary, alerts and signals inherit their account through their parent. Market data (`schwab_tokens`, quotes, technicals, signal caches) is app-level and shared.
+- Migration 016 backfilled all existing data to the owner and a default account nicknamed "E\*TRADE".
 
 ### Migration 001 — Initial Schema
 
@@ -562,6 +575,8 @@ Migration 002 (categories, signals), category CRUD, `/api/positions/status`, com
 **yfinance for prices** — free, zero auth, ~15min delayed intraday. Acceptable for MVP; upgrade to Tradier or Polygon if needed.
 
 **AI briefing is pull, not push** — generated at 8am and stored; page load fetches the stored briefing. Avoids latency and preserves history.
+
+**Multi-user is in progress, behind one current-user seam** — every router touching user data depends on `app/deps.py::get_current_user`, and every per-id lookup goes through `app/services/ownership.py`, which filters by the owning user and returns 404 for other users' ids. Today the seam returns the seeded owner; Google login (a later part) replaces only its body.
 
 **Extension talks directly to local backend** — calls `http://localhost:5431` (configurable). No relay server, no cloud dependency.
 

@@ -30,3 +30,5 @@ stockpile-main
 .playwright-mcp/
 
 .docs/DOMSample.html
+# Local database dumps
+backups/
