@@ -1,0 +1,124 @@
+// frontend/src/pages/SettingsAccountsPage.tsx
+import { useState } from 'react'
+import { Link } from 'react-router-dom'
+import * as Dialog from '@radix-ui/react-dialog'
+import { accountsApi } from '../api/accounts'
+import { useAccounts } from '../context/AccountsContext'
+import { AccountDialog } from '../components/Accounts/AccountDialog'
+import { accountPath } from '../lib/paths'
+import type { BrokerageAccount } from '../types'
+
+export function SettingsAccountsPage() {
+  const { accounts, categories, refresh } = useAccounts()
+  const [editing, setEditing] = useState<BrokerageAccount | null>(null)
+  const [dialogOpen, setDialogOpen] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState<BrokerageAccount | null>(null)
+  const [busyId, setBusyId] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const categoryName = (id: string | null) => categories.find(c => c.id === id)?.name ?? '—'
+
+  async function run(account: BrokerageAccount, action: () => Promise<unknown>) {
+    setBusyId(account.id)
+    setError(null)
+    try {
+      await action()
+      await refresh()
+    } catch (e) {
+      setError(`${account.nickname}: ${e instanceof Error ? e.message : 'failed'}`)
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  return (
+    <div className="max-w-5xl p-6">
+      <h1 className="text-2xl font-bold text-gray-900">Settings · Accounts</h1>
+      <p className="mt-1 text-sm text-gray-500">
+        Accounts that hold trades, wheels, spreads or screener symbols can only be archived. Empty accounts can be deleted.
+      </p>
+
+      {error && <p className="mt-4 rounded bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+
+      <div className="mt-4 overflow-x-auto rounded-lg border border-gray-200 bg-white">
+        <table className="min-w-full text-sm">
+          <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500">
+            <tr>
+              <th className="px-4 py-2">Account</th>
+              <th className="px-4 py-2">Broker</th>
+              <th className="px-4 py-2">Last four</th>
+              <th className="px-4 py-2">Categories</th>
+              <th className="px-4 py-2">Default category</th>
+              <th className="px-4 py-2">Status</th>
+              <th className="px-4 py-2 text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {accounts.map(a => (
+              <tr key={a.id} className={a.is_archived ? 'bg-gray-50 text-gray-500' : ''}>
+                <td className="px-4 py-2 font-medium">
+                  {a.is_archived ? a.nickname : <Link to={accountPath(a.id, 'wheel')} className="text-blue-600 hover:underline">{a.nickname}</Link>}
+                </td>
+                <td className="px-4 py-2">{a.broker}</td>
+                <td className="px-4 py-2">{a.last_four ?? '—'}</td>
+                <td className="px-4 py-2">{a.category_ids.length}</td>
+                <td className="px-4 py-2">{categoryName(a.default_category_id)}</td>
+                <td className="px-4 py-2">
+                  {a.is_archived
+                    ? <span className="rounded bg-gray-200 px-2 py-0.5 text-xs">Archived</span>
+                    : a.is_default
+                      ? <span className="rounded bg-blue-100 px-2 py-0.5 text-xs text-blue-700">Default</span>
+                      : <span className="rounded bg-green-100 px-2 py-0.5 text-xs text-green-700">Active</span>}
+                </td>
+                <td className="space-x-2 whitespace-nowrap px-4 py-2 text-right">
+                  <button onClick={() => { setEditing(a); setDialogOpen(true) }}
+                    className="text-blue-600 hover:underline disabled:opacity-50" disabled={busyId === a.id}>Edit</button>
+                  {a.is_archived
+                    ? <button onClick={() => run(a, () => accountsApi.restore(a.id))}
+                        className="text-green-700 hover:underline disabled:opacity-50" disabled={busyId === a.id}>Restore</button>
+                    : <button onClick={() => run(a, () => accountsApi.archive(a.id))}
+                        className="text-amber-700 hover:underline disabled:opacity-50" disabled={busyId === a.id}>Archive</button>}
+                  {a.can_delete && (
+                    <button onClick={() => setConfirmDelete(a)}
+                      className="text-red-600 hover:underline disabled:opacity-50" disabled={busyId === a.id}>Delete</button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <button onClick={() => { setEditing(null); setDialogOpen(true) }}
+        className="mt-4 rounded bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700">
+        + Add account
+      </button>
+
+      <AccountDialog open={dialogOpen} onOpenChange={setDialogOpen} account={editing} />
+
+      <Dialog.Root open={confirmDelete !== null} onOpenChange={o => { if (!o) setConfirmDelete(null) }}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 z-40 bg-black/30" />
+          <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-96 max-w-[calc(100vw-2rem)] -translate-x-1/2 -translate-y-1/2 rounded-lg bg-white p-6 shadow-xl">
+            <Dialog.Title className="text-lg font-semibold text-gray-900">Delete {confirmDelete?.nickname}?</Dialog.Title>
+            <Dialog.Description className="mt-2 text-sm text-gray-600">
+              This account is empty. Deleting it is permanent.
+            </Dialog.Description>
+            <div className="mt-6 flex justify-end gap-2">
+              <Dialog.Close className="rounded border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50">Cancel</Dialog.Close>
+              <button
+                onClick={() => {
+                  const target = confirmDelete
+                  setConfirmDelete(null)
+                  if (target) void run(target, () => accountsApi.delete(target.id))
+                }}
+                className="rounded bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-700">
+                Delete
+              </button>
+            </div>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
+    </div>
+  )
+}

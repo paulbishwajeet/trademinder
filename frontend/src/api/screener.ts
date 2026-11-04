@@ -3,11 +3,13 @@ import { apiFetch } from './client'
 import type { ScreenerRow, ScreenerPreview, ScreenerCommentary, ScreenerJobStatus, ScreenerFetchedFields } from '../types'
 
 export const screenerApi = {
-  list: () => apiFetch<ScreenerRow[]>('/screener'),
+  // accountId omitted → all of the user's symbols (Research)
+  list: (accountId?: string) => apiFetch<ScreenerRow[]>(`/screener${accountId ? `?account_id=${accountId}` : ''}`),
 
   preview: (ticker: string) => apiFetch<ScreenerPreview>(`/screener/preview/${ticker}`),
 
-  add: (payload: { symbol: string; category?: string; precomputed?: ScreenerFetchedFields }) =>
+  // Adds a membership in account_id (default account when omitted); creates the symbol row if needed.
+  add: (payload: { symbol: string; category?: string; precomputed?: ScreenerFetchedFields; account_id?: string }) =>
     apiFetch<ScreenerRow>('/screener', { method: 'POST', body: JSON.stringify(payload) }),
 
   fetchOne: (symbol: string) =>
@@ -19,16 +21,19 @@ export const screenerApi = {
   getJobStatus: (jobId: string) =>
     apiFetch<ScreenerJobStatus>(`/screener/jobs/${jobId}`),
 
-  remove: (symbol: string) =>
-    apiFetch<void>(`/screener/${symbol}`, { method: 'DELETE' }),
+  // With accountId: remove only that membership. Without: remove the symbol from every account.
+  remove: (symbol: string, accountId?: string) =>
+    apiFetch<void>(`/screener/${symbol}${accountId ? `?account_id=${accountId}` : ''}`, { method: 'DELETE' }),
 
   patch: (symbol: string, payload: { sector?: string; category?: string }) =>
     apiFetch<ScreenerRow>(`/screener/${symbol}`, { method: 'PATCH', body: JSON.stringify(payload) }),
 
   commentary: {
-    list: (symbol: string) => apiFetch<ScreenerCommentary[]>(`/screener/${symbol}/commentary`),
+    // accountId omitted → notes from every account, each labeled with its account
+    list: (symbol: string, accountId?: string) =>
+      apiFetch<ScreenerCommentary[]>(`/screener/${symbol}/commentary${accountId ? `?account_id=${accountId}` : ''}`),
 
-    add: (symbol: string, payload: { note: string; tags?: string[] }) =>
+    add: (symbol: string, payload: { note: string; tags?: string[]; account_id?: string }) =>
       apiFetch<ScreenerCommentary>(`/screener/${symbol}/commentary`, {
         method: 'POST',
         body: JSON.stringify(payload),

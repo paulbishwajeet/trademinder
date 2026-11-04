@@ -4,8 +4,10 @@ import type { SessionSummary, SessionWithLegs } from '../types'
 import { sessionsApi, quotePrice } from '../api/sessions'
 import { SpreadSessionCard } from '../components/Spreads/SpreadSessionCard'
 import { NewSpreadSessionModal } from '../components/Spreads/NewSpreadSessionModal'
+import { useRequiredAccount } from '../context/AccountsContext'
 
 export function SpreadsDashboardPage() {
+  const account = useRequiredAccount()
   const [sessions, setSessions] = useState<SessionWithLegs[]>([])
   const [closedSessions, setClosedSessions] = useState<SessionSummary[]>([])
   const [prices, setPrices] = useState<Record<string, number | null>>({})
@@ -19,10 +21,10 @@ export function SpreadsDashboardPage() {
     try {
       // Fetch open IC and PBWB sessions in parallel
       const [icSummaries, pbwbSummaries, icClosed, pbwbClosed] = await Promise.all([
-        sessionsApi.listSpreads('IRON_CONDOR', 'open'),
-        sessionsApi.listSpreads('PUT_B_W_FLY', 'open'),
-        sessionsApi.listSpreads('IRON_CONDOR', 'closed'),
-        sessionsApi.listSpreads('PUT_B_W_FLY', 'closed'),
+        sessionsApi.listSpreads('IRON_CONDOR', 'open', account.id),
+        sessionsApi.listSpreads('PUT_B_W_FLY', 'open', account.id),
+        sessionsApi.listSpreads('IRON_CONDOR', 'closed', account.id),
+        sessionsApi.listSpreads('PUT_B_W_FLY', 'closed', account.id),
       ])
 
       // Fetch full leg detail for each open session

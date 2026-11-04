@@ -1,6 +1,9 @@
 import { useState } from 'react'
 import type { ScreenerCommentary } from '../../types'
 import { screenerApi } from '../../api/screener'
+import { useAccounts, useCurrentAccount } from '../../context/AccountsContext'
+import { accountLabel } from '../../lib/paths'
+import { AccountBadge } from './AccountPicker'
 
 interface Props {
   symbol: string
@@ -8,7 +11,7 @@ interface Props {
   onRefresh: () => void
 }
 
-function CommentaryEntry({ entry, onRefresh }: { entry: ScreenerCommentary; onRefresh: () => void }) {
+function CommentaryEntry({ entry, onRefresh, showAccount }: { entry: ScreenerCommentary; onRefresh: () => void; showAccount: boolean }) {
   const [editing, setEditing] = useState(false)
   const [note, setNote] = useState(entry.note)
   const [saving, setSaving] = useState(false)
@@ -34,8 +37,11 @@ function CommentaryEntry({ entry, onRefresh }: { entry: ScreenerCommentary; onRe
   return (
     <div className="bg-gray-50 rounded p-3 text-sm">
       <div className="flex justify-between items-start">
-        <span className="text-gray-400 text-xs">
+        <span className="flex items-center gap-2 text-gray-400 text-xs">
           {entry.created_at.slice(0, 10)}{entry.updated_at ? ' (edited)' : ''}
+          {showAccount && (
+            <AccountBadge accountId={entry.account_id} nickname={entry.account?.nickname} lastFour={entry.account?.last_four} />
+          )}
         </span>
         <div className="space-x-2">
           {!editing && (
@@ -86,13 +92,18 @@ export function ScreenerCommentaryThread({ symbol, entries, onRefresh }: Props) 
   const [note, setNote] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const account = useCurrentAccount()
+  const { active, defaultAccount } = useAccounts()
+  // Research only: which account the new note belongs to (defaults to the default account).
+  const [picked, setPicked] = useState<string | null>(null)
+  const targetAccountId = account?.id ?? picked ?? defaultAccount?.id
 
   const handleAdd = async () => {
     if (!note.trim()) return
     setSubmitting(true)
     setError(null)
     try {
-      await screenerApi.commentary.add(symbol, { note: note.trim() })
+      await screenerApi.commentary.add(symbol, { note: note.trim(), account_id: targetAccountId })
       setNote('')
       onRefresh()
     } catch {
@@ -114,18 +125,32 @@ export function ScreenerCommentaryThread({ symbol, entries, onRefresh }: Props) 
           placeholder="Add a note…"
           className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
         />
-        <button
-          onClick={handleAdd}
-          disabled={submitting || !note.trim()}
-          className="text-xs px-3 py-1.5 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-300"
-        >
-          {submitting ? 'Adding…' : 'Add Note'}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleAdd}
+            disabled={submitting || !note.trim()}
+            className="text-xs px-3 py-1.5 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-300"
+          >
+            {submitting ? 'Adding…' : 'Add Note'}
+          </button>
+          {!account && (
+            <label className="flex items-center gap-1 text-xs text-gray-500">
+              to
+              <select
+                value={targetAccountId ?? ''}
+                onChange={e => setPicked(e.target.value)}
+                className="border border-gray-300 rounded px-1 py-0.5 text-xs"
+              >
+                {active.map(a => <option key={a.id} value={a.id}>{accountLabel(a)}</option>)}
+              </select>
+            </label>
+          )}
+        </div>
       </div>
       <div className="space-y-3 mt-4">
         {entries.length === 0 && <p className="text-gray-400 text-sm">No notes yet.</p>}
         {entries.map(entry => (
-          <CommentaryEntry key={entry.id} entry={entry} onRefresh={onRefresh} />
+          <CommentaryEntry key={entry.id} entry={entry} onRefresh={onRefresh} showAccount={!account} />
         ))}
       </div>
     </div>

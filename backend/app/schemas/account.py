@@ -27,13 +27,15 @@ class AccountResponse(AccountSummary):
     is_archived: bool
     created_at: datetime
     category_ids: list[uuid.UUID] = []
+    # True when the account holds nothing and may be hard-deleted (otherwise archive it).
+    can_delete: bool = False
 
 
 class AccountCreate(BaseModel):
     broker: Annotated[str, Field(min_length=1, max_length=30)]
     nickname: Annotated[str, Field(min_length=1, max_length=50)]
     last_four: Optional[LastFour] = None
-    sort_order: int = 0
+    sort_order: Optional[int] = None  # None → after the user's existing accounts
     is_default: bool = False
     # None → the account uses every category in the user's library
     category_ids: Optional[list[uuid.UUID]] = None
@@ -52,3 +54,7 @@ class AccountUpdate(BaseModel):
 
 class AccountCategoriesUpdate(BaseModel):
     category_ids: list[uuid.UUID]
+
+
+class AccountOrderUpdate(BaseModel):
+    account_ids: list[uuid.UUID]

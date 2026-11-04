@@ -2,7 +2,7 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import accounts, trades, commentary, alerts, market, briefing, categories, positions, signals, sessions, wheel, screener, chain
+from app.routers import accounts, dashboard, trades, commentary, alerts, market, briefing, categories, positions, signals, sessions, wheel, screener, chain
 from app.scheduler import scheduler, start_scheduler
 
 
@@ -30,6 +30,7 @@ async def health():
 
 
 app.include_router(accounts.router)
+app.include_router(dashboard.router)
 app.include_router(trades.router)
 app.include_router(commentary.router)
 app.include_router(alerts.router)
