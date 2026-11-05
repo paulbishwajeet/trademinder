@@ -333,7 +333,14 @@ Full interactive docs: http://localhost:5431/docs
 
 ## Chrome Extension
 
-The extension overlays TradeMinder data on the E\*TRADE portfolio page in four stages. Enabled/disabled individually via the popup settings UI. API URL is configurable (default: `http://localhost:5431`).
+The extension overlays TradeMinder data on the E\*TRADE portfolio page in four stages. Enabled/disabled individually via the popup settings UI.
+
+### Server address and accounts
+- **Server address**: set once in the popup (default `http://127.0.0.1:5431`). Saving asks Chrome for access to that host (optional host permission). Every API call goes through the service worker, which uses the stored address. If TradeMinder can't be reached, the account bar says so.
+- **Which account is on screen**: read from E\*TRADE's account dropdown. The first time an E\*TRADE account is selected, a **Link this E\*TRADE account** card asks which TradeMinder account it is (existing, or create new — prefilled with E\*TRADE, the nickname and last four). The link is stored server-side, so it survives reinstalls and works on any computer; Settings → Accounts in the app shows it and can unlink it.
+- **Privacy**: the link key is a SHA-256 fingerprint of the broker + full account number, computed in the service worker. The full account number is never sent to TradeMinder, stored, or logged.
+- **Scoping**: in a single linked account, badges, pills, Add trade, Edit and the session picker use only that account. In **All brokerage accounts**, statuses match across all of your accounts and a position held in several accounts shows a chip per account; Add trade asks for the account. Unlinked accounts show nothing until linked.
+- **Reconcile** runs only for a single, linked account and only ever backdate-closes that account's trades. It's disabled (with the reason shown) in the All view and for unlinked accounts.
 
 ### Stage 1 — Category Indicators
 Reads ticker from DOM → calls `/api/positions/status` → injects a TM badge column and adds a filter toolbar above the grid.
@@ -406,26 +413,28 @@ The E\*TRADE portfolio page uses a **div-based virtual scroll grid** (not a `<ta
 Key facts:
 | Property | Value |
 |---|---|
-| Grid ID | `rdt_3` |
-| Total positions (as observed) | 82 |
+| Grid | `[role="grid"][aria-label="Portfolios"]` — the `rdt_N` id is **not stable** (`rdt_2` in captures) |
+| Account selector | `select#accountDropdown`; option value = full account number + `-` + label; All view = `all-…`; selection only in the live `.value` |
+| Account info on rows | none — no account column or group rows in any view |
+| All-accounts view | rows have no Trade button (full symbol comes from the quote link `?symbol=`); no Customize button in the filter bar |
+| Class names | `Block---element---<hash>`; the hash changes between releases, so match the prefix |
 | Row height | 37px fixed, positioned via `transform: translateY(Npx)` |
-| Grid width | 1200px fixed |
-| Row IDs | `r0_0` through `r0_N` (recycled on scroll) |
+| Row IDs | recycled on scroll and on re-render |
 
-### Confirmed Selectors
+### Selectors (prefix-based)
 ```javascript
+// cls(p) → '[class^="p"],[class*=" p"]'
 const ETRADE = {
-  gridRoot:          '#rdt_3',
-  contentArea:       '.Content---root---D2Ylg',
-  positionRows:      '[role="row"][level="0"]:not(.Row---placeholderRow---2t5Gs)',
-  placeholderRow:    '.Row---placeholderRow---2t5Gs',
-  footerRow:         '.Footer---row---g5JDN',
-  symbolContent:     '.SymbolCellRenderer---content---mcwCT',
-  symbolLink:        'a.SymbolCellRenderer---symbol---_S70m',
-  optionClass:       'SymbolCellRenderer---option---qIlje',
-  itmClass:          'SymbolCellRenderer---in-the-money---AQRUo',
-  optionDescription: 'span.SymbolCellRenderer---description---KHPND',
-  headerRow:         '[data-header="true"] [role="row"]',
+  grid:            '[role="grid"][aria-label="Portfolios"]',
+  contentArea:     cls('Content---root---'),
+  positionRows:    '[role="row"][level="0"]' /* minus Row---placeholderRow---* */,
+  symbolContent:   cls('SymbolCellRenderer---content---'),
+  symbolRoot:      cls('SymbolCellRenderer---root---'),
+  optionClassPrefix: 'SymbolCellRenderer---option---',
+  itmClassPrefix:  'SymbolCellRenderer---in-the-money---',
+  headerTitle:     cls('HeaderCell---title---'),
+  customizeView:   cls('PortfoliosFilters---customize-view---'),
+  accountDropdown: 'select#accountDropdown',
 };
 ```
 

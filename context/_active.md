@@ -1,12 +1,15 @@
 # Active Feature
 
-**Feature:** Account Container UI (multi-account Part 2 of 5)
-**Context File:** context/feature-account-container-ui.md
-**Branch:** feature/account-container-ui (stacked on feature/multi-account-foundation — Part 1 not yet merged to develop)
-**Session Started:** 2026-11-03
-**Status:** Implemented, verified (12/12 manual checklist items) and committed 2026-11-04; not pushed. Next: user click-through, then land Part 1 in develop and rebase this branch.
+**Feature:** Extension Account Awareness (multi-account Part 3 of 5)
+**Context File:** context/feature-extension-account-awareness.md
+**Branch:** feature/extension-account-awareness (stacked on Part 2 → Part 1; none merged to develop). Checked out in the main checkout.
+**Session Started:** 2026-11-04
+**Status:** Committed (not pushed); live DB at 017 (backup in backups/); fixture-verified incl. fresh Nov captures. Next: real run on E*TRADE with the unpacked extension.
 
 ---
+
+**Previous feature:** Account Container UI (Part 2) — context/feature-account-container-ui.md — committed (b7e094f), not pushed or merged.
+
 
 **Previous feature:** Multi-Account Foundation (Part 1) — context/feature-multi-account-foundation.md — committed, not pushed or merged.
 

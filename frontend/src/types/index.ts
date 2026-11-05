@@ -65,8 +65,15 @@ export interface AccountSummary {
   last_four: string | null
 }
 
+// E*TRADE dropdown entry this account is linked to by the Chrome extension (Part 3).
+// The link fingerprint itself is never sent to the browser.
+export interface AccountLink {
+  label: string | null
+  last_seen_at: string | null
+}
+
 export interface BrokerageAccount extends AccountSummary {
-  external_ref: string | null
+  link: AccountLink | null
   default_category_id: string | null
   is_default: boolean
   sort_order: number

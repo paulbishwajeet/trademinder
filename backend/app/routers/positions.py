@@ -9,13 +9,13 @@ from fastapi import APIRouter, Depends
 from app.database import get_db
 from app.deps import get_current_user
 from app.models.user import User
-from app.services.ownership import get_default_account
+from app.services.ownership import get_account, resolve_account_filter
 from app.models.trade import Trade
 from app.models.alert import Alert
 from app.models.commentary import Commentary
 from app.models.signal import TechnicalSignal
 from app.schemas.positions import (
-    PositionsStatusRequest, PositionStatus, ActiveSignal, DashboardTodayItem,
+    PositionsStatusRequest, PositionStatus, PositionMatch, ActiveSignal, DashboardTodayItem,
     ReconcileRequest, ReconcileResponse, UnmatchedEtradeItem, StaleBackendItem,
 )
 
@@ -28,20 +28,18 @@ async def positions_status(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> dict[str, PositionStatus]:
-    # The overlay is pinned to the user's default account for now.
-    # Part 3 replaces this with explicit account linking (brokerage_accounts.external_ref).
-    account = await get_default_account(db, user)
+    # With account_id: only that account's trades (a single linked E*TRADE account).
+    # Without: every account of the user (E*TRADE's All view); each match carries its account.
+    account_filter = await resolve_account_filter(db, user, payload.account_id)
     tickers = list({p.ticker.upper() for p in payload.positions})
 
     # Load open trades for all tickers, eagerly load rationale, category_obj, signals
+    conditions = [Trade.user_id == user.id, Trade.status == "open", Trade.ticker.in_(tickers)]
+    if account_filter is not None:
+        conditions.append(Trade.account_id == account_filter)
     stmt = (
         select(Trade)
-        .where(
-            Trade.user_id == user.id,
-            Trade.account_id == account.id,
-            Trade.status == "open",
-            Trade.ticker.in_(tickers),
-        )
+        .where(*conditions)
         .options(
             selectinload(Trade.rationale),
             selectinload(Trade.category_obj),
@@ -114,26 +112,36 @@ async def positions_status(
         ticker = pos_input.ticker.upper()
         key = pos_input.full_symbol or ticker
 
-        trades = trades_by_ticker.get(ticker, [])
-        if not trades:
+        # Match within each account separately: one E*TRADE row is one position in one account,
+        # so a trade in account A must never stand in for the same symbol in account B.
+        trades_by_account: dict[uuid.UUID, list[Trade]] = {}
+        for t in trades_by_ticker.get(ticker, []):
+            trades_by_account.setdefault(t.account_id, []).append(t)
+        matched = [
+            m for m in (_match_trade(account_trades, pos_input) for account_trades in trades_by_account.values())
+            if m is not None
+        ]
+        if not matched:
             response[key] = PositionStatus(ticker=ticker, full_symbol=pos_input.full_symbol)
             continue
 
-        # Direct match on etrade_symbol (set when trade is added via extension modal).
-        # One E*TRADE symbol maps to exactly one open position — no reconstruction needed.
-        trade = None
-        if pos_input.full_symbol:
-            trade = next((t for t in trades if t.etrade_symbol == pos_input.full_symbol), None)
-
-        # Fallback: reconstruct match from instrument type + strike + expiry.
-        # Use strict=True so untracked legs of a multi-leg position (e.g. iron
-        # condor) don't inherit the badge/commentary of the one tracked leg.
-        if trade is None:
-            trade = _pick_best_trade(trades, pos_input, strict=True)
-
-        if trade is None:
-            response[key] = PositionStatus(ticker=ticker, full_symbol=pos_input.full_symbol)
-            continue
+        # Primary = most severe alert, then the user's account order.
+        matched.sort(key=lambda t: (
+            severity_order.get(best_alert[t.id].severity, 9) if t.id in best_alert else 9,
+            t.account.sort_order,
+            t.account.created_at,
+        ))
+        trade = matched[0]
+        matches = [
+            PositionMatch(
+                account=t.account,
+                trade_id=t.id,
+                category_name=t.category_obj.name if t.category_obj else None,
+                category_color=t.category_obj.color if t.category_obj else None,
+                alert_severity=best_alert[t.id].severity if t.id in best_alert else None,
+            )
+            for t in matched
+        ]
 
         alert = best_alert.get(trade.id)
         cat = trade.category_obj
@@ -171,9 +179,25 @@ async def positions_status(
             strike_price=trade.strike_price,
             dte=dte,
             exit_strategy=trade.exit_strategy,
+            account=trade.account,
+            matches=matches,
         )
 
     return response
+
+
+def _match_trade(trades: list[Trade], pos_input) -> Trade | None:
+    """The open trade (all from one account) that a position row stands for, or None."""
+    # Direct match on etrade_symbol (set when trade is added via extension modal).
+    # One E*TRADE symbol maps to exactly one open position — no reconstruction needed.
+    if pos_input.full_symbol:
+        direct = next((t for t in trades if t.etrade_symbol == pos_input.full_symbol), None)
+        if direct is not None:
+            return direct
+    # Fallback: reconstruct match from instrument type + strike + expiry.
+    # Use strict=True so untracked legs of a multi-leg position (e.g. iron
+    # condor) don't inherit the badge/commentary of the one tracked leg.
+    return _pick_best_trade(trades, pos_input, strict=True)
 
 
 @router.post("/positions/reconcile", response_model=ReconcileResponse)
@@ -182,10 +206,9 @@ async def reconcile_positions(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> ReconcileResponse:
-    # Reconcile resolves to the user's default account for now and must only ever touch
-    # (match or backdate-close) that account's trades — never another account's or user's.
-    # Part 3 replaces this with explicit account linking.
-    account = await get_default_account(db, user)
+    # Reconcile must only ever touch (match or backdate-close) the named account's trades — never
+    # another account's or user's. The account is required and must be active.
+    account = await get_account(db, user, payload.account_id, include_archived=False)
 
     # Single query: all open trades in the account (needed for both matching and stale detection)
     all_open_stmt = select(Trade).where(

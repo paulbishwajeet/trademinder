@@ -27,6 +27,9 @@ export const accountsApi = {
   reorder: (accountIds: string[]) =>
     apiFetch<BrokerageAccount[]>('/accounts/order', { method: 'PUT', body: JSON.stringify({ account_ids: accountIds }) }),
 
+  // Remove the E*TRADE link; the extension shows the link card again for that dropdown entry.
+  unlink: (id: string) => apiFetch<BrokerageAccount>(`/accounts/${id}/link`, { method: 'DELETE' }),
+
   // Only for empty accounts — no trades, wheels, spreads, screener symbols or notes (409 otherwise).
   delete: (id: string) => apiFetch<void>(`/accounts/${id}`, { method: 'DELETE' }),
 }

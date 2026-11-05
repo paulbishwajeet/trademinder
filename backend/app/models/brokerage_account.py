@@ -22,8 +22,11 @@ class BrokerageAccount(Base):
     broker: Mapped[str] = mapped_column(String(30), nullable=False)
     nickname: Mapped[str] = mapped_column(String(50), nullable=False)
     last_four: Mapped[Optional[str]] = mapped_column(String(4), nullable=True)
-    # Links a broker-side account (e.g. an E*TRADE dropdown entry) in Part 3.
+    # E*TRADE link fingerprint: hex SHA-256 of broker + full account number, computed by the
+    # extension. The full account number is never stored.
     external_ref: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    external_label: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    external_seen_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     default_category_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True), ForeignKey("categories.id", ondelete="SET NULL"), nullable=True
     )
@@ -41,11 +44,25 @@ class BrokerageAccount(Base):
     def category_ids(self) -> list[uuid.UUID]:
         return [link.category_id for link in self.category_links]
 
+    @property
+    def link(self) -> Optional[dict]:
+        """The E*TRADE link as the UI sees it (never the fingerprint itself)."""
+        if self.external_ref is None:
+            return None
+        return {"label": self.external_label, "last_seen_at": self.external_seen_at}
+
     __table_args__ = (
         CheckConstraint("last_four IS NULL OR last_four ~ '^[0-9]{4}$'", name="ck_brokerage_accounts_last_four"),
+        CheckConstraint(
+            "external_ref IS NULL OR external_ref ~ '^[0-9a-f]{64}$'", name="ck_brokerage_accounts_external_ref",
+        ),
         Index("idx_brokerage_accounts_user", "user_id"),
         Index("idx_brokerage_accounts_default_category", "default_category_id"),
         Index("uq_brokerage_accounts_one_default", "user_id", unique=True, postgresql_where=text("is_default")),
+        Index(
+            "uq_brokerage_accounts_user_external_ref", "user_id", "external_ref",
+            unique=True, postgresql_where=text("external_ref IS NOT NULL"),
+        ),
     )
 
 

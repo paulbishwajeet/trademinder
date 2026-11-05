@@ -207,9 +207,15 @@ async def test_extension_endpoints_are_scoped_to_user(client, owner_data, other,
     ]})).json()
     assert status[PUT_TRADE["etrade_symbol"]]["trade_id"] is None
 
-    resp = await client.post("/api/positions/reconcile", json={"positions": []})
+    resp = await client.post("/api/positions/reconcile", json={"account_id": str(other[1].id), "positions": []})
     assert resp.status_code == 200
     assert resp.json()["stale_backend"] == []
+
+    # The owner's account id is unknown to B.
+    resp = await client.post("/api/positions/reconcile", json={"account_id": owner_data["account_id"], "positions": []})
+    assert resp.status_code == 404
+    resp = await client.post("/api/positions/status", json={"account_id": owner_data["account_id"], "positions": []})
+    assert resp.status_code == 404
 
     from app.models.trade import Trade
     db_session.expire_all()

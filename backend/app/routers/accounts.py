@@ -7,8 +7,10 @@ from app.deps import get_current_user
 from app.models.user import User
 from app.schemas.account import (
     AccountCreate, AccountUpdate, AccountCategoriesUpdate, AccountOrderUpdate, AccountResponse,
+    AccountCreateAndLink, AccountLinkRequest, AccountLinkResolveRequest, AccountLinkResolveResponse,
 )
 from app.services import accounts as accounts_service
+from app.services import account_links
 
 router = APIRouter(prefix="/api/accounts", tags=["accounts"])
 
@@ -33,6 +35,37 @@ async def reorder_accounts(
     payload: AccountOrderUpdate, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user),
 ):
     return await accounts_service.reorder_accounts(db, user, payload.account_ids)
+
+
+# E*TRADE links. Fingerprints only ever travel in request bodies, never in URLs (access logs).
+@router.post("/links/resolve", response_model=AccountLinkResolveResponse)
+async def resolve_link(
+    payload: AccountLinkResolveRequest, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user),
+):
+    account = await account_links.resolve(db, user, payload.fingerprint, payload.label)
+    if account is None:
+        return AccountLinkResolveResponse(linked=False)
+    return AccountLinkResolveResponse(linked=True, account=account, is_archived=account.is_archived)
+
+
+@router.post("/links", response_model=AccountResponse, status_code=201)
+async def create_and_link(
+    payload: AccountCreateAndLink, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user),
+):
+    return await account_links.create_and_link(db, user, payload.account, payload.fingerprint, payload.label)
+
+
+@router.post("/{account_id}/link", response_model=AccountResponse)
+async def link_account(
+    account_id: uuid.UUID, payload: AccountLinkRequest,
+    db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user),
+):
+    return await account_links.link_existing(db, user, account_id, payload.fingerprint, payload.label)
+
+
+@router.delete("/{account_id}/link", response_model=AccountResponse)
+async def unlink_account(account_id: uuid.UUID, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    return await account_links.unlink(db, user, account_id)
 
 
 @router.patch("/{account_id}", response_model=AccountResponse)
