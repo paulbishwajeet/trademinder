@@ -133,6 +133,7 @@ export interface DashboardSummary {
   accounts: DashboardAccountCard[]
   needs_action: DashboardNeedsActionSlot[]
   alerts: DashboardAlert[]
+  market_data_offline?: boolean
 }
 
 export interface BrokerageAccountCreate {
@@ -177,6 +178,8 @@ export interface Trade {
   current_price: number | null
   unrealized_pnl: number | null
   last_price_at: string | null
+  /** True while market data is offline (current_price / unrealized_pnl are then null). */
+  market_data_offline?: boolean
   created_at: string
   updated_at: string
   last_etrade_seen: string | null
@@ -373,6 +376,8 @@ export interface WheelSessionDetail extends WheelSessionSummary {
   total_premium: string
   stock_cost_basis: number | null
   stock_current_price: number | null
+  /** True while market data is offline (stock and leg prices are then null). */
+  market_data_offline?: boolean
 }
 
 export interface WheelActiveSlot {
@@ -408,6 +413,9 @@ export interface CCSignalFactor {
 }
 
 export interface CCSignalResult {
+  /** Served from the server cache while market data is offline (see as_of). */
+  stale?: boolean
+  as_of?: string | null
   ticker: string
   score: number
   grade: string
@@ -464,6 +472,8 @@ export interface ScreenerFetchedFields {
 }
 
 export interface ScreenerRow extends ScreenerFetchedFields {
+  /** True while market data is offline: metrics are the stored ones, as of last_fetched_at. */
+  stale?: boolean
   id: string
   symbol: string
   category: string | null

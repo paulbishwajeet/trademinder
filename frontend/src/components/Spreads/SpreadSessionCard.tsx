@@ -1,3 +1,5 @@
+import { useMarketDataOffline } from '../../hooks/useMarketDataOffline'
+import { MARKET_OFFLINE_TOOLTIP } from '../shared/MarketDash'
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import type { SessionWithLegs, SessionLeg } from '../../types'
@@ -59,7 +61,14 @@ const SIGNAL_STYLES: Record<Signal, { bg: string; border: string; text: string; 
 }
 
 function PriceSignal({ session, price }: { session: SessionWithLegs; price: number | null }) {
-  if (price == null) return <span className="text-xs text-gray-400">Price unavailable</span>
+  const offline = useMarketDataOffline()
+  if (price == null) {
+    return (
+      <span className="text-xs text-gray-400" title={offline ? MARKET_OFFLINE_TOOLTIP : undefined}>
+        {offline ? 'Market data offline' : 'Price unavailable'}
+      </span>
+    )
+  }
   const signal = computeSignal(session.legs, price, session.strategy)
   const s = SIGNAL_STYLES[signal]
   return (

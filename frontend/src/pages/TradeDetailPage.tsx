@@ -5,6 +5,7 @@ import { tradesApi } from '../api/trades'
 import { commentaryApi } from '../api/commentary'
 import type { Trade, Commentary, TradeUpdate } from '../types'
 import { StatusBadge } from '../components/shared/StatusBadge'
+import { MARKET_OFFLINE_TOOLTIP } from '../components/shared/MarketDash'
 import { PnLDisplay } from '../components/shared/PnLDisplay'
 import { CommentaryThread } from '../components/Commentary/CommentaryThread'
 import { NotFound } from '../components/Layout/NotFound'
@@ -170,7 +171,10 @@ export function TradeDetailPage() {
           ].map(([label, value]) => (
             <div key={String(label)} className="bg-gray-50 rounded p-3">
               <p className="text-xs text-gray-500">{label}</p>
-              <p className="text-sm font-medium mt-0.5">{String(value)}</p>
+              <p className="text-sm font-medium mt-0.5"
+                title={label === 'Current Price' && trade.market_data_offline ? MARKET_OFFLINE_TOOLTIP : undefined}>
+                {String(value)}
+              </p>
             </div>
           ))}
           <div className="bg-gray-50 rounded p-3">

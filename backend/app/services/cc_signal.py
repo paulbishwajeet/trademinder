@@ -10,7 +10,7 @@ import pandas as pd
 from typing import Optional
 
 from app.services.price_fetcher import _compute_rsi_14
-from app.services.schwab_client import get_schwab_client
+from app.services.market_data import get_market_data, MarketDataUnavailable
 from app.services.technicals_fetcher import compute_iv_percentile_from_chain
 
 
@@ -111,7 +111,7 @@ def fetch_option_mid(ticker: str, strike: float, expiry_str: str, contract_type:
     if cached and (now - cached[1]) < _OPTION_CHAIN_TTL:
         chain = cached[0]
     else:
-        client = get_schwab_client()
+        client = get_market_data()
         to_date = (date.today() + timedelta(days=90)).isoformat()
         chain = client.get_option_chain(
             ticker,
@@ -191,10 +191,20 @@ def compute_combined_signal(ticker: str, force: bool = False, dte: Optional[int]
         if dte is None:
             _combined_signal_cache[ticker] = (result, now)
         return result
+    except MarketDataUnavailable:
+        # Offline: the last good result (any age) beats nothing; without one, the router answers 503.
+        if cached:
+            return {"cc": _stale(cached[0]["cc"]), "sp": _stale(cached[0]["sp"])}
+        raise
     except Exception as exc:
         log.exception("combined_signal failed for %s", ticker)
         err = _make_error_signal(ticker, exc)
         return {"cc": err, "sp": err}
+
+
+def _stale(payload: dict) -> dict:
+    """A cached signal served while market data is offline: flagged stale with its as-of time."""
+    return {**payload, "stale": True, "as_of": payload.get("cached_at")}
 
 
 def compute_cc_signal(ticker: str, force: bool = False) -> dict:
@@ -214,7 +224,7 @@ def _compute_combined_fresh(ticker: str, dte: Optional[int] = None) -> dict:
     if close_d.empty:
         raise ValueError(f"No daily data for {ticker}")
 
-    client = get_schwab_client()
+    client = get_market_data()
 
     quotes = client.get_quotes([ticker])
     quote = quotes.get(ticker, {})

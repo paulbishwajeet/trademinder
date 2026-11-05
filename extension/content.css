@@ -896,3 +896,18 @@
 [role="row"].tm-filtered-out:hover {
   opacity: 0.75;
 }
+
+/* Market data offline notice (Part 4), next to the account indicator */
+.tm-market-offline {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid #fca5a5;
+  background: #fef2f2;
+  color: #991b1b;
+  white-space: nowrap;
+  margin-right: 4px;
+}

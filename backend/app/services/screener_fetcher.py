@@ -1,7 +1,7 @@
 # backend/app/services/screener_fetcher.py
 import logging
 
-from app.services.schwab_client import get_schwab_client, SchwabAPIError
+from app.services.market_data import get_market_data, MarketDataUnavailable, SchwabAPIError
 from app.services.technicals_fetcher import fetch_technicals, compute_iv_percentile_from_chain
 
 log = logging.getLogger(__name__)
@@ -9,7 +9,8 @@ log = logging.getLogger(__name__)
 
 def fetch_screener_row(ticker: str, existing_sector: str | None = None) -> dict:
     """Fetch a full screener snapshot for one ticker: quote, technicals, IV
-    percentile, and best-effort sector. Never raises — on any failure returns
+    percentile, and best-effort sector. Raises only MarketDataUnavailable (provider offline);
+    on any other failure returns
     {"fetch_status": "error", "fetch_error": <str>} (a partial dict; other
     keys are absent, not None, so callers must use .get())."""
     try:
@@ -17,7 +18,7 @@ def fetch_screener_row(ticker: str, existing_sector: str | None = None) -> dict:
         if technicals.get("fetch_status") != "ok":
             return {"fetch_status": "error", "fetch_error": technicals.get("fetch_error")}
 
-        client = get_schwab_client()
+        client = get_market_data()
 
         quotes = client.get_quotes([ticker])
         quote = quotes.get(ticker, {})
@@ -66,6 +67,10 @@ def fetch_screener_row(ticker: str, existing_sector: str | None = None) -> dict:
             "fetch_status": "ok",
             "fetch_error": None,
         }
+    except MarketDataUnavailable:
+        # Offline: raise instead of returning an error row, so callers never overwrite stored
+        # screener data with NULLs.
+        raise
     except SchwabAPIError as exc:
         return {"fetch_status": "error", "fetch_error": str(exc)}
     except Exception as exc:

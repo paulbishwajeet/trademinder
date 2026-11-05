@@ -1,3 +1,4 @@
+import { staleTooltip } from '../shared/MarketDash'
 import { useMemo, useState } from 'react'
 import type { ScreenerRow } from '../../types'
 import { screenerApi } from '../../api/screener'
@@ -123,6 +124,9 @@ function ScreenerRowView({
     try {
       const updated = await screenerApi.fetchOne(row.symbol)
       onRefreshRow(updated)
+    } catch {
+      // Offline (503) or a failed fetch: the row keeps its stored data; the offline state is
+      // picked up globally by apiFetch and shown in the row's tooltip.
     } finally {
       setFetching(false)
     }
@@ -140,7 +144,8 @@ function ScreenerRowView({
 
   return (
     <>
-      <tr className="border-t border-gray-100 hover:bg-gray-50">
+      <tr className={`border-t border-gray-100 hover:bg-gray-50 ${row.stale ? 'opacity-75' : ''}`}
+        title={row.stale ? staleTooltip(row.last_fetched_at) : undefined}>
         <td className="px-3 py-2">
           <button onClick={() => setExpanded(e => !e)} className="flex items-center gap-1 font-medium text-gray-800">
             <span style={{ transform: expanded ? 'rotate(0deg)' : 'rotate(-90deg)', display: 'inline-block', transition: 'transform 0.15s' }}>&#9660;</span>

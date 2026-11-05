@@ -310,7 +310,32 @@ GET    /api/dashboard/today
 Response per position includes: category, alert severity, last commentary note, active signals, rationale snapshot, and trade details — everything the extension needs in one round trip.
 
 ### Market Data
+
+All market data goes through one provider boundary: `app/services/market_data.py`. `get_market_data()`
+returns the configured provider, set by `MARKET_DATA_PROVIDER`; only `schwab` exists, and unknown values fail
+at startup. Only that module and the Schwab implementation (`schwab_client.py`) know about Schwab. yfinance
+(earnings calendar, LEAPS scanner) is separate.
+
+**When the Schwab refresh token lapses, the app degrades instead of going dark.** This covers an expired token,
+a rejected refresh (`invalid_grant`) and no tokens at all. The provider then stops calling Schwab, so there are
+no retries and no log spam.
+
+| Endpoint kind | While offline |
+|---|---|
+| Pure market endpoints (quote, technicals, signals, chain, option price, RSI, screener preview, single fetch) | Return `503 {"code": "market_data_offline"}`. Signals with a server-side cached result return that result instead, with `stale: true` and its `as_of` time. |
+| Mixed endpoints (trades, trade detail, wheel detail, active slots, positions/status, dashboard summary, screener list) | Return their database data with the `X-Market-Data-Offline: true` header. Market fields are `null` (screener rows are served as stored, with `stale: true`). Object responses also carry `market_data_offline: true`. |
+| Everything else | Keeps working: journal, commentary, wheels, slot resolves, accounts, Reconcile, categories, margin CSV analysis. |
+
+- **Recovery:** re-run `python scripts/schwab_auth.py`. The provider re-reads the token row at most once a
+  minute and resumes on its own, without a restart. Going offline and coming back are each logged once.
+- **Expiry banner:** admins see it in the app. Amber from 72h to 24h left (dismissible for the session), red
+  under 24h, and red "Market data offline" once expired. It is backed by `GET /api/market-data/status`
+  (admin only), and `GET /api/me` tells the SPA whether the user is an admin.
+- **Not yet:** an in-app "Reconnect Schwab" button arrives in Part 5, with HTTPS.
+
 ```
+GET    /api/market-data/status      (admin) provider, state ok|expiring|critical|offline, expiry, last success/error
+GET    /api/me                      current user (id, email, display_name, role)
 GET    /api/market/quote/{ticker}
 GET    /api/market/options/{ticker}
 POST   /api/market/refresh

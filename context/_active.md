@@ -1,12 +1,15 @@
 # Active Feature
 
-**Feature:** Extension Account Awareness (multi-account Part 3 of 5)
-**Context File:** context/feature-extension-account-awareness.md
-**Branch:** feature/extension-account-awareness (stacked on Part 2 → Part 1; none merged to develop). Checked out in the main checkout.
+**Feature:** Schwab Hardening (multi-account Part 4 of 5)
+**Context File:** context/feature-schwab-hardening.md
+**Branch:** develop (Parts 1–4 merged locally with --no-ff; not pushed). Feature branch: feature/schwab-hardening.
 **Session Started:** 2026-11-04
-**Status:** Committed (not pushed); live DB at 017 (backup in backups/); fixture-verified incl. fresh Nov captures. Next: real run on E*TRADE with the unpacked extension.
+**Status:** Merged into local develop 2026-11-04; user-tested live; offline mode to be observed at the real token expiry (2026-11-06 16:17 UTC). Not pushed.
 
 ---
+
+**Previous feature:** Extension Account Awareness (Part 3) — context/feature-extension-account-awareness.md — committed (00eb5cc, b26ec00), live on the main checkout, not pushed or merged.
+
 
 **Previous feature:** Account Container UI (Part 2) — context/feature-account-container-ui.md — committed (b7e094f), not pushed or merged.
 

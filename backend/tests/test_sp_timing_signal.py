@@ -284,7 +284,7 @@ def test_compute_fresh_uses_put_chain_and_applies_iv_gate():
         "fetch_status": "ok",
     }
 
-    with patch("app.services.sp_timing_signal.get_schwab_client", return_value=mock_client), \
+    with patch("app.services.sp_timing_signal.get_market_data", return_value=mock_client), \
          patch("app.services.sp_timing_signal.fetch_technicals", return_value=(technicals, closes)), \
          patch("app.services.sp_timing_signal._get_llm_commentary", return_value={"commentary": None, "strike_hint": None, "caution": None}):
         from app.services.sp_timing_signal import _compute_sp_timing_fresh

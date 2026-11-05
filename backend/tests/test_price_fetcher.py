@@ -84,7 +84,7 @@ async def test_fetch_quote_success():
     mock_client = MagicMock()
     mock_client.get_quotes.return_value = {"AAPL": {"lastPrice": 192.43, "closePrice": 194.04}}
 
-    with patch("app.services.price_fetcher.get_schwab_client", return_value=mock_client):
+    with patch("app.services.price_fetcher.get_market_data", return_value=mock_client):
         result = await fetch_quote("AAPL")
 
     assert result is not None
@@ -98,7 +98,7 @@ async def test_fetch_quote_returns_none_when_price_missing():
     mock_client = MagicMock()
     mock_client.get_quotes.return_value = {}
 
-    with patch("app.services.price_fetcher.get_schwab_client", return_value=mock_client):
+    with patch("app.services.price_fetcher.get_market_data", return_value=mock_client):
         result = await fetch_quote("INVALID")
 
     assert result is None
@@ -109,7 +109,7 @@ async def test_fetch_quote_returns_none_on_exception():
     mock_client = MagicMock()
     mock_client.get_quotes.side_effect = SchwabAPIError("network error")
 
-    with patch("app.services.price_fetcher.get_schwab_client", return_value=mock_client):
+    with patch("app.services.price_fetcher.get_market_data", return_value=mock_client):
         result = await fetch_quote("AAPL")
 
     assert result is None
@@ -212,7 +212,7 @@ def test_fetch_rsi_from_schwab_returns_rsi_and_price():
     mock_client = MagicMock()
     mock_client.get_price_history.return_value = mock_df
 
-    with patch("app.services.price_fetcher.get_schwab_client", return_value=mock_client):
+    with patch("app.services.price_fetcher.get_market_data", return_value=mock_client):
         result = _fetch_rsi_from_schwab(["AAPL"])
 
     assert "AAPL" in result
@@ -226,7 +226,7 @@ def test_fetch_rsi_from_schwab_returns_none_on_empty_df():
     mock_client = MagicMock()
     mock_client.get_price_history.return_value = _pd.DataFrame()
 
-    with patch("app.services.price_fetcher.get_schwab_client", return_value=mock_client):
+    with patch("app.services.price_fetcher.get_market_data", return_value=mock_client):
         result = _fetch_rsi_from_schwab(["BADTICKER"])
 
     assert result["BADTICKER"] is None

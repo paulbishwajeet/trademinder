@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 
 from app.services.price_fetcher import _compute_rsi_14
-from app.services.schwab_client import get_schwab_client, SchwabAPIError
+from app.services.market_data import get_market_data, MarketDataUnavailable, SchwabAPIError
 
 log = logging.getLogger(__name__)
 
@@ -27,6 +27,8 @@ def _append_live_bar(close_d: pd.Series, ticker: str, client) -> pd.Series:
         live_price = float(quote["lastPrice"])
         live_bar = pd.Series([live_price], index=[pd.Timestamp(quote_date, tz=close_d.index.tz)])
         return pd.concat([close_d, live_bar])
+    except MarketDataUnavailable:
+        raise
     except Exception:
         return close_d
 
@@ -314,7 +316,7 @@ def _get_next_earnings(ticker: str) -> str | None:
 
 def fetch_technicals(ticker: str, return_closes: bool = False) -> dict | tuple[dict, pd.Series]:
     try:
-        client = get_schwab_client()
+        client = get_market_data()
 
         df_d = client.get_price_history(ticker, "year", 1, "daily", 1)
         if df_d is None or df_d.empty:
@@ -418,6 +420,8 @@ def fetch_technicals(ticker: str, return_closes: bool = False) -> dict | tuple[d
         }
         return (result, close_d) if return_closes else result
 
+    except MarketDataUnavailable:
+        raise  # provider offline: pure endpoints answer 503, callers with caches serve them stale
     except SchwabAPIError as exc:
         err = {"fetch_status": "error", "fetch_error": str(exc)}
         return (err, pd.Series(dtype=float)) if return_closes else err
@@ -428,7 +432,7 @@ def fetch_technicals(ticker: str, return_closes: bool = False) -> dict | tuple[d
 
 def fetch_macd_crossover(ticker: str) -> dict:
     try:
-        client = get_schwab_client()
+        client = get_market_data()
         df_w = client.get_price_history(ticker, "year", 2, "weekly", 1)
         df_d = client.get_price_history(ticker, "year", 1, "daily", 1)
     except SchwabAPIError as exc:
@@ -455,7 +459,7 @@ def fetch_macd_crossover(ticker: str) -> dict:
 
 def fetch_rsi_signal(ticker: str) -> dict:
     try:
-        client = get_schwab_client()
+        client = get_market_data()
         df_d = client.get_price_history(ticker, "year", 1, "daily", 1)
     except SchwabAPIError as exc:
         return {**_NONE_RSI_CROSSOVER_FIELDS, "fetch_status": "error", "fetch_error": str(exc)}
@@ -472,7 +476,7 @@ def fetch_rsi_signal(ticker: str) -> dict:
 
 def fetch_volume_spikes(ticker: str) -> dict:
     try:
-        client = get_schwab_client()
+        client = get_market_data()
         df_d = client.get_price_history(ticker, "year", 1, "daily", 1)
     except SchwabAPIError as exc:
         return {

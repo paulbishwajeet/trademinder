@@ -1,7 +1,7 @@
 # backend/app/services/chain_screener.py
 from datetime import date, datetime, timedelta, timezone
 
-from app.services.schwab_client import get_schwab_client
+from app.services.market_data import get_market_data, MarketDataUnavailable
 from app.services.sp_timing_signal import compute_sp_timing_signal
 from app.services.options_scanner import _fetch_earnings_dates
 
@@ -121,7 +121,7 @@ def compute_chain_screen(
     spot = timing.get("spot_price")
     iv_percentile = timing.get("iv_percentile")
 
-    client = get_schwab_client()
+    client = get_market_data()
     to_date = (date.today() + timedelta(days=num_expiries * 7 + 10)).isoformat()
     chain = client.get_option_chain(
         ticker, contract_type=contract_type,

@@ -8,8 +8,9 @@ from sqlalchemy import select, func as sqla_func, or_
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
-from app.deps import get_current_user
+from app.deps import get_current_user, market_data_flag
 from app.models.user import User
+from app.services.market_data import market_data_offline
 from app.services.ownership import (
     get_trade, get_wheel_session, get_slot, resolve_account, resolve_account_filter, require_same_account,
 )
@@ -118,11 +119,21 @@ def _build_slot_detail(slot: WheelSlot) -> WheelSlotDetail:
     )
 
 
-async def _build_session_detail(db: AsyncSession, session: WheelSession) -> WheelSessionDetail:
+async def _build_session_detail(
+    db: AsyncSession, session: WheelSession, offline: Optional[bool] = None,
+) -> WheelSessionDetail:
+    if offline is None:
+        offline = market_data_offline()  # write endpoints: cached state, no header
     slots = [_build_slot_detail(s) for s in sorted(session.slots, key=lambda s: s.slot_number)]
+    if offline:
+        for slot in slots:
+            slot.legs = [leg.model_copy(update={"trade_current_price": None}) for leg in slot.legs]
     total = sum((s.total_premium for s in slots), Decimal("0"))
     stock_cost_basis, stock_current_price = await _find_stock_position(db, session)
+    if offline:
+        stock_current_price = None
     return WheelSessionDetail(
+        market_data_offline=offline,
         id=session.id, account_id=session.account_id, account=session.account, ticker=session.ticker, total_shares=session.total_shares,
         status=session.status, opened_at=session.opened_at, closed_at=session.closed_at,
         slots=slots, total_premium=total,
@@ -183,6 +194,7 @@ async def list_wheel_sessions(
 async def list_active_slots(
     account_id: Optional[uuid.UUID] = Query(None),
     db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user),
+    offline: bool = Depends(market_data_flag),  # no market fields; header only (extension notice)
 ):
     stmt = (
         select(WheelSlot)
@@ -218,9 +230,12 @@ async def list_active_slots(
 
 
 @router.get("/{session_id}", response_model=WheelSessionDetail)
-async def get_wheel_session_detail(session_id: uuid.UUID, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+async def get_wheel_session_detail(
+    session_id: uuid.UUID, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user),
+    offline: bool = Depends(market_data_flag),
+):
     session = await get_wheel_session(db, user, session_id, options=_load_session_options())
-    return await _build_session_detail(db, session)
+    return await _build_session_detail(db, session, offline)
 
 
 @router.patch("/{session_id}", response_model=WheelSessionSummary)

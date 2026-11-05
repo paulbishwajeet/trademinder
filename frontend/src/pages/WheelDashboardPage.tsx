@@ -1,4 +1,6 @@
 import { useState, useEffect } from 'react'
+import { useMarketDataOffline } from '../hooks/useMarketDataOffline'
+import { MARKET_OFFLINE_TOOLTIP, staleTooltip } from '../components/shared/MarketDash'
 import { Link } from 'react-router-dom'
 import type { WheelSessionDetail, WheelSessionSummary, WheelSlotDetail, CCSignalResult, OptionPriceResult, TechnicalsData, WheelSignalSnapshot } from '../types'
 import { wheelApi, combinedSignalApi, optionPriceApi, ccTimingSignalApi, spTimingSignalApi } from '../api/wheel'
@@ -116,6 +118,11 @@ export function WheelDashboardPage() {
   const [sessions, setSessions] = useState<WheelSessionDetail[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const marketOffline = useMarketDataOffline()
+  // Market-derived cell with no value: a dash, explained while market data is offline.
+  const dashTd = () => (
+    <td className="py-2 pr-3 text-xs text-gray-300" title={marketOffline ? MARKET_OFFLINE_TOOLTIP : undefined}>—</td>
+  )
   const [showNewModal, setShowNewModal] = useState(false)
   const [addSlotSessionId, setAddSlotSessionId] = useState<string | null>(null)
   const [resolveSlotId, setResolveSlotId] = useState<string | null>(null)
@@ -201,8 +208,11 @@ export function WheelDashboardPage() {
           .then(result => {
             setSignals(prev => ({ ...prev, [ticker]: result.cc }))
             setSpSignals(prev => ({ ...prev, [ticker]: result.sp }))
-            signalsCache[ticker] = { data: result.cc, ts: Date.now() }
-            spSignalsCache[ticker] = { data: result.sp, ts: Date.now() }
+            // Stale results (served while market data is offline) aren't cached for the hour.
+            if (!result.cc.stale) {
+              signalsCache[ticker] = { data: result.cc, ts: Date.now() }
+              spSignalsCache[ticker] = { data: result.sp, ts: Date.now() }
+            }
           })
           .catch(() => {
             setSignals(prev => ({ ...prev, [ticker]: 'error' }))
@@ -213,7 +223,7 @@ export function WheelDashboardPage() {
         ccTimingSignalApi.get(ticker, force)
           .then(result => {
             setCcTimingSignals(prev => ({ ...prev, [ticker]: result }))
-            ccTimingCache[ticker] = { data: result, ts: Date.now() }
+            if (!result.stale) ccTimingCache[ticker] = { data: result, ts: Date.now() }
           })
           .catch(() => setCcTimingSignals(prev => ({ ...prev, [ticker]: 'error' })))
       ),
@@ -221,7 +231,7 @@ export function WheelDashboardPage() {
         spTimingSignalApi.get(ticker, force)
           .then(result => {
             setSpTimingSignals(prev => ({ ...prev, [ticker]: result }))
-            spTimingCache[ticker] = { data: result, ts: Date.now() }
+            if (!result.stale) spTimingCache[ticker] = { data: result, ts: Date.now() }
           })
           .catch(() => setSpTimingSignals(prev => ({ ...prev, [ticker]: 'error' })))
       ),
@@ -410,7 +420,7 @@ export function WheelDashboardPage() {
       return <td className="py-2 pr-3 text-xs text-gray-400 animate-pulse">...</td>
     }
     const pnlPct = pnlPctFor(slot)
-    if (pnlPct == null) return <td className="py-2 pr-3 text-xs text-gray-300">—</td>
+    if (pnlPct == null) return dashTd()
 
     const isProfit = pnlPct >= 0
     return (
@@ -422,7 +432,7 @@ export function WheelDashboardPage() {
 
   function renderGainLossCell(f: FlatSlot) {
     const pct = gainLossPctFor(f)
-    if (pct == null) return <td className="py-2 pr-3 text-xs text-gray-300">—</td>
+    if (pct == null) return dashTd()
     const isProfit = pct >= 0
     return (
       <td className={`py-2 pr-3 text-xs font-medium ${isProfit ? 'text-green-600' : 'text-red-500'}`}>
@@ -506,14 +516,14 @@ export function WheelDashboardPage() {
   function renderPriceCell(ticker: string) {
     const q = quotes[ticker]
     if (q === 'loading') return <td className="py-2 pr-3 text-xs text-gray-400 animate-pulse">...</td>
-    if (!q || q === 'error') return <td className="py-2 pr-3 text-xs text-gray-300">—</td>
+    if (!q || q === 'error') return dashTd()
     return <td className="py-2 pr-3 text-xs text-gray-700">${q.price.toFixed(2)}</td>
   }
 
   function renderChangeCell(ticker: string) {
     const q = quotes[ticker]
     if (q === 'loading') return <td className="py-2 pr-3 text-xs text-gray-400 animate-pulse">...</td>
-    if (!q || q === 'error' || q.change_pct == null) return <td className="py-2 pr-3 text-xs text-gray-300">—</td>
+    if (!q || q === 'error' || q.change_pct == null) return dashTd()
     const isProfit = q.change_pct >= 0
     return (
       <td className={`py-2 pr-3 text-xs font-medium ${isProfit ? 'text-green-600' : 'text-red-500'}`}>
@@ -525,14 +535,14 @@ export function WheelDashboardPage() {
   function renderRsiCell(ticker: string) {
     const t = technicals[ticker]
     if (t === 'loading') return <td className="py-2 pr-3 text-xs text-gray-400 animate-pulse">...</td>
-    if (!t || t === 'error' || t.fetch_status !== 'ok' || t.rsi_14 == null) return <td className="py-2 pr-3 text-xs text-gray-300">—</td>
+    if (!t || t === 'error' || t.fetch_status !== 'ok' || t.rsi_14 == null) return dashTd()
     return <td className="py-2 pr-3 text-xs text-gray-700">{t.rsi_14.toFixed(1)}</td>
   }
 
   function renderMacdCell(ticker: string) {
     const t = technicals[ticker]
     if (t === 'loading') return <td className="py-2 pr-3 text-xs text-gray-400 animate-pulse">...</td>
-    if (!t || t === 'error' || t.fetch_status !== 'ok') return <td className="py-2 pr-3 text-xs text-gray-300">—</td>
+    if (!t || t === 'error' || t.fetch_status !== 'ok') return dashTd()
     const { label, colorClass, title } = macdWeeklyDisplay(t.macd_signal, t.macd_weekly_trend)
     return (
       <td className="py-2 pr-3">
@@ -546,7 +556,7 @@ export function WheelDashboardPage() {
   function renderMacdTrendCell(ticker: string) {
     const t = technicals[ticker]
     if (t === 'loading') return <td className="py-2 pr-3 text-xs text-gray-400 animate-pulse">...</td>
-    if (!t || t === 'error' || t.fetch_status !== 'ok') return <td className="py-2 pr-3 text-xs text-gray-300">—</td>
+    if (!t || t === 'error' || t.fetch_status !== 'ok') return dashTd()
     const weekly = macdWeeklyDisplay(t.macd_signal, t.macd_weekly_trend)
     const pills: { label: string; fullLabel: string; colorClass: string; title: string }[] = [
       { label: 'D', fullLabel: 'Daily', colorClass: MACD_COLORS[t.macd_daily_signal ?? 'neutral'], title: `Daily: ${t.macd_daily_signal ?? 'unknown'}` },
@@ -574,12 +584,14 @@ export function WheelDashboardPage() {
     const sig = sigMap[ticker]
     const detailKey = `${ticker}-${type}`
     if (sig === 'loading') return <span className="text-xs text-gray-400 animate-pulse">...</span>
-    if (sig === 'error' || !sig) return <span className="text-xs text-gray-300" title="Signal unavailable">&mdash;</span>
+    if (sig === 'error' || !sig) {
+      return <span className="text-xs text-gray-300" title={marketOffline ? MARKET_OFFLINE_TOOLTIP : 'Signal unavailable'}>&mdash;</span>
+    }
     return (
       <button
         onClick={() => setSignalDetail(signalDetail === detailKey ? null : detailKey)}
-        className={`text-xs font-medium px-2 py-0.5 rounded-full border ${GRADE_COLORS[sig.grade] ?? GRADE_COLORS.wait} hover:opacity-80`}
-        title={`Score: ${sig.score}`}
+        className={`text-xs font-medium px-2 py-0.5 rounded-full border ${GRADE_COLORS[sig.grade] ?? GRADE_COLORS.wait} hover:opacity-80 ${sig.stale ? 'opacity-60' : ''}`}
+        title={sig.stale ? `Score: ${sig.score} · ${staleTooltip(sig.as_of)}` : `Score: ${sig.score}`}
       >
         {sig.grade === 'wait' ? 'Wait' : `${sig.grade.charAt(0).toUpperCase() + sig.grade.slice(1)} ${sig.score}`}
       </button>

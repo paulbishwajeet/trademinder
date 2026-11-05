@@ -138,7 +138,7 @@ def test_compute_chain_screen_full_pipeline():
         "cached_at": "2026-09-23T14:00:00+00:00", "fetch_status": "ok", "fetch_error": None,
     }
 
-    with patch("app.services.chain_screener.get_schwab_client", return_value=mock_client), \
+    with patch("app.services.chain_screener.get_market_data", return_value=mock_client), \
          patch("app.services.chain_screener.compute_sp_timing_signal", return_value=mock_timing), \
          patch("app.services.chain_screener._fetch_earnings_dates", return_value=[]):
         result = compute_chain_screen("NVDA", strategy="sell_put", num_expiries=3, candidates_per_expiry=3)
@@ -184,7 +184,7 @@ def test_compute_chain_screen_flags_earnings_in_window():
     # weekday "today" happens to be (a fixed today+N offset can overshoot the
     # expiry when today is already close to a Friday).
     earnings_date = friday - timedelta(days=1)
-    with patch("app.services.chain_screener.get_schwab_client", return_value=mock_client), \
+    with patch("app.services.chain_screener.get_market_data", return_value=mock_client), \
          patch("app.services.chain_screener.compute_sp_timing_signal", return_value=mock_timing), \
          patch("app.services.chain_screener._fetch_earnings_dates", return_value=[earnings_date]):
         result = compute_chain_screen("NVDA", strategy="sell_put", num_expiries=1)
@@ -213,7 +213,7 @@ def test_compute_chain_screen_empty_band_reports_no_candidates():
         "spot_price": 225.0, "factors": [], "commentary": None, "strike_hint": None, "caution": None,
         "cached_at": "2026-09-23T14:00:00+00:00", "fetch_status": "ok", "fetch_error": None,
     }
-    with patch("app.services.chain_screener.get_schwab_client", return_value=mock_client), \
+    with patch("app.services.chain_screener.get_market_data", return_value=mock_client), \
          patch("app.services.chain_screener.compute_sp_timing_signal", return_value=mock_timing), \
          patch("app.services.chain_screener._fetch_earnings_dates", return_value=[]):
         result = compute_chain_screen("NVDA", strategy="sell_put", num_expiries=1)

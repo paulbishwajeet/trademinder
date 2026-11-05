@@ -344,7 +344,7 @@ def test_volume_spikes_below_threshold_excluded():
 
 def test_fetch_technicals_success():
     mock_client = _mock_client(_make_daily_df(200), _make_weekly_df(60))
-    with patch("app.services.technicals_fetcher.get_schwab_client", return_value=mock_client), \
+    with patch("app.services.technicals_fetcher.get_market_data", return_value=mock_client), \
          patch("yfinance.Ticker") as mock_ticker:
         mock_ticker.return_value.calendar = {"Earnings Date": ["2026-08-15"]}
         result = fetch_technicals("AAPL")
@@ -365,7 +365,7 @@ def test_fetch_technicals_success():
 def test_fetch_technicals_empty_daily_data():
     mock_client = MagicMock()
     mock_client.get_price_history.return_value = pd.DataFrame()
-    with patch("app.services.technicals_fetcher.get_schwab_client", return_value=mock_client):
+    with patch("app.services.technicals_fetcher.get_market_data", return_value=mock_client):
         result = fetch_technicals("INVALID")
 
     assert result["fetch_status"] == "error"
@@ -374,7 +374,7 @@ def test_fetch_technicals_empty_daily_data():
 
 def test_fetch_technicals_insufficient_daily_rows():
     mock_client = _mock_client(_make_daily_df(1), _make_weekly_df(60))
-    with patch("app.services.technicals_fetcher.get_schwab_client", return_value=mock_client):
+    with patch("app.services.technicals_fetcher.get_market_data", return_value=mock_client):
         result = fetch_technicals("AAPL")
 
     assert result["fetch_status"] == "error"
@@ -382,7 +382,7 @@ def test_fetch_technicals_insufficient_daily_rows():
 
 def test_fetch_technicals_no_ma200_when_insufficient_history():
     mock_client = _mock_client(_make_daily_df(60), _make_weekly_df(60))
-    with patch("app.services.technicals_fetcher.get_schwab_client", return_value=mock_client), \
+    with patch("app.services.technicals_fetcher.get_market_data", return_value=mock_client), \
          patch("yfinance.Ticker") as mock_ticker:
         mock_ticker.return_value.calendar = {}
         result = fetch_technicals("AAPL")
@@ -394,7 +394,7 @@ def test_fetch_technicals_no_ma200_when_insufficient_history():
 
 def test_fetch_technicals_includes_macd_crossover_fields():
     mock_client = _mock_client(_make_daily_df(200), _make_weekly_df(60))
-    with patch("app.services.technicals_fetcher.get_schwab_client", return_value=mock_client), \
+    with patch("app.services.technicals_fetcher.get_market_data", return_value=mock_client), \
          patch("yfinance.Ticker") as mock_ticker:
         mock_ticker.return_value.calendar = {}
         result = fetch_technicals("AAPL")
@@ -410,7 +410,7 @@ def test_fetch_technicals_includes_macd_crossover_fields():
 
 def test_fetch_technicals_includes_rsi_crossover_fields():
     mock_client = _mock_client(_make_daily_df(200), _make_weekly_df(60))
-    with patch("app.services.technicals_fetcher.get_schwab_client", return_value=mock_client), \
+    with patch("app.services.technicals_fetcher.get_market_data", return_value=mock_client), \
          patch("yfinance.Ticker") as mock_ticker:
         mock_ticker.return_value.calendar = {}
         result = fetch_technicals("AAPL")
@@ -427,7 +427,7 @@ def test_fetch_technicals_includes_rsi_crossover_fields():
 
 def test_fetch_technicals_includes_volume_spikes_field():
     mock_client = _mock_client(_make_daily_df(200), _make_weekly_df(60))
-    with patch("app.services.technicals_fetcher.get_schwab_client", return_value=mock_client), \
+    with patch("app.services.technicals_fetcher.get_market_data", return_value=mock_client), \
          patch("yfinance.Ticker") as mock_ticker:
         mock_ticker.return_value.calendar = {}
         result = fetch_technicals("AAPL")
@@ -441,7 +441,7 @@ def test_fetch_technicals_schwab_error_returns_error():
     from app.services.schwab_client import SchwabAPIError
     mock_client = MagicMock()
     mock_client.get_price_history.side_effect = SchwabAPIError("network error")
-    with patch("app.services.technicals_fetcher.get_schwab_client", return_value=mock_client):
+    with patch("app.services.technicals_fetcher.get_market_data", return_value=mock_client):
         result = fetch_technicals("AAPL")
 
     assert result["fetch_status"] == "error"
@@ -515,7 +515,7 @@ def test_fetch_technicals_uses_live_price_for_rsi_and_price_action():
     mock_client.get_price_history.side_effect = [daily_df, weekly_df]
     mock_client.get_quotes.return_value = {"AAPL": _quote(live_price, next_date)}
 
-    with patch("app.services.technicals_fetcher.get_schwab_client", return_value=mock_client), \
+    with patch("app.services.technicals_fetcher.get_market_data", return_value=mock_client), \
          patch("yfinance.Ticker") as mock_ticker:
         mock_ticker.return_value.calendar = {}
         result_live = fetch_technicals("AAPL")
@@ -523,7 +523,7 @@ def test_fetch_technicals_uses_live_price_for_rsi_and_price_action():
     mock_client_stale = MagicMock()
     mock_client_stale.get_price_history.side_effect = [daily_df, weekly_df]
     mock_client_stale.get_quotes.return_value = {}
-    with patch("app.services.technicals_fetcher.get_schwab_client", return_value=mock_client_stale), \
+    with patch("app.services.technicals_fetcher.get_market_data", return_value=mock_client_stale), \
          patch("yfinance.Ticker") as mock_ticker:
         mock_ticker.return_value.calendar = {}
         result_stale = fetch_technicals("AAPL")
@@ -542,7 +542,7 @@ from app.services.technicals_fetcher import fetch_macd_crossover
 def test_fetch_macd_crossover_success():
     mock_client = MagicMock()
     mock_client.get_price_history.side_effect = [_make_weekly_df(60), _make_daily_df(200)]
-    with patch("app.services.technicals_fetcher.get_schwab_client", return_value=mock_client):
+    with patch("app.services.technicals_fetcher.get_market_data", return_value=mock_client):
         result = fetch_macd_crossover("AAPL")
 
     assert result["fetch_status"] == "ok"
@@ -556,7 +556,7 @@ def test_fetch_macd_crossover_success():
 def test_fetch_macd_crossover_no_weekly_data_raises_value_error():
     mock_client = MagicMock()
     mock_client.get_price_history.side_effect = [pd.DataFrame(), _make_daily_df(200)]
-    with patch("app.services.technicals_fetcher.get_schwab_client", return_value=mock_client):
+    with patch("app.services.technicals_fetcher.get_market_data", return_value=mock_client):
         with pytest.raises(ValueError):
             fetch_macd_crossover("INVALID")
 
@@ -564,7 +564,7 @@ def test_fetch_macd_crossover_no_weekly_data_raises_value_error():
 def test_fetch_macd_crossover_no_daily_data_raises_value_error():
     mock_client = MagicMock()
     mock_client.get_price_history.side_effect = [_make_weekly_df(60), pd.DataFrame()]
-    with patch("app.services.technicals_fetcher.get_schwab_client", return_value=mock_client):
+    with patch("app.services.technicals_fetcher.get_market_data", return_value=mock_client):
         with pytest.raises(ValueError):
             fetch_macd_crossover("INVALID")
 
@@ -573,7 +573,7 @@ def test_fetch_macd_crossover_schwab_error_returns_error_status():
     from app.services.schwab_client import SchwabAPIError
     mock_client = MagicMock()
     mock_client.get_price_history.side_effect = SchwabAPIError("network error")
-    with patch("app.services.technicals_fetcher.get_schwab_client", return_value=mock_client):
+    with patch("app.services.technicals_fetcher.get_market_data", return_value=mock_client):
         result = fetch_macd_crossover("AAPL")
 
     assert result["fetch_status"] == "error"
@@ -585,7 +585,7 @@ def test_fetch_macd_crossover_schwab_error_returns_error_status():
 def test_fetch_macd_crossover_insufficient_history_returns_ok_with_none_fields():
     mock_client = MagicMock()
     mock_client.get_price_history.side_effect = [_make_weekly_df(10), _make_daily_df(10)]
-    with patch("app.services.technicals_fetcher.get_schwab_client", return_value=mock_client):
+    with patch("app.services.technicals_fetcher.get_market_data", return_value=mock_client):
         result = fetch_macd_crossover("AAPL")
 
     assert result["fetch_status"] == "ok"
@@ -601,7 +601,7 @@ from app.services.technicals_fetcher import fetch_rsi_signal
 def test_fetch_rsi_signal_success():
     mock_client = MagicMock()
     mock_client.get_price_history.return_value = _make_daily_df(200)
-    with patch("app.services.technicals_fetcher.get_schwab_client", return_value=mock_client):
+    with patch("app.services.technicals_fetcher.get_market_data", return_value=mock_client):
         result = fetch_rsi_signal("AAPL")
 
     assert result["fetch_status"] == "ok"
@@ -613,7 +613,7 @@ def test_fetch_rsi_signal_success():
 def test_fetch_rsi_signal_no_data_raises_value_error():
     mock_client = MagicMock()
     mock_client.get_price_history.return_value = pd.DataFrame()
-    with patch("app.services.technicals_fetcher.get_schwab_client", return_value=mock_client):
+    with patch("app.services.technicals_fetcher.get_market_data", return_value=mock_client):
         with pytest.raises(ValueError):
             fetch_rsi_signal("INVALID")
 
@@ -622,7 +622,7 @@ def test_fetch_rsi_signal_schwab_error_returns_error_status():
     from app.services.schwab_client import SchwabAPIError
     mock_client = MagicMock()
     mock_client.get_price_history.side_effect = SchwabAPIError("network error")
-    with patch("app.services.technicals_fetcher.get_schwab_client", return_value=mock_client):
+    with patch("app.services.technicals_fetcher.get_market_data", return_value=mock_client):
         result = fetch_rsi_signal("AAPL")
 
     assert result["fetch_status"] == "error"
@@ -633,7 +633,7 @@ def test_fetch_rsi_signal_schwab_error_returns_error_status():
 def test_fetch_rsi_signal_insufficient_history_returns_ok_with_none_crossover():
     mock_client = MagicMock()
     mock_client.get_price_history.return_value = _make_daily_df(10)
-    with patch("app.services.technicals_fetcher.get_schwab_client", return_value=mock_client):
+    with patch("app.services.technicals_fetcher.get_market_data", return_value=mock_client):
         result = fetch_rsi_signal("AAPL")
 
     assert result["fetch_status"] == "ok"
@@ -649,7 +649,7 @@ from app.services.technicals_fetcher import fetch_volume_spikes
 def test_fetch_volume_spikes_success():
     mock_client = MagicMock()
     mock_client.get_price_history.return_value = _make_daily_df(200)
-    with patch("app.services.technicals_fetcher.get_schwab_client", return_value=mock_client):
+    with patch("app.services.technicals_fetcher.get_market_data", return_value=mock_client):
         result = fetch_volume_spikes("AAPL")
 
     assert result["fetch_status"] == "ok"
@@ -664,7 +664,7 @@ def test_fetch_volume_spikes_success():
 def test_fetch_volume_spikes_no_data_raises_value_error():
     mock_client = MagicMock()
     mock_client.get_price_history.return_value = pd.DataFrame()
-    with patch("app.services.technicals_fetcher.get_schwab_client", return_value=mock_client):
+    with patch("app.services.technicals_fetcher.get_market_data", return_value=mock_client):
         with pytest.raises(ValueError):
             fetch_volume_spikes("INVALID")
 
@@ -673,7 +673,7 @@ def test_fetch_volume_spikes_schwab_error_returns_error_status():
     from app.services.schwab_client import SchwabAPIError
     mock_client = MagicMock()
     mock_client.get_price_history.side_effect = SchwabAPIError("network error")
-    with patch("app.services.technicals_fetcher.get_schwab_client", return_value=mock_client):
+    with patch("app.services.technicals_fetcher.get_market_data", return_value=mock_client):
         result = fetch_volume_spikes("AAPL")
 
     assert result["fetch_status"] == "error"
@@ -690,7 +690,7 @@ def test_fetch_technicals_includes_ma20_and_ma100():
     mock_client = MagicMock()
     mock_client.get_price_history.side_effect = [daily_df, weekly_df]
 
-    with patch("app.services.technicals_fetcher.get_schwab_client", return_value=mock_client):
+    with patch("app.services.technicals_fetcher.get_market_data", return_value=mock_client):
         result = fetch_technicals("AAPL")
 
     assert result["fetch_status"] == "ok"
@@ -707,7 +707,7 @@ def test_fetch_technicals_ma20_ma100_null_on_short_history():
     mock_client = MagicMock()
     mock_client.get_price_history.side_effect = [daily_df, weekly_df]
 
-    with patch("app.services.technicals_fetcher.get_schwab_client", return_value=mock_client):
+    with patch("app.services.technicals_fetcher.get_market_data", return_value=mock_client):
         result = fetch_technicals("AAPL")
 
     assert result["ma_20d"] is None

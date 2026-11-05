@@ -1,6 +1,7 @@
 # backend/app/routers/chain.py
 import asyncio
 import logging
+from app.services.market_data_errors import MarketDataUnavailable
 from fastapi import APIRouter, HTTPException, Query
 from app.services.chain_screener import compute_chain_screen
 from app.schemas.chain import ChainScreenResponse
@@ -35,6 +36,8 @@ async def get_chain_screen(
                 target_delta, delta_tolerance, min_arr_pct, min_volume, min_oi,
             ),
         )
+    except MarketDataUnavailable:
+        raise  # → 503 market_data_offline (app-level handler)
     except Exception as exc:
         log.exception("Chain screen failed for %s", ticker)
         raise HTTPException(status_code=502, detail=f"Failed to screen chain: {exc}") from exc

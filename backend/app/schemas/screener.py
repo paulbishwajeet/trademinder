@@ -58,6 +58,8 @@ class ScreenerRowResponse(ScreenerFetchedFields):
     last_fetched_at: Optional[datetime] = None
     created_at: datetime
     account_ids: list[uuid.UUID] = []
+    # True while market data is offline: the stored metrics are served as-is, as of last_fetched_at.
+    stale: bool = False
 
 
 class ScreenerCommentaryCreate(BaseModel):

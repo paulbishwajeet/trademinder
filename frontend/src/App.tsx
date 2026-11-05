@@ -1,6 +1,8 @@
 // frontend/src/App.tsx
 import { BrowserRouter, Navigate, Outlet, Route, Routes } from 'react-router-dom'
 import { AccountsProvider } from './context/AccountsContext'
+import { MarketDataProvider } from './context/MarketDataContext'
+import { MarketDataBanner } from './components/MarketData/MarketDataBanner'
 import { Sidebar } from './components/Layout/Sidebar'
 import { AccountLayout } from './components/Layout/AccountLayout'
 import { NotFound } from './components/Layout/NotFound'
@@ -21,6 +23,7 @@ function AppShell() {
     <div className="flex min-h-screen bg-gray-50">
       <Sidebar />
       <main className="min-w-0 flex-1">
+        <MarketDataBanner />
         <Outlet />
       </main>
     </div>
@@ -31,6 +34,7 @@ export default function App() {
   return (
     <BrowserRouter>
       <AccountsProvider>
+        <MarketDataProvider>
         <Routes>
           <Route element={<AppShell />}>
             <Route index element={<DashboardPage />} />
@@ -75,6 +79,7 @@ export default function App() {
             <Route path="*" element={<NotFound />} />
           </Route>
         </Routes>
+        </MarketDataProvider>
       </AccountsProvider>
     </BrowserRouter>
   )
