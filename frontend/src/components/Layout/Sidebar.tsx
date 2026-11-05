@@ -2,7 +2,8 @@
 import { useEffect, useState, type DragEvent } from 'react'
 import { Link, NavLink, useMatch, useNavigate } from 'react-router-dom'
 import * as Collapsible from '@radix-ui/react-collapsible'
-import { ChevronDown, ChevronRight, GripVertical, LayoutDashboard, Plus, Settings, Telescope } from 'lucide-react'
+import { ChevronDown, ChevronRight, GripVertical, LayoutDashboard, LogOut, Plus, Settings, Shield, Telescope } from 'lucide-react'
+import { useAuth } from '../../context/AuthContext'
 import { accountsApi } from '../../api/accounts'
 import { useAccounts } from '../../context/AccountsContext'
 import { AccountDialog } from '../Accounts/AccountDialog'
@@ -23,6 +24,7 @@ function GroupLabel({ children }: { children: string }) {
 
 export function Sidebar() {
   const { active, refresh } = useAccounts()
+  const { user, logout } = useAuth()
   const navigate = useNavigate()
   const match = useMatch('/accounts/:accountId/:page/*')
   const currentAccountId = match?.params.accountId ?? null
@@ -156,9 +158,24 @@ export function Sidebar() {
       </nav>
 
       <div className="border-t border-gray-200 p-2">
+        {user?.role === 'admin' && (
+          <NavLink to="/admin" className={itemClass}>
+            <Shield size={15} /> Admin
+          </NavLink>
+        )}
         <NavLink to="/settings/accounts" className={itemClass}>
           <Settings size={15} /> Settings
         </NavLink>
+        <div className="mt-2 flex items-center gap-2 border-t border-gray-100 px-2 pt-2">
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-medium text-gray-800">{user?.display_name || user?.email}</p>
+            <p className="truncate text-xs text-gray-400">{user?.email}</p>
+          </div>
+          <button onClick={() => { void logout() }} title="Log out" aria-label="Log out"
+            className="rounded p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700">
+            <LogOut size={15} />
+          </button>
+        </div>
       </div>
 
       <AccountDialog

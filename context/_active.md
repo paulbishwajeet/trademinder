@@ -1,12 +1,15 @@
 # Active Feature
 
-**Feature:** Schwab Hardening (multi-account Part 4 of 5)
-**Context File:** context/feature-schwab-hardening.md
-**Branch:** develop (Parts 1–4 merged locally with --no-ff; not pushed). Feature branch: feature/schwab-hardening.
-**Session Started:** 2026-11-04
-**Status:** Merged into local develop 2026-11-04; user-tested live; offline mode to be observed at the real token expiry (2026-11-06 16:17 UTC). Not pushed.
+**Feature:** Login and HTTPS (multi-user Part 5 of 5)
+**Context File:** context/feature-login-and-https.md
+**Branch:** feature/login-and-https (off develop 635f31d, which has Parts 1–4). Checked out in the main checkout.
+**Session Started:** 2026-11-05
+**Status:** Committed (not pushed); running locally against the live DB at 018; not deployed to the QNAP.
 
 ---
+
+**Previous feature:** Schwab Hardening (Part 4) — context/feature-schwab-hardening.md — merged into develop and pushed.
+
 
 **Previous feature:** Extension Account Awareness (Part 3) — context/feature-extension-account-awareness.md — committed (00eb5cc, b26ec00), live on the main checkout, not pushed or merged.
 

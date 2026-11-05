@@ -1,35 +1,59 @@
-from fastapi import Depends, HTTPException, Response
-from sqlalchemy import select, func
+from fastapi import Depends, HTTPException, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import get_db
 from app.models.user import User
+from app.services.auth import SESSION_COOKIE, cookie_kwargs, resolve_extension_token, resolve_session
 
-_owner: User | None = None
 
+async def get_signed_in_user(request: Request, response: Response, db: AsyncSession = Depends(get_db)) -> User:
+    """Who is calling: a session cookie (the SPA) or a bearer extension token (the extension).
 
-async def get_current_user(db: AsyncSession = Depends(get_db)) -> User:
-    """The single current-user seam. Every router touching user-owned data depends on this.
-
-    For now it returns the owner seeded by migration 015 (looked up once by OWNER_EMAIL, then cached
-    in memory). Part 5 replaces this body with session / API-token resolution; nothing else changes.
+    401 when there are no valid credentials, 403 for a disabled user. Pending users pass — only
+    `/api/me` uses this directly; everything else goes through get_current_user.
     """
-    global _owner
-    if _owner is None:
-        email = (settings.owner_email or "").strip().lower()
-        if not email:
-            raise HTTPException(status_code=500, detail="OWNER_EMAIL is not configured")
-        user = (await db.execute(select(User).where(func.lower(User.email) == email))).scalar_one_or_none()
+    auth = request.headers.get("authorization", "")
+    if auth.lower().startswith("bearer "):
+        user = await resolve_extension_token(db, auth[7:].strip())
         if user is None:
-            raise HTTPException(status_code=500, detail="Owner user not found — run `alembic upgrade head`")
-        db.expunge(user)  # detached snapshot; only user.id is read downstream
-        _owner = user
-    return _owner
+            raise HTTPException(status_code=401, detail="Not signed in")
+        request.state.auth_kind = "token"
+    else:
+        token = request.cookies.get(SESSION_COOKIE)
+        if not token:
+            raise HTTPException(status_code=401, detail="Not signed in")
+        user, slid = await resolve_session(db, token)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Not signed in")
+        if slid:  # sliding expiry: re-issue the cookie with a fresh lifetime
+            response.set_cookie(SESSION_COOKIE, token, max_age=settings.session_days * 86400, **cookie_kwargs())
+        request.state.auth_kind = "session"
+    if user.status == "disabled":
+        raise HTTPException(status_code=403, detail="Account disabled")
+    # Hand routers a detached snapshot (as before Part 5): services may expire_all() their session,
+    # and the caller's identity must not be lazily reloaded or written back through it.
+    db.expunge(user)
+    return user
+
+
+async def get_current_user(user: User = Depends(get_signed_in_user)) -> User:
+    """The single current-user seam. Every router touching user-owned data depends on this.
+    Only active users pass; a pending user gets 403 until an admin approves them."""
+    if user.status != "active":
+        raise HTTPException(status_code=403, detail="Waiting for approval")
+    return user
+
+
+async def require_session_user(request: Request, user: User = Depends(get_current_user)) -> User:
+    """Routes only a signed-in browser may call (minting extension tokens), never a bearer token."""
+    if getattr(request.state, "auth_kind", None) != "session":
+        raise HTTPException(status_code=403, detail="Sign in to the portal to do this")
+    return user
 
 
 async def require_admin(user: User = Depends(get_current_user)) -> User:
-    """Admin-only routes. Goes through the current-user seam, so Part 5's real login applies too."""
+    """Admin-only routes (an extra permission on a normal, active account)."""
     if user.role != "admin":
         raise HTTPException(status_code=403, detail="Admin only")
     return user

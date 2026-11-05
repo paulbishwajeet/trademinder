@@ -533,34 +533,55 @@ TradeMinder/
 
 ---
 
+## Sign-in and multi-user
+
+TradeMinder is multi-user. Sign-in is with **Google**, which serves only as the identity check.
+
+- **Sessions:** after the Google callback the backend issues its own session.
+  - It's a random token in an httpOnly, Secure, SameSite=Lax `tm_session` cookie. Only its SHA-256 is stored, in
+    `user_sessions`.
+  - It slides for `SESSION_DAYS` (30): any use within that window extends it.
+  - Logout deletes the row. No JWTs, no Redis.
+- **Sign-in rules, in order:**
+  1. match by Google subject;
+  2. else match the seeded owner or an invited user by email and link the subject once (never replaced; the
+     internal user id stays the tenant key);
+  3. else create a **pending** user, who sees only "Waiting for approval".
+
+  Disabled users are refused. Disabling someone ends their sessions and extension tokens immediately.
+- **Admin:** an extra permission on a normal account (the owner from `OWNER_EMAIL` is the bootstrap admin).
+  - The Admin page has a pending queue, invite by email, approve/reject, disable/re-enable and role changes. You
+    can never disable or demote yourself, or the last admin.
+  - It shows account-management fields only, never anyone's trading data.
+- **Every API route** needs a session or an extension token, except `/health` and `/api/auth/*`; a test enforces
+  it. `/api/me` is the one route a pending user may call.
+- **Extension:** the popup's **Sign in** opens the portal's "Connect this browser extension?" page
+  (`chrome.identity.launchWebAuthFlow`). Approving issues a personal token, hashed, revocable and with a
+  last-used time, which the service worker sends as a bearer header on every call. Only extension IDs in
+  `EXTENSION_IDS` can receive tokens.
+- **Settings → Connected extensions** lists and revokes them.
+- **Schwab re-auth is still the CLI** (`scripts/schwab_auth.py`); an in-app reconnect is future work.
+
+Local dev with real sign-in: set `PUBLIC_BASE_URL=http://localhost:5430` and the Google client id/secret in
+`.env`, and add `http://localhost:5430/api/auth/google/callback` to the OAuth client's redirect URIs.
+
 ## QNAP Deployment (Production)
 
-Production target is a **QNAP TS-251+** running Container Station.
+Production is a QNAP NAS (amd64) running a **Portainer stack** (`docker-compose.prod.yml`) with four services:
 
-| Constraint | Detail |
+| Service | Detail |
 |---|---|
-| Architecture | Intel Celeron J1800 — `linux/amd64` only |
-| Port conflicts | QNAP uses 80/443/8080; use 5431 (backend) and 5430 (frontend) |
-| Volumes | Map to `/share/trademinder/` for persistence across Container Station updates |
-| Memory | Keep `shared_buffers=128MB`; full stack fits in ~1GB |
+| `traefik` (`v3.1.6`) | Only port **443**. A Let's Encrypt certificate for `tm.<domain>` through the **Cloudflare DNS-01** challenge (the NAS is never exposed; no port 80), stored on the `traefik-letsencrypt` volume and auto-renewed. Routes `/api` → backend, everything else → frontend, on one origin |
+| `backend` | FastAPI on 5431; runs `alembic upgrade head` on start; trusts Traefik's forwarded headers |
+| `frontend` | nginx serving the SPA build with an `index.html` fallback for deep links |
+| `db` | Postgres 15 |
 
-```bash
-# Build amd64 images on Mac
-docker buildx build --platform linux/amd64 \
-  -t yourdockerhub/trademinder-backend:latest --push ./backend
+`tm.<domain>` is a DNS-only Cloudflare record pointing at the NAS's LAN IP, so the app is reachable on the home
+Wi-Fi only. All secrets (Google client, `AUTH_STATE_SECRET`, Cloudflare token, Schwab keys) are Portainer stack
+environment variables, never in git.
 
-docker buildx build --platform linux/amd64 \
-  -t yourdockerhub/trademinder-frontend:latest --push ./frontend
-
-# Deploy on QNAP
-ssh admin@<qnap-local-ip>
-cd /share/trademinder
-docker compose -f docker-compose.prod.yml pull
-docker compose -f docker-compose.prod.yml up -d
-
-# First deploy only
-docker compose -f docker-compose.prod.yml exec backend alembic upgrade head
-```
+The full step-by-step upgrade (backup, migrations, env vars, certificate, first sign-in, pilot user, extension,
+DNS rebinding) is in **[docs/deployment/qnap-login-and-https.md](docs/deployment/qnap-login-and-https.md)**.
 
 ---
 

@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 from typing import Optional, TYPE_CHECKING
-from sqlalchemy import String, DateTime, CheckConstraint, Index, UniqueConstraint
+from sqlalchemy import String, DateTime, CheckConstraint, ForeignKey, Index, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func, text
@@ -24,8 +24,15 @@ class User(Base):
     external_subject: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     last_login_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Admin audit (Part 5): who invited / approved this user, and when they were approved.
+    invited_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    approved_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    approved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    accounts: Mapped[list["BrokerageAccount"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    accounts: Mapped[list["BrokerageAccount"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan", foreign_keys="BrokerageAccount.user_id")
 
     __table_args__ = (
         CheckConstraint("role IN ('admin', 'user')", name="ck_users_role"),

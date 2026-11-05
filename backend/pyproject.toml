@@ -21,6 +21,12 @@ dependencies = [
     "pandas>=2.0.0",
     "google-genai>=1.0.0",
     "httpx>=0.27",
+    # Google sign-in: ID token verification (google.oauth2.id_token) + its HTTP transport
+    "google-auth>=2.30",
+    "requests>=2.31",
+    # cryptography 46+ wheels fail to load on the macOS dev venv (OpenSSL symbol mismatch);
+    # 45.x works everywhere we run (macOS dev, python:3.13-slim image).
+    "cryptography>=44,<46",
 ]
 
 [project.optional-dependencies]

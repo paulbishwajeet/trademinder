@@ -12,15 +12,7 @@ export interface MarketDataStatus {
   last_error: string | null
 }
 
-export interface CurrentUser {
-  id: string
-  email: string
-  display_name: string | null
-  role: 'admin' | 'user'
-}
-
 export const marketDataApi = {
   // Admin only (403 otherwise).
   status: () => apiFetch<MarketDataStatus>('/market-data/status'),
-  me: () => apiFetch<CurrentUser>('/me'),
 }

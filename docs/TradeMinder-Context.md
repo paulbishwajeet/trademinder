@@ -18,7 +18,17 @@ It exists to solve three problems that compound as a wheel book grows:
 
 It is explicitly **not** a broker and not an auto-trader. It is becoming **multi-user and multi-account** (in progress, see §3.0). Nothing places orders. Every state transition is a deliberate user action. It runs on the user's LAN (Mac for dev, a QNAP NAS in Container Station for "production").
 
-**Who uses it:** today one trader, who is also the developer. That shapes most architectural decisions — in-memory caches instead of Redis, localStorage instead of user preferences tables, sequential background jobs instead of a task queue. Multi-user is in progress: there is no login yet, but every user-owned query already goes through a single current-user seam (`app/deps.py::get_current_user`, which returns the seeded owner until Google login replaces its body).
+**Who uses it:** today one trader, who is also the developer. That shapes most architectural decisions — in-memory caches instead of Redis, localStorage instead of user preferences tables, sequential background jobs instead of a task queue. Multi-user is live (Part 5).
+- **Sign-in:** Google, identity only. The backend issues its own server-side session: a hashed token in an
+  httpOnly cookie, 30-day sliding.
+- **Users:** new Google users wait for admin approval, and the seeded owner (`OWNER_EMAIL`) is the bootstrap
+  admin.
+- **The seam:** every route goes through `app/deps.py::get_current_user`. It resolves the session cookie or an
+  extension bearer token: 401 without credentials, 403 for pending or disabled users. All routers are mounted
+  behind it in `main.py`; only `/health` and `/api/auth/*` are exempt.
+- **The admin** manages accounts only and never sees other users' data.
+- **Production:** served at `https://tm.<domain>` through Traefik (Let's Encrypt DNS-01 via Cloudflare). Schwab
+  re-auth stays on the CLI.
 
 ---
 

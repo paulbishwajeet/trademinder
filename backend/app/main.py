@@ -1,9 +1,11 @@
 # backend/app/main.py
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from app.routers import accounts, me, dashboard, trades, commentary, alerts, market, market_data, briefing, categories, positions, signals, sessions, wheel, screener, chain
+from app.config import settings
+from app.deps import get_current_user
+from app.routers import accounts, admin, auth, extension, me, dashboard, trades, commentary, alerts, market, market_data, briefing, categories, positions, signals, sessions, wheel, screener, chain
 from app.services.market_data import prime_market_data
 from app.services.market_data_errors import MarketDataUnavailable
 from app.scheduler import scheduler, start_scheduler
@@ -17,15 +19,23 @@ async def lifespan(app: FastAPI):
     scheduler.shutdown(wait=False)
 
 
-app = FastAPI(title="TradeMinder API", version="0.2.0", lifespan=lifespan)
+# Every route is behind auth, so the schema stays private in production (https).
+_docs = not settings.secure_cookies
+app = FastAPI(
+    title="TradeMinder API", version="0.3.0", lifespan=lifespan,
+    docs_url="/docs" if _docs else None, redoc_url="/redoc" if _docs else None,
+    openapi_url="/openapi.json" if _docs else None,
+)
 
+# The SPA and the API share one origin (Traefik), so the browser needs no CORS. Only the allow-listed
+# extensions may call cross-origin, with a bearer token (no cookies).
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-    # The extension's service worker is cross-origin; it reads the offline flag from this header.
+    allow_origins=[f"chrome-extension://{ext_id}" for ext_id in settings.extension_id_list],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+    allow_headers=["Authorization", "Content-Type"],
+    # The extension's service worker reads the market data offline flag from this header.
     expose_headers=["X-Market-Data-Offline"],
 )
 
@@ -44,19 +54,10 @@ async def health():
     return {"status": "ok"}
 
 
-app.include_router(accounts.router)
+# Auth routes and /api/me sit outside the seam (/api/me allows pending users). Every other router is
+# behind it here, so a route can't be left unauthenticated by forgetting a dependency.
+app.include_router(auth.router)
 app.include_router(me.router)
-app.include_router(dashboard.router)
-app.include_router(trades.router)
-app.include_router(commentary.router)
-app.include_router(alerts.router)
-app.include_router(market.router)
-app.include_router(market_data.router)
-app.include_router(briefing.router)
-app.include_router(categories.router)
-app.include_router(positions.router)
-app.include_router(signals.router)
-app.include_router(sessions.router)
-app.include_router(wheel.router)
-app.include_router(screener.router)
-app.include_router(chain.router)
+_signed_in = [Depends(get_current_user)]
+for _module in (admin, extension, accounts, dashboard, trades, commentary, alerts, market, market_data, briefing, categories, positions, signals, sessions, wheel, screener, chain):
+    app.include_router(_module.router, dependencies=_signed_in)

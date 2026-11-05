@@ -218,22 +218,20 @@ class StubProvider:
         return self._status.offline
 
 
-async def test_status_endpoint(client, owner, monkeypatch):
-    from app.services import market_data
+async def test_status_endpoint(client, owner, db_session, monkeypatch):
+    from app.models.user import User
     from app.services.market_data import ProviderStatus
     expires = datetime.now(timezone.utc) + timedelta(hours=50)
     stub = StubProvider(ProviderStatus("schwab", False, expires, None, None))
     monkeypatch.setattr("app.routers.market_data.get_market_data", lambda: stub)
-    # the owner seeded by conftest is a plain user: promote to admin for this test
-    owner.role = "admin"
-    body = (await client.get("/api/market-data/status")).json()
+    body = (await client.get("/api/market-data/status")).json()  # the owner is an admin
     assert body["provider"] == "schwab" and body["state"] == "expiring"
     assert 49.5 < body["hours_remaining"] <= 50
-    owner.role = "user"
+    (await db_session.get(User, owner.id)).role = "user"
+    await db_session.commit()
     assert (await client.get("/api/market-data/status")).status_code == 403
-    assert market_data  # imported for the monkeypatch path
 
 
 async def test_me_endpoint(client, owner):
     body = (await client.get("/api/me")).json()
-    assert body["id"] == str(owner.id) and body["role"] == owner.role
+    assert body["id"] == str(owner.id) and body["role"] == owner.role and body["status"] == "active"
