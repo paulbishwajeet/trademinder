@@ -18,7 +18,7 @@ export interface SessionUpdate {
 }
 
 export const sessionsApi = {
-  list: (params?: { strategy?: string; status?: string; ticker?: string }) => {
+  list: (params?: { strategy?: string; status?: string; ticker?: string; account_id?: string }) => {
     const entries = Object.entries(params ?? {}).filter((e): e is [string, string] => e[1] !== undefined)
     const qs = entries.length ? '?' + new URLSearchParams(entries).toString() : ''
     return apiFetch<SessionSummary[]>(`/sessions${qs}`)
@@ -38,8 +38,8 @@ export const sessionsApi = {
   },
 
   // Fetch open sessions for a spread strategy (IC or PBWB)
-  listSpreads: (strategy: 'IRON_CONDOR' | 'PUT_B_W_FLY', status = 'open') =>
-    apiFetch<SessionSummary[]>(`/sessions?strategy=${strategy}&status=${status}`),
+  listSpreads: (strategy: 'IRON_CONDOR' | 'PUT_B_W_FLY', status = 'open', accountId?: string) =>
+    apiFetch<SessionSummary[]>(`/sessions?strategy=${strategy}&status=${status}${accountId ? `&account_id=${accountId}` : ''}`),
 }
 
 export async function quotePrice(ticker: string): Promise<number | null> {

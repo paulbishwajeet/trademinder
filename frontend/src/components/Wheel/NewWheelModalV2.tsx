@@ -3,11 +3,12 @@ import type { WheelSessionSummary } from '../../types'
 import { wheelApi } from '../../api/wheel'
 
 interface Props {
+  accountId: string
   onClose: () => void
   onCreated: (session: WheelSessionSummary) => void
 }
 
-export function NewWheelModalV2({ onClose, onCreated }: Props) {
+export function NewWheelModalV2({ accountId, onClose, onCreated }: Props) {
   const [ticker, setTicker] = useState('')
   const [totalShares, setTotalShares] = useState(0)
   const [openedAt, setOpenedAt] = useState(() => new Date().toISOString().slice(0, 10))
@@ -23,6 +24,7 @@ export function NewWheelModalV2({ onClose, onCreated }: Props) {
         ticker: ticker.trim().toUpperCase(),
         total_shares: totalShares,
         opened_at: openedAt,
+        account_id: accountId,
       })
       onCreated(session)
     } catch (e: unknown) {

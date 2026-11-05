@@ -1,12 +1,14 @@
 # Active Feature
 
-**Feature:** Multi-Account & Multi-User Foundation (Part 1 of 5)
-**Context File:** context/feature-multi-account-foundation.md
-**Branch:** feature/multi-account-foundation (off develop)
+**Feature:** Account Container UI (multi-account Part 2 of 5)
+**Context File:** context/feature-account-container-ui.md
+**Branch:** feature/account-container-ui (stacked on feature/multi-account-foundation — Part 1 not yet merged to develop)
 **Session Started:** 2026-11-03
-**Status:** Part 1 complete, committed (92447f1, c7c2893), not pushed. Live DB migrated to 016. Next: smoke-test extension overlay + Reconcile, then PR into develop.
+**Status:** Implemented, verified (12/12 manual checklist items) and committed 2026-11-04; not pushed. Next: user click-through, then land Part 1 in develop and rebase this branch.
 
 ---
+
+**Previous feature:** Multi-Account Foundation (Part 1) — context/feature-multi-account-foundation.md — committed, not pushed or merged.
 
 **Previous feature:** Chain Screener — context/feature-chain-screener.md — shipped and merged to develop.
 

@@ -6,8 +6,11 @@ import { StatusBadge } from '../shared/StatusBadge'
 import { PnLDisplay } from '../shared/PnLDisplay'
 import { CommentaryCell } from './CommentaryCell'
 import { CATEGORY_COLORS, CATEGORY_ORDER } from './categories'
+import { scopedResearchPath, tradePath } from '../../lib/paths'
 
 interface Props {
+  /** Account whose trades these are — scopes the saved group order. */
+  accountId: string
   trades: Trade[]
   onDelete: (id: string) => void
   onClose?: (id: string) => void
@@ -51,11 +54,13 @@ function SortIcon({ k, sortKey, sortDir }: { k: SortKey; sortKey: SortKey | null
   return <span className="ml-0.5 text-blue-500">{sortDir === 1 ? '↑' : '↓'}</span>
 }
 
-const LS_KEY = 'trademinder_group_order'
+// Group order is saved per account; the legacy global key seeds accounts that have none yet.
+const LEGACY_LS_KEY = 'trademinder_group_order'
+const lsKey = (accountId: string) => `${LEGACY_LS_KEY}:${accountId}`
 
-function loadGroupOrder(): string[] {
+function loadGroupOrder(accountId: string): string[] {
   try {
-    const raw = localStorage.getItem(LS_KEY)
+    const raw = localStorage.getItem(lsKey(accountId)) ?? localStorage.getItem(LEGACY_LS_KEY)
     if (raw) {
       const saved: string[] = JSON.parse(raw)
       const extras = CATEGORY_ORDER.filter(c => !saved.includes(c))
@@ -65,11 +70,11 @@ function loadGroupOrder(): string[] {
   return [...CATEGORY_ORDER]
 }
 
-function saveGroupOrder(order: string[]): void {
-  try { localStorage.setItem(LS_KEY, JSON.stringify(order)) } catch {}
+function saveGroupOrder(accountId: string, order: string[]): void {
+  try { localStorage.setItem(lsKey(accountId), JSON.stringify(order)) } catch {}
 }
 
-export function GroupedTradeTable({ trades, onDelete, onClose, staleOnly, statusFilter }: Props) {
+export function GroupedTradeTable({ accountId, trades, onDelete, onClose, staleOnly, statusFilter }: Props) {
   const [sortKey, setSortKey] = useState<SortKey | null>(null)
   const [sortDir, setSortDir] = useState<1 | -1>(1)
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
@@ -82,7 +87,7 @@ export function GroupedTradeTable({ trades, onDelete, onClose, staleOnly, status
     })
   }
 
-  const [groupOrder, setGroupOrder] = useState<string[]>(loadGroupOrder)
+  const [groupOrder, setGroupOrder] = useState<string[]>(() => loadGroupOrder(accountId))
   const dragSrcRef = useRef<string | null>(null)
   const [dragOver, setDragOver] = useState<{ category: string; position: 'above' | 'below' } | null>(null)
 
@@ -120,7 +125,7 @@ export function GroupedTradeTable({ trades, onDelete, onClose, staleOnly, status
     dragSrcRef.current = null
     setDragOver(null)
     setGroupOrder(next)
-    saveGroupOrder(next)
+    saveGroupOrder(accountId, next)
   }
 
   function handleDragEnd() {
@@ -244,7 +249,7 @@ export function GroupedTradeTable({ trades, onDelete, onClose, staleOnly, status
                     <tr key={trade.id} className={`hover:bg-gray-50 border-b border-gray-100 last:border-0 ${isStale(trade) ? 'bg-amber-50' : ''}`}>
                       <td className="w-8 px-2 py-3" />
                       <td className="px-4 py-3 font-semibold">
-                        <Link to={`/trades/${trade.id}`} className="text-blue-600 hover:underline">{trade.ticker}</Link>
+                        <Link to={tradePath(trade.account_id, trade.id)} className="text-blue-600 hover:underline">{trade.ticker}</Link>
                       </td>
                       <td className="px-4 py-3">{trade.strategy}</td>
                       <td className="px-4 py-3">{trade.type}</td>
@@ -267,7 +272,7 @@ export function GroupedTradeTable({ trades, onDelete, onClose, staleOnly, status
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-3">
                           {trade.strategy === 'Stock' && trade.status === 'open' && (
-                            <Link to={`/scanner?ticker=${trade.ticker}`} className="text-blue-500 hover:text-blue-700 text-xs">Scan →</Link>
+                            <Link to={scopedResearchPath(trade.account_id, 'scanner', { symbol: trade.ticker })} className="text-blue-500 hover:text-blue-700 text-xs">Scan →</Link>
                           )}
                           {isStale(trade) && onClose && (
                             <button

@@ -1,24 +1,41 @@
 import { useState } from 'react'
 import { screenerApi } from '../../api/screener'
 import { ApiError } from '../../api/client'
-import type { ScreenerPreview, ScreenerRow } from '../../types'
+import { useAccounts, useCurrentAccount } from '../../context/AccountsContext'
+import type { ScreenerFetchedFields, ScreenerPreview, ScreenerRow } from '../../types'
+import { AccountMultiSelect } from './AccountPicker'
+import { addToAccounts, summarizeAdd } from './addToAccounts'
 
 interface Props {
+  /** The rows the page has loaded — used to tell which accounts already hold the symbol. */
+  rows: ScreenerRow[]
   onAdded: (row: ScreenerRow) => void
 }
 
-export function SymbolLookup({ onAdded }: Props) {
+export function SymbolLookup({ rows, onAdded }: Props) {
   const [ticker, setTicker] = useState('')
   const [loading, setLoading] = useState(false)
   const [adding, setAdding] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [preview, setPreview] = useState<ScreenerPreview | null>(null)
+  const account = useCurrentAccount()
+  const { active, accounts, defaultAccount } = useAccounts()
+  const [picked, setPicked] = useState<string[] | null>(null)
+
+  // preview.already_tracked means "tracked in some account"; membership per account comes from the loaded rows.
+  const memberIds = preview ? rows.find(r => r.symbol === preview.symbol)?.account_ids ?? [] : []
+  const inThisAccount = account ? memberIds.includes(account.id) : false
+  const inEveryAccount = !account && active.length > 0 && active.every(a => memberIds.includes(a.id))
+  const defaultSelection = defaultAccount && !memberIds.includes(defaultAccount.id) ? [defaultAccount.id] : []
+  const selected = (picked ?? defaultSelection).filter(id => !memberIds.includes(id))
+  const nameOf = (id: string) => accounts.find(a => a.id === id)?.nickname ?? 'Unknown'
 
   const handleFetch = async () => {
     if (!ticker.trim()) return
     setLoading(true)
     setError(null)
     setPreview(null)
+    setPicked(null)
     try {
       const data = await screenerApi.preview(ticker.trim().toUpperCase())
       setPreview(data)
@@ -37,33 +54,40 @@ export function SymbolLookup({ onAdded }: Props) {
     setAdding(true)
     setError(null)
     try {
-      const row = await screenerApi.add({
-        symbol: preview.symbol,
-        precomputed: {
-          sector: preview.sector,
-          price: preview.price,
-          prev_close: preview.prev_close,
-          change_pct: preview.change_pct,
-          iv_rank: preview.iv_rank,
-          iv_percentile: preview.iv_percentile,
-          rsi_14: preview.rsi_14,
-          macd_weekly_signal: preview.macd_weekly_signal,
-          macd_daily_signal: preview.macd_daily_signal,
-          ma_20d: preview.ma_20d,
-          ma_50d: preview.ma_50d,
-          ma_100d: preview.ma_100d,
-          ma_200d: preview.ma_200d,
-          bollinger_upper: preview.bollinger_upper,
-          bollinger_mid: preview.bollinger_mid,
-          bollinger_lower: preview.bollinger_lower,
-          bollinger_position: preview.bollinger_position,
-          next_earnings_date: preview.next_earnings_date,
-          volume_spikes: preview.volume_spikes,
-          fetch_status: preview.fetch_status,
-          fetch_error: preview.fetch_error,
-        },
-      })
-      onAdded(row)
+      const precomputed: ScreenerFetchedFields = {
+        sector: preview.sector,
+        price: preview.price,
+        prev_close: preview.prev_close,
+        change_pct: preview.change_pct,
+        iv_rank: preview.iv_rank,
+        iv_percentile: preview.iv_percentile,
+        rsi_14: preview.rsi_14,
+        macd_weekly_signal: preview.macd_weekly_signal,
+        macd_daily_signal: preview.macd_daily_signal,
+        ma_20d: preview.ma_20d,
+        ma_50d: preview.ma_50d,
+        ma_100d: preview.ma_100d,
+        ma_200d: preview.ma_200d,
+        bollinger_upper: preview.bollinger_upper,
+        bollinger_mid: preview.bollinger_mid,
+        bollinger_lower: preview.bollinger_lower,
+        bollinger_position: preview.bollinger_position,
+        next_earnings_date: preview.next_earnings_date,
+        volume_spikes: preview.volume_spikes,
+        fetch_status: preview.fetch_status,
+        fetch_error: preview.fetch_error,
+      }
+      if (account) {
+        onAdded(await screenerApi.add({ symbol: preview.symbol, precomputed, account_id: account.id }))
+      } else {
+        // First successful add carries precomputed; later accounts just gain a membership.
+        const res = await addToAccounts({ symbol: preview.symbol, precomputed }, selected)
+        if (res.row) onAdded(res.row)
+        if (res.failed.length || !res.row) {
+          setError(summarizeAdd(res, nameOf))
+          return
+        }
+      }
       setPreview(null)
       setTicker('')
     } catch (err) {
@@ -108,16 +132,23 @@ export function SymbolLookup({ onAdded }: Props) {
           <div><span className="text-gray-400">200ma: </span>{preview.ma_200d ?? '—'}</div>
           <div><span className="text-gray-400">BB: </span>{preview.bollinger_position ?? '—'}</div>
           <div className="col-span-4 mt-2">
-            {preview.already_tracked ? (
-              <span className="text-gray-400 italic">Already tracked in the screener.</span>
+            {inThisAccount ? (
+              <span className="text-gray-400 italic">Already tracked in this account's screener.</span>
+            ) : inEveryAccount ? (
+              <span className="text-gray-400 italic">Already tracked in every account.</span>
             ) : (
-              <button
-                onClick={handleAdd}
-                disabled={adding}
-                className="px-3 py-1.5 bg-blue-600 text-white text-xs rounded hover:bg-blue-700 disabled:bg-gray-300"
-              >
-                {adding ? 'Adding…' : 'Add to Screener'}
-              </button>
+              <div className="space-y-2">
+                {!account && (
+                  <AccountMultiSelect selected={selected} onChange={setPicked} disabledIds={memberIds} />
+                )}
+                <button
+                  onClick={handleAdd}
+                  disabled={adding || (!account && selected.length === 0)}
+                  className="px-3 py-1.5 bg-blue-600 text-white text-xs rounded hover:bg-blue-700 disabled:bg-gray-300"
+                >
+                  {adding ? 'Adding…' : 'Add to Screener'}
+                </button>
+              </div>
             )}
           </div>
         </div>

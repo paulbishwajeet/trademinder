@@ -9,6 +9,8 @@ import { AddSlotModal } from '../components/Wheel/AddSlotModal'
 import { ResolveModal } from '../components/Wheel/ResolveModal'
 import { LinkLegModalV2 } from '../components/Wheel/LinkLegModalV2'
 import { CommentaryPopover } from '../components/Commentary/CommentaryPopover'
+import { useRequiredAccount } from '../context/AccountsContext'
+import { tradePath, scopedResearchPath } from '../lib/paths'
 
 interface FlatSlot {
   slot: WheelSlotDetail
@@ -110,6 +112,7 @@ function isCacheFresh(cache: Record<string, CacheEntry<unknown>>, key: string): 
 }
 
 export function WheelDashboardPage() {
+  const accountId = useRequiredAccount().id
   const [sessions, setSessions] = useState<WheelSessionDetail[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -137,7 +140,7 @@ export function WheelDashboardPage() {
     setLoading(true)
     setError(null)
     try {
-      const summaries = await wheelApi.list()
+      const summaries = await wheelApi.list({ account_id: accountId })
       const detailed = await Promise.all(summaries.map(s => wheelApi.get(s.id)))
       setSessions(detailed)
     } catch (e: unknown) {
@@ -604,7 +607,7 @@ export function WheelDashboardPage() {
             <p className="font-medium text-gray-500 mb-1 flex items-center justify-between">
               <span>{label} breakdown</span>
               {isSPTiming && (
-                <Link to={`/chain?symbol=${ticker}&strategy=sell_put`} className="text-blue-600 hover:underline font-normal">
+                <Link to={scopedResearchPath(accountId, 'chain', { symbol: ticker, strategy: 'sell_put' })} className="text-blue-600 hover:underline font-normal">
                   Screen strikes on Chain &rarr;
                 </Link>
               )}
@@ -1084,7 +1087,7 @@ export function WheelDashboardPage() {
         </td>
         <td className="py-1 pr-3 text-xs text-gray-400 capitalize">{leg.trade_status}</td>
         <td colSpan={colCount - 5} className="py-1 text-xs text-right">
-          <Link to={`/trades/${leg.trade_id}`} className="text-blue-500 hover:underline">view</Link>
+          <Link to={tradePath(accountId, leg.trade_id)} className="text-blue-500 hover:underline">view</Link>
         </td>
       </tr>
     ))
@@ -1210,10 +1213,10 @@ export function WheelDashboardPage() {
         </>
       )}
 
-      {showNewModal && <NewWheelModalV2 onClose={() => setShowNewModal(false)} onCreated={(s) => { setShowNewModal(false); setAddSlotSessionId(s.id); load() }} />}
+      {showNewModal && <NewWheelModalV2 accountId={accountId} onClose={() => setShowNewModal(false)} onCreated={(s) => { setShowNewModal(false); setAddSlotSessionId(s.id); load() }} />}
       {addSlotSessionId && <AddSlotModal sessionId={addSlotSessionId} onClose={() => setAddSlotSessionId(null)} onCreated={() => { setAddSlotSessionId(null); load() }} />}
-      {resolveSlotId && <ResolveModal slotId={resolveSlotId} ticker={resolveSlotTicker} onClose={() => setResolveSlotId(null)} onResolved={() => { setResolveSlotId(null); load() }} />}
-      {linkSlotId && <LinkLegModalV2 slotId={linkSlotId} ticker={linkSlotTicker} slotStatus={linkSlotStatus} onClose={() => setLinkSlotId(null)} onLinked={() => { setLinkSlotId(null); load() }} />}
+      {resolveSlotId && <ResolveModal accountId={accountId} slotId={resolveSlotId} ticker={resolveSlotTicker} onClose={() => setResolveSlotId(null)} onResolved={() => { setResolveSlotId(null); load() }} />}
+      {linkSlotId && <LinkLegModalV2 accountId={accountId} slotId={linkSlotId} ticker={linkSlotTicker} slotStatus={linkSlotStatus} onClose={() => setLinkSlotId(null)} onLinked={() => { setLinkSlotId(null); load() }} />}
     </div>
   )
 }

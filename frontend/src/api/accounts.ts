@@ -21,6 +21,12 @@ export const accountsApi = {
 
   archive: (id: string) => apiFetch<BrokerageAccount>(`/accounts/${id}/archive`, { method: 'POST' }),
 
-  // Only for accounts that never held trades, wheels, spreads or notes (409 otherwise).
+  restore: (id: string) => apiFetch<BrokerageAccount>(`/accounts/${id}/restore`, { method: 'POST' }),
+
+  // Full ordered list of active account ids (archived ones may be included).
+  reorder: (accountIds: string[]) =>
+    apiFetch<BrokerageAccount[]>('/accounts/order', { method: 'PUT', body: JSON.stringify({ account_ids: accountIds }) }),
+
+  // Only for empty accounts — no trades, wheels, spreads, screener symbols or notes (409 otherwise).
   delete: (id: string) => apiFetch<void>(`/accounts/${id}`, { method: 'DELETE' }),
 }

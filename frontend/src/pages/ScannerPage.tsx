@@ -83,7 +83,7 @@ function OptionsTable({ rows }: { rows: OptionRow[] }) {
 export function ScannerPage() {
   const [searchParams] = useSearchParams()
   const [form, setForm] = useState<FormState>({
-    ticker: searchParams.get('ticker')?.toUpperCase() ?? '',
+    ticker: (searchParams.get('symbol') ?? searchParams.get('ticker'))?.toUpperCase() ?? '',
     optType: 'both',
     minDte: 365,
     minOi: 25,
@@ -118,7 +118,7 @@ export function ScannerPage() {
   }
 
   useEffect(() => {
-    const ticker = searchParams.get('ticker')
+    const ticker = searchParams.get('symbol') ?? searchParams.get('ticker')
     if (ticker) runScan(ticker.toUpperCase())
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 

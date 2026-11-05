@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import type { SessionWithLegs, SessionLeg } from '../../types'
 import { sessionsApi } from '../../api/sessions'
+import { tradePath } from '../../lib/paths'
 
 interface Props {
   session: SessionWithLegs
@@ -350,7 +351,7 @@ export function SpreadSessionCard({ session, price, onClosed }: Props) {
                     <td className="py-1.5 pr-3">{leg.quantity}</td>
                     <td className="py-1.5 pr-3">{leg.premium != null ? `$${leg.premium}` : '—'}</td>
                     <td className="py-1.5">
-                      <Link to={`/trades/${leg.id}`} className="text-blue-500 hover:underline">view</Link>
+                      <Link to={tradePath(session.account_id, leg.id)} className="text-blue-500 hover:underline">view</Link>
                     </td>
                   </tr>
                 ))}

@@ -4,6 +4,8 @@ import { screenerApi } from '../../api/screener'
 import { ScreenerDetailRow } from './ScreenerDetailRow'
 import { ScreenerCommentaryCell } from './ScreenerCommentaryCell'
 import { timeAgo } from './timeAgo'
+import { AccountBadge } from './AccountPicker'
+import { useCurrentAccount } from '../../context/AccountsContext'
 
 interface Props {
   rows: ScreenerRow[]
@@ -113,6 +115,8 @@ function ScreenerRowView({
 }) {
   const [expanded, setExpanded] = useState(false)
   const [fetching, setFetching] = useState(false)
+  // Research (no current account): show which accounts hold this symbol.
+  const showAccounts = useCurrentAccount() == null
 
   const handleFetch = async () => {
     setFetching(true)
@@ -142,6 +146,11 @@ function ScreenerRowView({
             <span style={{ transform: expanded ? 'rotate(0deg)' : 'rotate(-90deg)', display: 'inline-block', transition: 'transform 0.15s' }}>&#9660;</span>
             {row.symbol}
           </button>
+          {showAccounts && row.account_ids.length > 0 && (
+            <div className="flex flex-wrap gap-1 mt-0.5">
+              {row.account_ids.map(id => <AccountBadge key={id} accountId={id} />)}
+            </div>
+          )}
         </td>
         <td className="px-3 py-2">{toNum(row.price) != null ? `$${toNum(row.price)!.toFixed(2)}` : '—'}</td>
         <td className={`px-3 py-2 font-medium ${(toNum(row.change_pct) ?? 0) < 0 ? 'text-red-600' : 'text-green-600'}`}>

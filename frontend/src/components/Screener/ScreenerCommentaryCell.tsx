@@ -3,6 +3,7 @@ import * as Dialog from '@radix-ui/react-dialog'
 import type { ScreenerCommentary } from '../../types'
 import { screenerApi } from '../../api/screener'
 import { ScreenerCommentaryThread } from './ScreenerCommentaryThread'
+import { useCurrentAccount } from '../../context/AccountsContext'
 
 interface Props {
   symbol: string
@@ -12,16 +13,18 @@ export function ScreenerCommentaryCell({ symbol }: Props) {
   const [open, setOpen] = useState(false)
   const [entries, setEntries] = useState<ScreenerCommentary[]>([])
   const [loading, setLoading] = useState(true)
+  // Inside an account: that account's notes. Research: notes from every account.
+  const accountId = useCurrentAccount()?.id
 
   const fetchEntries = useCallback(async () => {
     setLoading(true)
     try {
-      const data = await screenerApi.commentary.list(symbol)
+      const data = await screenerApi.commentary.list(symbol, accountId)
       setEntries(data)
     } finally {
       setLoading(false)
     }
-  }, [symbol])
+  }, [symbol, accountId])
 
   useEffect(() => {
     fetchEntries()

@@ -73,6 +73,59 @@ export interface BrokerageAccount extends AccountSummary {
   is_archived: boolean
   created_at: string
   category_ids: string[]
+  can_delete: boolean  // empty account — may be hard-deleted; otherwise archive it
+}
+
+export interface Category {
+  id: string
+  name: string
+  color: string
+  icon: string | null
+  is_system: boolean
+  sort_order: number
+  created_at: string
+}
+
+// ── Dashboard summary (GET /api/dashboard/summary) ──────────────
+
+export interface DashboardAccountCard {
+  account: AccountSummary
+  is_default: boolean
+  open_trades: number
+  active_wheels: number
+  slots_needing_action: number
+  legs_expiring_7d: number
+  net_premium_month: string  // Decimal string, signed
+}
+
+export interface DashboardNeedsActionSlot {
+  slot_id: string
+  session_id: string
+  slot_number: number
+  ticker: string
+  status: string
+  account: AccountSummary
+  open_leg_expiry: string | null
+}
+
+export interface DashboardAlert {
+  id: string
+  trade_id: string
+  ticker: string
+  alert_type: string
+  severity: string
+  title: string
+  message: string
+  is_read: boolean
+  triggered_at: string
+  account: AccountSummary
+}
+
+export interface DashboardSummary {
+  as_of: string  // US/Eastern date
+  accounts: DashboardAccountCard[]
+  needs_action: DashboardNeedsActionSlot[]
+  alerts: DashboardAlert[]
 }
 
 export interface BrokerageAccountCreate {

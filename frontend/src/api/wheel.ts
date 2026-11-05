@@ -40,7 +40,7 @@ export const wheelApi = {
   create: (payload: WheelSessionCreate) =>
     apiFetch<WheelSessionSummary>('/wheel', { method: 'POST', body: JSON.stringify(payload) }),
 
-  list: (params?: { status?: string; ticker?: string }) => {
+  list: (params?: { status?: string; ticker?: string; account_id?: string }) => {
     const entries = Object.entries(params ?? {}).filter((e): e is [string, string] => e[1] !== undefined)
     const qs = entries.length ? '?' + new URLSearchParams(entries).toString() : ''
     return apiFetch<WheelSessionSummary[]>(`/wheel${qs}`)
@@ -66,7 +66,8 @@ export const wheelApi = {
   resolve: (slotId: string, payload: WheelResolveRequest) =>
     apiFetch<WheelSlotDetail>(`/wheel/slots/${slotId}/resolve`, { method: 'POST', body: JSON.stringify(payload) }),
 
-  activeSlots: () => apiFetch<WheelActiveSlot[]>('/wheel/active-slots'),
+  activeSlots: (accountId?: string) =>
+    apiFetch<WheelActiveSlot[]>(`/wheel/active-slots${accountId ? `?account_id=${accountId}` : ''}`),
 
   addSlotCommentary: (slotId: string, payload: { note: string; tags?: string[]; rationale?: TechnicalsData | null; signal_snapshot?: WheelSignalSnapshot | null }) =>
     apiFetch<Commentary>(`/wheel/slots/${slotId}/commentary`, { method: 'POST', body: JSON.stringify(payload) }),
