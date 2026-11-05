@@ -1,3 +1,4 @@
+import uuid
 import pytest
 from datetime import date, datetime, timezone, timedelta
 from httpx import AsyncClient
@@ -343,3 +344,48 @@ async def test_list_trades_stale_filter(client: AsyncClient, db_session: AsyncSe
     ids = [item["id"] for item in resp.json()]
     assert stale_id in ids
     assert fresh_id not in ids
+
+
+# ── account scoping ─────────────────────────────────────────────────────────
+
+async def test_reconcile_only_touches_default_account(client: AsyncClient, db_session: AsyncSession):
+    """Reconcile resolves to the default account; trades in other accounts are never matched,
+    marked seen, or backdate-closed — even with identical symbols."""
+    from app.models.trade import Trade
+    other = (await client.post("/api/accounts", json={"broker": "E*TRADE", "nickname": "E*TRADE Hold"})).json()
+    symbol = "NVDA--260919P00120000"
+    default_trade = (await client.post("/api/trades", json={**PUT_TRADE, "etrade_symbol": symbol})).json()
+    other_trade = (await client.post("/api/trades", json={
+        **PUT_TRADE, "etrade_symbol": symbol, "account_id": other["id"],
+    })).json()
+    gone_elsewhere = (await client.post("/api/trades", json={
+        **PUT_TRADE, "ticker": "AMD", "etrade_symbol": "AMD--260919P00100000", "account_id": other["id"],
+    })).json()
+
+    resp = await client.post(RECONCILE_URL, json={"positions": [
+        {"ticker": "NVDA", "full_symbol": symbol, "type": "Put", "strike": 120.0, "expiry": "2026-09-19"},
+    ]})
+    assert resp.status_code == 200
+    assert resp.json()["stale_backend"] == []
+
+    db_session.expire_all()
+    assert (await db_session.get(Trade, uuid.UUID(default_trade["id"]))).last_etrade_seen is not None
+    assert (await db_session.get(Trade, uuid.UUID(other_trade["id"]))).last_etrade_seen is None
+    assert (await db_session.get(Trade, uuid.UUID(gone_elsewhere["id"]))).last_etrade_seen is None
+
+    # An empty snapshot backdates the default account's trade only.
+    resp = await client.post(RECONCILE_URL, json={"positions": []})
+    stale_ids = [s["id"] for s in resp.json()["stale_backend"]]
+    assert stale_ids == [default_trade["id"]]
+    db_session.expire_all()
+    assert (await db_session.get(Trade, uuid.UUID(gone_elsewhere["id"]))).last_etrade_seen is None
+
+
+async def test_positions_status_uses_default_account(client: AsyncClient):
+    other = (await client.post("/api/accounts", json={"broker": "Schwab", "nickname": "IRA"})).json()
+    symbol = "NVDA--260919P00120000"
+    await client.post("/api/trades", json={**PUT_TRADE, "etrade_symbol": symbol, "account_id": other["id"]})
+    status = (await client.post("/api/positions/status", json={"positions": [
+        {"ticker": "NVDA", "full_symbol": symbol, "type": "Put"},
+    ]})).json()
+    assert status[symbol]["trade_id"] is None

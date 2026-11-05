@@ -27,6 +27,8 @@ services:
       DATABASE_URL: postgresql+asyncpg://trademinder:${DB_PASSWORD}@db:5432/trademinder
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OWNER_EMAIL: ${OWNER_EMAIL:?OWNER_EMAIL is required (seeds the first user in migration 015)}
+      OWNER_DISPLAY_NAME: ${OWNER_DISPLAY_NAME:-Owner}
       ALERT_ENGINE_INTERVAL_MINUTES: ${ALERT_ENGINE_INTERVAL_MINUTES:-15}
       MARKET_HOURS_START: ${MARKET_HOURS_START:-09:30}
       MARKET_HOURS_END: ${MARKET_HOURS_END:-16:00}

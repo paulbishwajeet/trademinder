@@ -10,6 +10,7 @@ export const CATEGORY_COLORS: Record<string, string> = {
   SKIP:           '#6B7280',
   HOPS:           '#84CC16',
   BUY_WRITE:      '#14B8A6',
+  SPECULATIVE:    '#D946EF',
 }
 
 export const CATEGORY_ORDER = Object.keys(CATEGORY_COLORS)

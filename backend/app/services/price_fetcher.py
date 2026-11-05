@@ -1,6 +1,7 @@
 # backend/app/services/price_fetcher.py
 import asyncio
 import logging
+import uuid
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -124,9 +125,12 @@ async def fetch_rsi_batch(tickers: list[str]) -> dict[str, dict | None]:
     return await loop.run_in_executor(None, _fetch_rsi_from_schwab, tickers)
 
 
-async def refresh_open_trades(db: AsyncSession) -> dict:
-    """Fetch prices for all open trades; update current_price, last_price_at, unrealized_pnl."""
+async def refresh_open_trades(db: AsyncSession, user_id: uuid.UUID | None = None) -> dict:
+    """Fetch prices for all open trades (every user's, or one user's when user_id is given);
+    update current_price, last_price_at, unrealized_pnl."""
     stmt = select(Trade).where(Trade.status == "open")
+    if user_id is not None:
+        stmt = stmt.where(Trade.user_id == user_id)
     result = await db.execute(stmt)
     trades = result.scalars().all()
 

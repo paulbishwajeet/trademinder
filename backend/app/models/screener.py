@@ -2,7 +2,7 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional, TYPE_CHECKING
-from sqlalchemy import String, Numeric, Date, Text, DateTime, Index
+from sqlalchemy import String, Numeric, Date, Text, DateTime, Index, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.sql import func
@@ -10,12 +10,14 @@ from app.database import Base
 
 if TYPE_CHECKING:
     from app.models.screener_commentary import ScreenerCommentary
+    from app.models.brokerage_account import ScreenerAccountMembership
 
 
 class Screener(Base):
     __tablename__ = "screener"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     symbol: Mapped[str] = mapped_column(String(10), nullable=False)
     sector: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     category: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
@@ -48,6 +50,15 @@ class Screener(Base):
         order_by="ScreenerCommentary.created_at.desc()",
     )
 
+    memberships: Mapped[list["ScreenerAccountMembership"]] = relationship(
+        "ScreenerAccountMembership", cascade="all, delete-orphan", lazy="selectin",
+    )
+
+    @property
+    def account_ids(self) -> list[uuid.UUID]:
+        return [m.account_id for m in self.memberships]
+
     __table_args__ = (
-        Index("idx_screener_symbol", "symbol", unique=True),
+        Index("idx_screener_user", "user_id"),
+        Index("idx_screener_user_symbol", "user_id", "symbol", unique=True),
     )

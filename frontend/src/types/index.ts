@@ -51,8 +51,53 @@ export interface TechnicalsData {
   notes: string | null
 }
 
+// ── Brokerage accounts ──────────────────────────────────────────
+
+// Broker is free text on the backend; these are the choices the UI offers.
+export const KNOWN_BROKERS = ['E*TRADE', 'Schwab', 'Fidelity', 'Robinhood', 'Other'] as const
+export type KnownBroker = (typeof KNOWN_BROKERS)[number]
+
+// Compact label embedded in trade / wheel / spread / screener-note responses.
+export interface AccountSummary {
+  id: string
+  nickname: string
+  broker: string
+  last_four: string | null
+}
+
+export interface BrokerageAccount extends AccountSummary {
+  external_ref: string | null
+  default_category_id: string | null
+  is_default: boolean
+  sort_order: number
+  is_archived: boolean
+  created_at: string
+  category_ids: string[]
+}
+
+export interface BrokerageAccountCreate {
+  broker: string
+  nickname: string
+  last_four?: string | null
+  sort_order?: number
+  is_default?: boolean
+  category_ids?: string[] | null  // omitted → every category in the user's library
+  default_category_id?: string | null
+}
+
+export interface BrokerageAccountUpdate {
+  broker?: string
+  nickname?: string
+  last_four?: string | null
+  sort_order?: number
+  default_category_id?: string | null
+  is_default?: true  // moves the default here; unset by defaulting another account
+}
+
 export interface Trade {
   id: string
+  account_id: string
+  account: AccountSummary
   wheel_id: string | null
   session_id: string | null
   type: string
@@ -79,9 +124,10 @@ export interface Trade {
 }
 
 export interface TradeCreate {
+  account_id?: string | null  // omitted → the user's default account
   wheel_id?: string | null
   type: string
-  category: string
+  category?: string  // omitted → the account's default category
   strategy: string
   ticker: string
   open_date: string
@@ -166,6 +212,8 @@ export interface Alert {
 
 export interface SessionSummary {
   id: string
+  account_id: string
+  account: AccountSummary
   ticker: string
   strategy: string
   status: string
@@ -204,6 +252,8 @@ export interface SessionLookupResponse {
 
 export interface WheelSessionSummary {
   id: string
+  account_id: string
+  account: AccountSummary
   ticker: string
   total_shares: number
   status: string
@@ -245,6 +295,8 @@ export interface WheelPremiumLogItem {
 export interface WheelSlotDetail {
   id: string
   session_id: string
+  account_id: string
+  account: AccountSummary
   slot_number: number
   contracts: number
   shares_held: number
@@ -266,6 +318,8 @@ export interface WheelSessionDetail extends WheelSessionSummary {
 export interface WheelActiveSlot {
   id: string
   session_id: string
+  account_id: string
+  account: AccountSummary
   slot_number: number
   contracts: number
   shares_held: number
@@ -355,6 +409,7 @@ export interface ScreenerRow extends ScreenerFetchedFields {
   category: string | null
   last_fetched_at: string | null
   created_at: string
+  account_ids: string[]
 }
 
 export interface ScreenerPreview extends ScreenerFetchedFields {
@@ -365,6 +420,8 @@ export interface ScreenerPreview extends ScreenerFetchedFields {
 export interface ScreenerCommentary {
   id: string
   screener_id: string
+  account_id: string
+  account: AccountSummary
   note: string
   tags: string[] | null
   created_at: string

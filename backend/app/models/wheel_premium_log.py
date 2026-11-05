@@ -16,6 +16,7 @@ class WheelPremiumLog(Base):
     __tablename__ = "wheel_premium_logs"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     slot_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("wheel_slots.id", ondelete="CASCADE"), nullable=False)
     leg_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("wheel_slot_legs.id", ondelete="SET NULL"), nullable=True)
     rotation_number: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -28,6 +29,7 @@ class WheelPremiumLog(Base):
     slot: Mapped["WheelSlot"] = relationship("WheelSlot", back_populates="premium_logs")
 
     __table_args__ = (
+        Index("idx_wheel_premium_logs_user", "user_id"),
         Index("idx_wheel_premium_logs_slot", "slot_id"),
         Index("idx_wheel_premium_logs_event_date", "event_date"),
     )

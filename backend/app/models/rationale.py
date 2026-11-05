@@ -17,6 +17,7 @@ class Rationale(Base):
     __tablename__ = "rationale"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     trade_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("trades.id", ondelete="CASCADE"), nullable=False)
     commentary_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("commentary.id", ondelete="CASCADE"), nullable=True)
 
@@ -51,6 +52,7 @@ class Rationale(Base):
     )
 
     __table_args__ = (
+        Index("idx_rationale_user", "user_id"),
         Index(
             "idx_rationale_trade_entry",
             "trade_id",

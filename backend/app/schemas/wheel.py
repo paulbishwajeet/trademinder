@@ -4,9 +4,11 @@ from decimal import Decimal
 from typing import Optional
 from pydantic import BaseModel, ConfigDict
 from app.schemas.commentary import CommentaryResponse
+from app.schemas.account import AccountSummary
 
 
 class WheelSessionCreate(BaseModel):
+    account_id: Optional[uuid.UUID] = None  # None → the user's default account
     ticker: str
     total_shares: int = 0
     opened_at: date
@@ -21,6 +23,8 @@ class WheelSessionUpdate(BaseModel):
 class WheelSessionSummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: uuid.UUID
+    account_id: uuid.UUID
+    account: AccountSummary
     ticker: str
     total_shares: int
     status: str
@@ -42,6 +46,8 @@ class WheelSlotSummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: uuid.UUID
     session_id: uuid.UUID
+    account_id: uuid.UUID
+    account: AccountSummary
     slot_number: int
     contracts: int
     shares_held: int
@@ -99,6 +105,8 @@ class WheelActiveSlotItem(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: uuid.UUID
     session_id: uuid.UUID
+    account_id: uuid.UUID
+    account: AccountSummary
     slot_number: int
     contracts: int
     shares_held: int

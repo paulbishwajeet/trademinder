@@ -10,6 +10,8 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.deps import get_current_user
+from app.models.user import User
 from app.services.alert_engine import run as run_alert_engine
 from app.services.options_scanner import run_scan
 from app.services.price_fetcher import fetch_quote, fetch_rsi_batch, refresh_open_trades
@@ -34,9 +36,9 @@ async def get_quote(ticker: str):
 
 
 @router.post("/refresh")
-async def refresh_prices(db: AsyncSession = Depends(get_db)):
-    price_result = await refresh_open_trades(db)
-    alert_result = await run_alert_engine(db)
+async def refresh_prices(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    price_result = await refresh_open_trades(db, user_id=user.id)
+    alert_result = await run_alert_engine(db, user_id=user.id)
     return {
         "trades_updated": price_result["trades_updated"],
         "tickers_fetched": price_result["tickers_fetched"],

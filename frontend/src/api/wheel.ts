@@ -6,6 +6,7 @@ import type {
 } from '../types'
 
 export interface WheelSessionCreate {
+  account_id?: string | null  // omitted → the user's default account
   ticker: string
   total_shares?: number
   opened_at: string

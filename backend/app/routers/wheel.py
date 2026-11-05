@@ -8,6 +8,11 @@ from sqlalchemy import select, func as sqla_func, or_
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
+from app.deps import get_current_user
+from app.models.user import User
+from app.services.ownership import (
+    get_trade, get_wheel_session, get_slot, resolve_account, resolve_account_filter, require_same_account,
+)
 from app.models.wheel_session import WheelSession
 from app.models.wheel_slot import WheelSlot
 from app.models.wheel_slot_leg import WheelSlotLeg
@@ -50,11 +55,18 @@ OUTCOME_MAP = {
 TICKER_ALIASES = {"GOOG": "GOOGL", "GOOGL": "GOOG"}
 
 
-async def _find_stock_position(db: AsyncSession, ticker: str) -> tuple[Optional[Decimal], Optional[Decimal]]:
+async def _find_stock_position(
+    db: AsyncSession, session: WheelSession,
+) -> tuple[Optional[Decimal], Optional[Decimal]]:
+    """Stock position backing a wheel — looked up in the wheel's own user + account only."""
+    ticker = session.ticker
+
     async def _latest_open_stock_trade(t: str) -> Optional[Trade]:
         stmt = (
             select(Trade)
             .where(
+                Trade.user_id == session.user_id,
+                Trade.account_id == session.account_id,
                 Trade.category == "WHEEL",
                 Trade.strategy == "Stock",
                 Trade.status == "open",
@@ -98,6 +110,7 @@ def _build_slot_detail(slot: WheelSlot) -> WheelSlotDetail:
     total = sum((p.premium_amount for p in slot.premium_logs), Decimal("0"))
     return WheelSlotDetail(
         id=slot.id, session_id=slot.session_id, slot_number=slot.slot_number,
+        account_id=slot.account_id, account=slot.account,
         contracts=slot.contracts, shares_held=slot.shares_held,
         status=slot.status, needs_action=slot.needs_action,
         rotation_number=slot.rotation_number,
@@ -108,9 +121,9 @@ def _build_slot_detail(slot: WheelSlot) -> WheelSlotDetail:
 async def _build_session_detail(db: AsyncSession, session: WheelSession) -> WheelSessionDetail:
     slots = [_build_slot_detail(s) for s in sorted(session.slots, key=lambda s: s.slot_number)]
     total = sum((s.total_premium for s in slots), Decimal("0"))
-    stock_cost_basis, stock_current_price = await _find_stock_position(db, session.ticker)
+    stock_cost_basis, stock_current_price = await _find_stock_position(db, session)
     return WheelSessionDetail(
-        id=session.id, ticker=session.ticker, total_shares=session.total_shares,
+        id=session.id, account_id=session.account_id, account=session.account, ticker=session.ticker, total_shares=session.total_shares,
         status=session.status, opened_at=session.opened_at, closed_at=session.closed_at,
         slots=slots, total_premium=total,
         stock_cost_basis=stock_cost_basis, stock_current_price=stock_current_price,
@@ -128,8 +141,11 @@ def _load_session_options():
 
 
 @router.post("", response_model=WheelSessionSummary, status_code=201)
-async def create_wheel_session(payload: WheelSessionCreate, db: AsyncSession = Depends(get_db)):
+async def create_wheel_session(payload: WheelSessionCreate, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    account = await resolve_account(db, user, payload.account_id)
     session = WheelSession(
+        user_id=user.id,
+        account_id=account.id,
         ticker=payload.ticker.upper(),
         total_shares=payload.total_shares,
         opened_at=payload.opened_at,
@@ -144,9 +160,14 @@ async def create_wheel_session(payload: WheelSessionCreate, db: AsyncSession = D
 async def list_wheel_sessions(
     status: Optional[str] = Query(None),
     ticker: Optional[str] = Query(None),
+    account_id: Optional[uuid.UUID] = Query(None),
     db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
-    stmt = select(WheelSession)
+    stmt = select(WheelSession).where(WheelSession.user_id == user.id)
+    account_filter = await resolve_account_filter(db, user, account_id)
+    if account_filter is not None:
+        stmt = stmt.where(WheelSession.account_id == account_filter)
     if status:
         stmt = stmt.where(WheelSession.status == status)
     else:
@@ -159,16 +180,22 @@ async def list_wheel_sessions(
 
 
 @router.get("/active-slots", response_model=list[WheelActiveSlotItem])
-async def list_active_slots(db: AsyncSession = Depends(get_db)):
+async def list_active_slots(
+    account_id: Optional[uuid.UUID] = Query(None),
+    db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user),
+):
     stmt = (
         select(WheelSlot)
         .join(WheelSession)
-        .where(WheelSession.status == "active")
+        .where(WheelSlot.user_id == user.id, WheelSession.user_id == user.id, WheelSession.status == "active")
         .options(
             selectinload(WheelSlot.session),
             selectinload(WheelSlot.legs).selectinload(WheelSlotLeg.trade),
         )
     )
+    account_filter = await resolve_account_filter(db, user, account_id)
+    if account_filter is not None:
+        stmt = stmt.where(WheelSession.account_id == account_filter)
     result = await db.execute(stmt)
     slots = result.scalars().all()
     items = []
@@ -180,6 +207,7 @@ async def list_active_slots(db: AsyncSession = Depends(get_db)):
         ]
         items.append(WheelActiveSlotItem(
             id=slot.id, session_id=slot.session_id, slot_number=slot.slot_number,
+            account_id=slot.account_id, account=slot.account,
             contracts=slot.contracts, shares_held=slot.shares_held,
             status=slot.status, needs_action=slot.needs_action,
             rotation_number=slot.rotation_number,
@@ -190,21 +218,14 @@ async def list_active_slots(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/{session_id}", response_model=WheelSessionDetail)
-async def get_wheel_session(session_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
-    opts = _load_session_options()
-    stmt = select(WheelSession).where(WheelSession.id == session_id).options(*opts)
-    result = await db.execute(stmt)
-    session = result.scalar_one_or_none()
-    if session is None:
-        raise HTTPException(status_code=404, detail="Wheel session not found")
+async def get_wheel_session_detail(session_id: uuid.UUID, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    session = await get_wheel_session(db, user, session_id, options=_load_session_options())
     return await _build_session_detail(db, session)
 
 
 @router.patch("/{session_id}", response_model=WheelSessionSummary)
-async def update_wheel_session(session_id: uuid.UUID, payload: WheelSessionUpdate, db: AsyncSession = Depends(get_db)):
-    session = await db.get(WheelSession, session_id)
-    if session is None:
-        raise HTTPException(status_code=404, detail="Wheel session not found")
+async def update_wheel_session(session_id: uuid.UUID, payload: WheelSessionUpdate, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    session = await get_wheel_session(db, user, session_id)
     for field, value in payload.model_dump(exclude_none=True).items():
         setattr(session, field, value)
     await db.commit()
@@ -213,15 +234,14 @@ async def update_wheel_session(session_id: uuid.UUID, payload: WheelSessionUpdat
 
 
 @router.post("/{session_id}/slots", response_model=WheelSlotSummary, status_code=201)
-async def add_slot(session_id: uuid.UUID, payload: WheelSlotCreate, db: AsyncSession = Depends(get_db)):
-    session = await db.get(WheelSession, session_id)
-    if session is None:
-        raise HTTPException(status_code=404, detail="Wheel session not found")
+async def add_slot(session_id: uuid.UUID, payload: WheelSlotCreate, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    await get_wheel_session(db, user, session_id)
     count_stmt = select(sqla_func.count()).select_from(WheelSlot).where(WheelSlot.session_id == session_id)
     count_result = await db.execute(count_stmt)
     next_number = count_result.scalar() + 1
 
     slot = WheelSlot(
+        user_id=user.id,
         session_id=session_id,
         slot_number=next_number,
         contracts=payload.contracts,
@@ -235,19 +255,15 @@ async def add_slot(session_id: uuid.UUID, payload: WheelSlotCreate, db: AsyncSes
 
 
 @router.delete("/slots/{slot_id}", status_code=204)
-async def delete_slot(slot_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
-    slot = await db.get(WheelSlot, slot_id)
-    if slot is None:
-        raise HTTPException(status_code=404, detail="Slot not found")
+async def delete_slot(slot_id: uuid.UUID, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    slot = await get_slot(db, user, slot_id)
     await db.delete(slot)
     await db.commit()
 
 
 @router.patch("/slots/{slot_id}", response_model=WheelSlotSummary)
-async def update_slot(slot_id: uuid.UUID, payload: WheelSlotUpdate, db: AsyncSession = Depends(get_db)):
-    slot = await db.get(WheelSlot, slot_id)
-    if slot is None:
-        raise HTTPException(status_code=404, detail="Slot not found")
+async def update_slot(slot_id: uuid.UUID, payload: WheelSlotUpdate, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    slot = await get_slot(db, user, slot_id)
     if slot.status not in ("awaiting_cc", "awaiting_sold_put"):
         raise HTTPException(
             status_code=400,
@@ -263,15 +279,13 @@ async def update_slot(slot_id: uuid.UUID, payload: WheelSlotUpdate, db: AsyncSes
 
 
 @router.post("/slots/{slot_id}/legs", response_model=WheelSlotLegItem, status_code=201)
-async def link_leg(slot_id: uuid.UUID, payload: WheelSlotLegCreate, db: AsyncSession = Depends(get_db)):
-    slot = await db.get(WheelSlot, slot_id)
-    if slot is None:
-        raise HTTPException(status_code=404, detail="Slot not found")
-    trade = await db.get(Trade, payload.trade_id)
-    if trade is None:
-        raise HTTPException(status_code=404, detail="Trade not found")
+async def link_leg(slot_id: uuid.UUID, payload: WheelSlotLegCreate, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    slot = await get_slot(db, user, slot_id)
+    trade = await get_trade(db, user, payload.trade_id)
+    require_same_account(slot.account_id, trade.account_id, "Trade")
 
     leg = WheelSlotLeg(
+        user_id=user.id,
         slot_id=slot_id,
         trade_id=payload.trade_id,
         leg_role=payload.leg_role,
@@ -287,6 +301,7 @@ async def link_leg(slot_id: uuid.UUID, payload: WheelSlotLegCreate, db: AsyncSes
     event_type = LEG_ROLE_TO_EVENT.get(payload.leg_role)
     if event_type and trade.premium:
         premium_log = WheelPremiumLog(
+            user_id=user.id,
             slot_id=slot_id,
             leg_id=leg.id,
             rotation_number=slot.rotation_number,
@@ -302,20 +317,19 @@ async def link_leg(slot_id: uuid.UUID, payload: WheelSlotLegCreate, db: AsyncSes
 
 
 @router.post("/slots/{slot_id}/resolve", response_model=WheelSlotSummary)
-async def resolve_slot(slot_id: uuid.UUID, payload: WheelResolveRequest, db: AsyncSession = Depends(get_db)):
-    slot = await db.get(WheelSlot, slot_id)
-    if slot is None:
-        raise HTTPException(status_code=404, detail="Slot not found")
+async def resolve_slot(slot_id: uuid.UUID, payload: WheelResolveRequest, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    slot = await get_slot(db, user, slot_id)
 
     outcome = payload.outcome
     if outcome not in OUTCOME_MAP:
         raise HTTPException(status_code=400, detail=f"Unknown outcome: {outcome}")
 
     new_status, shares_action, increment_rotation, event_type = OUTCOME_MAP[outcome]
-    session = await db.get(WheelSession, slot.session_id)
+    session = slot.session
 
     if payload.buyback_cost is not None:
         db.add(WheelPremiumLog(
+            user_id=user.id,
             slot_id=slot_id,
             rotation_number=slot.rotation_number,
             premium_amount=-abs(payload.buyback_cost),
@@ -325,6 +339,7 @@ async def resolve_slot(slot_id: uuid.UUID, payload: WheelResolveRequest, db: Asy
         ))
     elif event_type in ("cc_expired_otm", "cc_expired_itm", "put_expired_otm", "put_assigned"):
         db.add(WheelPremiumLog(
+            user_id=user.id,
             slot_id=slot_id,
             rotation_number=slot.rotation_number,
             premium_amount=Decimal("0"),
@@ -350,11 +365,14 @@ async def resolve_slot(slot_id: uuid.UUID, payload: WheelResolveRequest, db: Asy
     slot.needs_action = False
 
     if outcome in ("cc_rolled", "put_rolled") and payload.new_trade_id:
-        new_trade = await db.get(Trade, payload.new_trade_id)
-        if new_trade is None:
+        try:
+            new_trade = await get_trade(db, user, payload.new_trade_id)
+        except HTTPException:
             raise HTTPException(status_code=404, detail="New trade not found")
+        require_same_account(slot.account_id, new_trade.account_id, "New trade")
         leg_role = "covered_call" if outcome == "cc_rolled" else "sold_put"
         new_leg = WheelSlotLeg(
+            user_id=user.id,
             slot_id=slot_id,
             trade_id=payload.new_trade_id,
             leg_role=leg_role,
@@ -364,6 +382,7 @@ async def resolve_slot(slot_id: uuid.UUID, payload: WheelResolveRequest, db: Asy
         if new_trade.premium:
             roll_event = "cc_sold" if outcome == "cc_rolled" else "put_sold"
             db.add(WheelPremiumLog(
+                user_id=user.id,
                 slot_id=slot_id,
                 rotation_number=slot.rotation_number,
                 premium_amount=new_trade.premium * new_trade.quantity,
@@ -372,10 +391,13 @@ async def resolve_slot(slot_id: uuid.UUID, payload: WheelResolveRequest, db: Asy
             ))
 
     if outcome == "put_assigned" and payload.new_trade_id:
-        stock_trade = await db.get(Trade, payload.new_trade_id)
-        if stock_trade is None:
+        try:
+            stock_trade = await get_trade(db, user, payload.new_trade_id)
+        except HTTPException:
             raise HTTPException(status_code=404, detail="Stock trade not found")
+        require_same_account(slot.account_id, stock_trade.account_id, "Stock trade")
         db.add(WheelSlotLeg(
+            user_id=user.id,
             slot_id=slot_id,
             trade_id=payload.new_trade_id,
             leg_role="stock",
@@ -388,12 +410,11 @@ async def resolve_slot(slot_id: uuid.UUID, payload: WheelResolveRequest, db: Asy
 
 
 @router.post("/slots/{slot_id}/commentary", response_model=CommentaryResponse, status_code=201)
-async def add_slot_commentary(slot_id: uuid.UUID, payload: CommentaryCreate, db: AsyncSession = Depends(get_db)):
-    slot = await db.get(WheelSlot, slot_id)
-    if slot is None:
-        raise HTTPException(status_code=404, detail="Slot not found")
+async def add_slot_commentary(slot_id: uuid.UUID, payload: CommentaryCreate, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    slot = await get_slot(db, user, slot_id)
 
     comment = Commentary(
+        user_id=user.id,
         slot_id=slot_id,
         note=payload.note,
         tags=payload.tags,
@@ -413,12 +434,13 @@ async def get_slot_history(
     limit: int = Query(5, ge=1, le=100),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
-    slot = await db.get(WheelSlot, slot_id)
-    if slot is None:
-        raise HTTPException(status_code=404, detail="Slot not found")
+    slot = await get_slot(db, user, slot_id)
 
-    legs_result = await db.execute(select(WheelSlotLeg).where(WheelSlotLeg.slot_id == slot_id))
+    legs_result = await db.execute(
+        select(WheelSlotLeg).where(WheelSlotLeg.slot_id == slot_id, WheelSlotLeg.user_id == user.id)
+    )
     leg_by_trade_id = {leg.trade_id: leg for leg in legs_result.scalars().all()}
     trade_ids = list(leg_by_trade_id.keys())
 
@@ -427,7 +449,7 @@ async def get_slot_history(
         conditions.append(Commentary.trade_id.in_(trade_ids))
     stmt = (
         select(Commentary)
-        .where(or_(*conditions))
+        .where(Commentary.user_id == user.id, or_(*conditions))
         .options(selectinload(Commentary.rationale))
         .order_by(Commentary.created_at.desc())
     )

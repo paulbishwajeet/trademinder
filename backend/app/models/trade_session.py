@@ -8,6 +8,7 @@ from sqlalchemy.sql import func, text
 from app.database import Base
 
 if TYPE_CHECKING:
+    from app.models.brokerage_account import BrokerageAccount
     from app.models.trade import Trade
 
 
@@ -15,6 +16,8 @@ class TradeSession(Base):
     __tablename__ = "trade_sessions"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    account_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("brokerage_accounts.id", ondelete="RESTRICT"), nullable=False)
     ticker: Mapped[str] = mapped_column(String(10), nullable=False)
     strategy: Mapped[str] = mapped_column(String(30), nullable=False)
     status: Mapped[str] = mapped_column(String(30), nullable=False)
@@ -47,7 +50,11 @@ class TradeSession(Base):
         foreign_keys="[TradeSession.parent_session_id]",
     )
 
+    account: Mapped["BrokerageAccount"] = relationship("BrokerageAccount", lazy="selectin")
+
     __table_args__ = (
+        Index("idx_trade_sessions_user", "user_id"),
+        Index("idx_trade_sessions_account", "account_id"),
         Index("idx_trade_sessions_ticker_strategy", "ticker", "strategy"),
         Index("idx_trade_sessions_status", "status"),
         Index(
