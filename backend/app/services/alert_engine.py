@@ -33,12 +33,17 @@ async def _evaluate_trade(
     trade: Trade,
     last_commentary_at: datetime | None,
     db: AsyncSession,
+    market_offline: bool = False,
 ) -> list[Alert]:
+    """market_offline: skip the rules that read stored prices / P&L (1, 2, 6, 8) — those values
+    stop updating while market data is offline. The database-only rules (DTE, earnings, review)
+    keep running."""
     alerts: list[Alert] = []
     ticker = trade.ticker
+    market_ok = not market_offline
 
     # Rules 1 & 2: profit_target, stop_loss
-    if (trade.unrealized_pnl is not None
+    if (market_ok and trade.unrealized_pnl is not None
             and trade.premium is not None
             and trade.strike_price is not None
             and trade.type == "Sell"):
@@ -88,7 +93,7 @@ async def _evaluate_trade(
             ))
 
     # Rule 6: assignment_risk (Put within 2% of strike)
-    if (trade.current_price is not None
+    if (market_ok and trade.current_price is not None
             and trade.strike_price is not None
             and trade.strategy in ("Put", "PutCreditSpread")):
         current = float(trade.current_price)
@@ -113,7 +118,7 @@ async def _evaluate_trade(
         ))
 
     # Rule 8: deep_itm (CoveredCall >5% above strike)
-    if (trade.current_price is not None
+    if (market_ok and trade.current_price is not None
             and trade.strike_price is not None
             and trade.strategy == "CoveredCall"):
         current = float(trade.current_price)
@@ -128,9 +133,10 @@ async def _evaluate_trade(
     return alerts
 
 
-async def run(db: AsyncSession, user_id: Optional[uuid.UUID] = None) -> dict:
+async def run(db: AsyncSession, user_id: Optional[uuid.UUID] = None, market_offline: bool = False) -> dict:
     """Evaluate all 8 alert rules for all open trades (every user's, or one user's when
-    user_id is given — used by the manual refresh endpoint). Returns alert counts."""
+    user_id is given — used by the manual refresh endpoint). Returns alert counts.
+    With market_offline, only the database-only rules run (see _evaluate_trade)."""
     stmt = (
         select(Trade)
         .where(Trade.status == "open")
@@ -157,7 +163,7 @@ async def run(db: AsyncSession, user_id: Optional[uuid.UUID] = None) -> dict:
 
     alerts_created = 0
     for trade in trades:
-        new_alerts = await _evaluate_trade(trade, last_commentary.get(trade.id), db)
+        new_alerts = await _evaluate_trade(trade, last_commentary.get(trade.id), db, market_offline)
         for alert in new_alerts:
             db.add(alert)
             alerts_created += 1

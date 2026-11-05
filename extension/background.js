@@ -64,7 +64,11 @@ async function apiFetch(path, { method = 'GET', headers = {}, body } = {}) {
     });
     let data = null;
     try { data = await resp.json(); } catch {}
-    return { ok: resp.ok, status: resp.status, data, apiUrl: base };
+    // Market data offline: mixed endpoints say so in a header, pure market endpoints with a 503 code.
+    const header = resp.headers.get('X-Market-Data-Offline');
+    const marketDataOffline = header !== null ? header === 'true'
+      : (resp.status === 503 && data?.code === 'market_data_offline') ? true : null;
+    return { ok: resp.ok, status: resp.status, data, apiUrl: base, marketDataOffline };
   } catch (err) {
     return { ok: false, status: 0, data: null, error: err.message, errorKind: 'unreachable', apiUrl: base };
   }

@@ -1,4 +1,6 @@
 // frontend/src/pages/MarginDashboardPage.tsx
+import { MARKET_DATA_HEADER, setMarketDataOffline } from '../api/client'
+import { useMarketDataOffline } from '../hooks/useMarketDataOffline'
 import { useState, useCallback, useMemo, useRef, type DragEvent, type ChangeEvent } from 'react'
 
 const API_URL = ''
@@ -334,6 +336,7 @@ export function MarginDashboardPage() {
   const [marketData, setMarketData] = useState<Record<string, MarketData>>({})
   const [marketLoading, setMarketLoading] = useState(false)
   const [marketError, setMarketError] = useState(false)
+  const marketOffline = useMarketDataOffline()
   const inputRef = useRef<HTMLInputElement>(null)
   const abortCtrlRef = useRef<AbortController | null>(null)
 
@@ -351,6 +354,10 @@ export function MarginDashboardPage() {
         body: JSON.stringify({ tickers }),
         signal: ctrl.signal,
       })
+      // This page calls fetch directly (not apiFetch), so record the offline state here too.
+      const offlineHeader = resp.headers.get(MARKET_DATA_HEADER)
+      if (offlineHeader !== null) setMarketDataOffline(offlineHeader === 'true')
+      if (resp.status === 503) setMarketDataOffline(true)
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
       const raw: Record<string, { rsi: number | null; price: number | null } | null> = await resp.json()
       const out: Record<string, MarketData> = {}
@@ -510,7 +517,7 @@ export function MarginDashboardPage() {
         }`}>
           {marketLoading
             ? <><span className="animate-spin">⏳</span> Fetching market data…</>
-            : <><span>⚠️</span> Market data unavailable — probability columns not shown</>}
+            : <><span>⚠️</span> {marketOffline ? 'Market data offline' : 'Market data unavailable'} — probability columns not shown; the CSV analysis below still works</>}
         </div>
       )}
 
@@ -548,7 +555,7 @@ export function MarginDashboardPage() {
           sub={marketLoading
             ? 'Fetching market data…'
             : marketError
-            ? 'Market data unavailable'
+            ? (marketOffline ? 'Market data offline' : 'Market data unavailable')
             : `${fmtPct(totalWeightedObligation > 0 ? (totalWeightedObligation / totalObligation) * 100 : 0)} of worst-case`}
           accentClass={marketLoading || marketError ? 'border-t-gray-300' : 'border-t-violet-500'}
         />

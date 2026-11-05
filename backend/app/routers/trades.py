@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
-from app.deps import get_current_user
+from app.deps import get_current_user, market_data_flag
 from app.models.user import User
 from app.models.trade import Trade
 from app.models.rationale import Rationale
@@ -37,6 +37,7 @@ async def list_trades(
     account_id: Optional[uuid.UUID] = Query(None),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
+    offline: bool = Depends(market_data_flag),
 ):
     stmt = select(Trade).where(Trade.user_id == user.id)
     account_filter = await resolve_account_filter(db, user, account_id)
@@ -62,7 +63,7 @@ async def list_trades(
             stmt = stmt.where(Trade.etrade_symbol == etrade_symbol)
     stmt = stmt.order_by(Trade.created_at.desc())
     result = await db.execute(stmt)
-    return result.scalars().all()
+    return _without_market_fields(result.scalars().all(), offline)
 
 
 @router.post("", response_model=TradeListItem, status_code=201)
@@ -126,10 +127,11 @@ async def list_wheel_legs(
     wheel_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
+    offline: bool = Depends(market_data_flag),
 ):
     stmt = select(Trade).where(Trade.user_id == user.id, Trade.wheel_id == wheel_id).order_by(Trade.open_date)
     result = await db.execute(stmt)
-    return result.scalars().all()
+    return _without_market_fields(result.scalars().all(), offline)
 
 
 @router.get("/{trade_id}", response_model=TradeResponse)
@@ -137,8 +139,24 @@ async def get_trade_detail(
     trade_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
+    offline: bool = Depends(market_data_flag),
 ):
-    return await get_trade(db, user, trade_id, options=(selectinload(Trade.rationale),))
+    trade = await get_trade(db, user, trade_id, options=(selectinload(Trade.rationale),))
+    item = TradeResponse.model_validate(trade)
+    if offline:
+        item = item.model_copy(update={"current_price": None, "unrealized_pnl": None, "market_data_offline": True})
+    return item
+
+
+def _without_market_fields(trades, offline: bool):
+    """While market data is offline, stored prices / P&L are not shown (null). Built on response
+    models, never on the ORM rows, so nothing is written back."""
+    if not offline:
+        return trades
+    return [
+        TradeListItem.model_validate(t).model_copy(update={"current_price": None, "unrealized_pnl": None})
+        for t in trades
+    ]
 
 
 @router.put("/{trade_id}/rationale", response_model=RationaleResponse)

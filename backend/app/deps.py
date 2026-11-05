@@ -1,4 +1,4 @@
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, Response
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,3 +26,23 @@ async def get_current_user(db: AsyncSession = Depends(get_db)) -> User:
         db.expunge(user)  # detached snapshot; only user.id is read downstream
         _owner = user
     return _owner
+
+
+async def require_admin(user: User = Depends(get_current_user)) -> User:
+    """Admin-only routes. Goes through the current-user seam, so Part 5's real login applies too."""
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+    return user
+
+
+MARKET_DATA_HEADER = "X-Market-Data-Offline"
+
+
+async def market_data_flag(response: Response) -> bool:
+    """For endpoints that mix database rows with market-derived fields: sets the response-level
+    X-Market-Data-Offline header and tells the endpoint whether to blank those fields."""
+    from app.services.market_data import market_data_offline_now
+
+    offline = await market_data_offline_now()
+    response.headers[MARKET_DATA_HEADER] = "true" if offline else "false"
+    return offline

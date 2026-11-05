@@ -1,7 +1,7 @@
 // frontend/src/pages/ChainPage.tsx
 import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { ApiError } from '../api/client'
+import { ApiError, isMarketDataOffline } from '../api/client'
 import { screenChain } from '../api/chain'
 import type { ChainScreenResult, ChainCandidate, ChainExpiry } from '../api/chain'
 
@@ -175,7 +175,9 @@ export function ChainPage() {
       })
       setScreenState({ status: 'success', result })
     } catch (err) {
-      const message = err instanceof ApiError ? err.message : 'Screen failed. Try again.'
+      const message = isMarketDataOffline(err)
+        ? 'Market data offline — the option chain is unavailable until Schwab is reconnected.'
+        : err instanceof ApiError ? err.message : 'Screen failed. Try again.'
       setScreenState({ status: 'error', message })
     }
   }

@@ -25,7 +25,7 @@ def test_fetch_screener_row_success():
     mock_client.get_instrument_fundamentals.return_value = {"sector": "Technology"}
 
     with patch("app.services.screener_fetcher.fetch_technicals", return_value=(MOCK_TECHNICALS, close_d)), \
-         patch("app.services.screener_fetcher.get_schwab_client", return_value=mock_client), \
+         patch("app.services.screener_fetcher.get_market_data", return_value=mock_client), \
          patch("app.services.screener_fetcher.compute_iv_percentile_from_chain", return_value=(45.0, 0.25)):
         result = fetch_screener_row("AAPL")
 
@@ -67,7 +67,7 @@ def test_fetch_screener_row_sector_lookup_failure_falls_back_to_existing():
     mock_client.get_instrument_fundamentals.side_effect = Exception("no fundamentals endpoint")
 
     with patch("app.services.screener_fetcher.fetch_technicals", return_value=(MOCK_TECHNICALS, close_d)), \
-         patch("app.services.screener_fetcher.get_schwab_client", return_value=mock_client), \
+         patch("app.services.screener_fetcher.get_market_data", return_value=mock_client), \
          patch("app.services.screener_fetcher.compute_iv_percentile_from_chain", return_value=(None, None)):
         result = fetch_screener_row("AAPL", existing_sector="Manually Set Sector")
 

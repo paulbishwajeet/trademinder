@@ -33,6 +33,8 @@ async def get_trade_signals(trade_id: uuid.UUID, db: AsyncSession = Depends(get_
 
 @router.post("/market/signals/refresh")
 async def refresh_signals(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    from app.services.market_data import market_data_offline_now
     from app.services.signal_engine import run as run_signal_engine
-    result = await run_signal_engine(db, user_id=user.id)
+    # DB-only; price-based rules are skipped while market data is offline.
+    result = await run_signal_engine(db, user_id=user.id, market_offline=await market_data_offline_now())
     return result

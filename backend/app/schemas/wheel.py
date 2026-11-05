@@ -128,6 +128,8 @@ class WheelSessionDetail(WheelSessionSummary):
     total_premium: Decimal = Decimal("0")
     stock_cost_basis: Optional[Decimal] = None
     stock_current_price: Optional[Decimal] = None
+    # True while market data is offline: stock_current_price and legs' trade_current_price are null.
+    market_data_offline: bool = False
 
 
 class WheelSlotHistoryEntry(CommentaryResponse):

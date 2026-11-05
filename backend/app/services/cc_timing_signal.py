@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 
 import pandas as pd
 
-from app.services.schwab_client import get_schwab_client
+from app.services.market_data import get_market_data, MarketDataUnavailable
 from app.services.technicals_fetcher import compute_iv_percentile_from_chain, fetch_technicals
 from app.services.cc_signal import _get_llm_commentary
 
@@ -186,7 +186,7 @@ def _compute_cc_timing_fresh(ticker: str) -> dict:
     # _append_live_bar in technicals_fetcher.py) — reuse it rather than re-fetching
     # a second quote, so "live price" and "previous close" stay in sync with what
     # fetch_technicals already used for RSI/MACD-daily/day_color.
-    client = get_schwab_client()
+    client = get_market_data()
     live_price = float(close_d.iloc[-1])
     prev_close = float(close_d.iloc[-2])
 
@@ -240,6 +240,11 @@ def compute_cc_timing_signal(ticker: str, force: bool = False) -> dict:
         result = _compute_cc_timing_fresh(ticker)
         _cc_timing_cache[ticker] = (result, now)
         return result
+    except MarketDataUnavailable:
+        # Offline: serve the last good result (any age) flagged stale; without one, 503.
+        if cached:
+            return {**cached[0], "stale": True, "as_of": cached[0].get("cached_at")}
+        raise
     except Exception as exc:
         log.exception("cc_timing_signal failed for %s", ticker)
         return _make_error_signal(ticker, exc)

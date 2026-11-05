@@ -285,7 +285,7 @@ def test_compute_fresh_applies_iv_gate_and_calls_schwab():
         "fetch_status": "ok",
     }
 
-    with patch("app.services.cc_timing_signal.get_schwab_client", return_value=mock_client), \
+    with patch("app.services.cc_timing_signal.get_market_data", return_value=mock_client), \
          patch("app.services.cc_timing_signal.fetch_technicals", return_value=(technicals, closes)), \
          patch("app.services.cc_timing_signal._get_llm_commentary", return_value={"commentary": None, "strike_hint": None, "caution": None}):
         from app.services.cc_timing_signal import _compute_cc_timing_fresh

@@ -118,6 +118,9 @@ function bgFetch(path, { method = 'GET', headers = {}, body, signal } = {}) {
         } else {
           setServerState('ok');
         }
+        if (resp.marketDataOffline === true || resp.marketDataOffline === false) {
+          setMarketDataOffline(resp.marketDataOffline);
+        }
         if (resp.error && !resp.ok) {
           reject(new Error(resp.error));
           return;
@@ -234,6 +237,36 @@ function setServerState(state) {
   if (state === serverState) return;
   serverState = state;
   renderAccountBar();
+}
+
+// Market data (Schwab) offline: learned from the X-Market-Data-Offline header on position status /
+// active-slots, or a market endpoint's 503. Only a notice — every overlay feature keeps working.
+let marketDataOffline = false;
+
+function setMarketDataOffline(offline) {
+  if (offline === marketDataOffline) return;
+  marketDataOffline = offline;
+  renderMarketDataNotice();
+}
+
+function renderMarketDataNotice() {
+  const toolbar = document.getElementById('tm-toolbar');
+  let notice = document.getElementById('tm-market-offline');
+  if (!marketDataOffline || !toolbar) {
+    notice?.remove();
+    return;
+  }
+  if (!notice) {
+    notice = document.createElement('span');
+    notice.id = 'tm-market-offline';
+    notice.className = 'tm-market-offline';
+    notice.textContent = 'Market data offline';
+    notice.title = 'Schwab market data is offline — prices, RSI and signals are unavailable. '
+      + 'Badges, notes, Add/Edit and Reconcile still work.';
+  }
+  const indicator = document.getElementById('tm-account-indicator');
+  if (indicator) indicator.after(notice);
+  else toolbar.insertBefore(notice, toolbar.firstChild);
 }
 
 // What the overlay may read: in a single account only once it is linked.
@@ -1925,6 +1958,7 @@ function insertFilterToolbar() {
 
   gridRoot.parentNode.insertBefore(toolbar, gridRoot);
   renderAccountBar();
+  renderMarketDataNotice();
   renderLinkCard();
 }
 

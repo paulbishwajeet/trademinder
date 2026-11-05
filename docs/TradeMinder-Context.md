@@ -250,7 +250,35 @@ The E\*TRADE grid is a **div-based virtual scroll list** (`[role="grid"][aria-la
 
 ## 5. Market Data Layer
 
-**Schwab REST API is the backbone.** `SchwabClient` is a singleton: tokens in Postgres via asyncpg, direct `httpx` calls (no third-party wrapper), thread-safe refresh, 30s read timeout. Methods: `get_quotes` (batch), `get_price_history`, `get_option_chain`, `get_instrument_fundamentals`.
+**Schwab REST API is the backbone, behind a provider boundary (Part 4).**
+
+- **The boundary:** every caller uses `app.services.market_data.get_market_data()`, which returns the provider
+  named by `MARKET_DATA_PROVIDER` (only `schwab`; unknown values fail at startup). The interface is the four
+  Schwab calls plus `status()` and `is_offline()`, with today's Schwab return shapes. Normalising them is
+  deferred. A test fails if anything outside `market_data.py` / `schwab_client.py` imports `SchwabClient`.
+- **The Schwab implementation:** `SchwabClient` is a singleton. Tokens live in Postgres via asyncpg, calls are
+  direct `httpx` (no third-party wrapper), refresh is thread-safe, and the read timeout is 30s. Methods:
+  `get_quotes` (batch), `get_price_history`, `get_option_chain`, `get_instrument_fundamentals`.
+
+**Offline mode.** The provider raises `MarketDataUnavailable` and stops calling Schwab when any of these hold:
+- the refresh token is past `refresh_expires_at`;
+- a refresh is rejected with `invalid_grant`;
+- there are no tokens;
+- the app key or secret is missing.
+
+`SchwabAPIError` stays for per-ticker failures, and neither error subclasses the other. Behaviour while offline:
+- The provider re-reads `schwab_tokens` at most once a minute and resumes when the row changes, which is what
+  `scripts/schwab_auth.py` does. No restart is needed, and each transition is logged once.
+- Pure market endpoints return `503 market_data_offline`. Signal caches are served stale, with `as_of`.
+- Mixed endpoints keep their DB data, with market fields `null` and the `X-Market-Data-Offline` header (plus
+  `market_data_offline` on object bodies).
+- The scheduler skips the price refresh and the price-based alert and signal rules. The DB-only rules keep
+  running.
+- Signals are never deactivated on missing data.
+- Admins see an expiry banner (amber at 72h–24h left, red under 24h, red when offline), fed by
+  `GET /api/market-data/status`.
+- The extension shows a "Market data offline" notice in its toolbar.
+- The in-app Reconnect button arrives in Part 5.
 
 Migration off yfinance happened because **yfinance rate-limits at ~19+ tickers** — exactly the book size this app targets. yfinance survives for two things only: the **earnings calendar** (Schwab doesn't expose it) and the LEAPS **options scanner**.
 
@@ -260,7 +288,7 @@ Migration off yfinance happened because **yfinance rate-limits at ~19+ tickers**
 - Trades entered from IST store expiry as Thursday where Schwab uses Friday → option price lookups match chain keys within **±3 days**.
 - Non-optionable tickers raise `SchwabAPIError` → the signal column shows `—`.
 - **Live intraday price is appended as the last daily bar** before computing RSI / daily MACD / day color, so the "live price" and "previous close" used by the timing signals stay consistent with what the indicators were computed from.
-- **The refresh token expires 7 days after the original auth.** Current expiry: **2026-07-09** per project memory — re-run `python scripts/schwab_auth.py` (paste-URL OAuth flow) before then. The backend logs a warning within 24h of expiry. *This is the single most common way the whole app goes dark.*
+- **The refresh token expires 7 days after the original auth.** Re-run `python scripts/schwab_auth.py` (paste-URL OAuth flow) before then. The admin banner counts down from 72h and turns into "Market data offline" once it lapses. Since Part 4 that is a labelled degraded mode, not a blackout.
 
 **Cache TTLs:** signals 4h server-side / 1h client-side; option chains for P&L 5min; wheel active-slots 60s in the extension.
 
@@ -325,7 +353,7 @@ Ordered roughly by *trading value per unit of work*, with the specific reason ea
 
 10. **Unify the two scanning philosophies.** Scanner (yfinance, LEAPS, IV-surface excess) and Chain (Schwab, short-dated, composite score) were deliberately kept apart. Now that Schwab is the backbone, porting the IV-surface work onto Schwab data would remove the last meaningful yfinance dependency besides earnings.
 11. **An AI analyst over the journal.** The Market Snapshot design explicitly anticipates this: every note can carry the complete signal state as structured JSONB. The payoff is a "review my last 30 wheel decisions" agent that correlates stated reasoning against outcomes — essentially Tier 1 #2 with the trader's own words included. Gemini and Claude are both already wired in.
-12. **Resilience on the Schwab token.** A 7-day refresh token with a manual CLI re-auth is the app's single point of total failure. At minimum: a visible banner in the UI with days remaining, not just a backend log line.
+12. **Resilience on the Schwab token.** Done in Part 4 (banner + offline mode + provider boundary). Remaining: the in-app Reconnect flow (Part 5, needs HTTPS).
 13. **Reduce the manual-resolve burden.** Automated `needs_action` detection was explicitly out of scope for v2, so slot resolution is fully manual. The reconcile snapshot already knows which positions vanished from E\*TRADE — that is enough to *propose* a resolve (never auto-apply it; the ITM/OTM/assigned distinction genuinely needs a human).
 
 ### Explicit non-goals (do not propose these)

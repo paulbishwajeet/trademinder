@@ -128,4 +128,6 @@ class TradeResponse(TradeListItem):
     exit_strategy: Optional[str] = None
     signal_action: Optional[str] = None
     last_price_at: Optional[datetime] = None
+    # True while market data is offline: current_price / unrealized_pnl are then null.
+    market_data_offline: bool = False
     rationale: Optional[RationaleResponse] = None

@@ -9,7 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, exists, func
 
 from app.database import get_db, AsyncSessionLocal
-from app.deps import get_current_user
+from app.deps import get_current_user, market_data_flag
+from app.services.market_data_errors import MarketDataUnavailable
 from app.models.brokerage_account import ScreenerAccountMembership
 from app.models.screener import Screener
 from app.models.screener_commentary import ScreenerCommentary
@@ -45,6 +46,7 @@ async def list_screener(
     account_id: Optional[uuid.UUID] = Query(None),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
+    offline: bool = Depends(market_data_flag),
 ):
     stmt = select(Screener).where(Screener.user_id == user.id)
     account_filter = await resolve_account_filter(db, user, account_id)
@@ -54,7 +56,11 @@ async def list_screener(
             ScreenerAccountMembership.account_id == account_filter,
         ))
     result = await db.execute(stmt.order_by(Screener.symbol))
-    return result.scalars().all()
+    rows = result.scalars().all()
+    if not offline:
+        return rows
+    # Offline: serve the stored metrics as cached values, flagged stale (as of last_fetched_at).
+    return [ScreenerRowResponse.model_validate(r).model_copy(update={"stale": True}) for r in rows]
 
 
 @router.get("/preview/{ticker}", response_model=ScreenerPreviewResponse)
@@ -87,18 +93,24 @@ async def add_screener_symbol(
         await db.commit()
         return await _reload_row(db, row.id)
 
+    fetched_at: datetime | None = datetime.now(timezone.utc)
     if payload.precomputed is not None:
         data = payload.precomputed.model_dump()
     else:
         loop = asyncio.get_running_loop()
-        raw = await loop.run_in_executor(None, fetch_screener_row, symbol)
+        try:
+            raw = await loop.run_in_executor(None, fetch_screener_row, symbol)
+        except MarketDataUnavailable:
+            # Tracking a symbol doesn't need market data: add it now, fetch its data later.
+            raw = {"fetch_status": "error", "fetch_error": "Market data offline"}
+            fetched_at = None
         data = ScreenerFetchedFields(**raw).model_dump()
 
     row = Screener(
         user_id=user.id,
         symbol=symbol,
         category=payload.category,
-        last_fetched_at=datetime.now(timezone.utc),
+        last_fetched_at=fetched_at,
         **{k: data.get(k) for k in _SCREENER_FIELDS},
     )
     db.add(row)
@@ -184,7 +196,13 @@ async def _run_fetch_all_job(
             result = await session.execute(stmt)
             row = result.scalar_one_or_none()
             if row is not None:
-                raw = await loop.run_in_executor(None, partial(fetch_screener_row, symbol, row.sector))
+                try:
+                    raw = await loop.run_in_executor(None, partial(fetch_screener_row, symbol, row.sector))
+                except MarketDataUnavailable:
+                    # Offline: stop without touching any stored row (they keep their last data).
+                    _jobs[job_id]["errors"].append({"symbol": symbol, "error": "Market data offline"})
+                    _jobs[job_id]["status"] = "done"
+                    return
                 data = ScreenerFetchedFields(**raw).model_dump()
                 if data.get("fetch_status") == "error":
                     _jobs[job_id]["errors"].append({"symbol": symbol, "error": data.get("fetch_error")})

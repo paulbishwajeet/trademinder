@@ -46,3 +46,5 @@ class DashboardSummary(BaseModel):
     accounts: list[DashboardAccountCard]
     needs_action: list[DashboardNeedsActionSlot]
     alerts: list[DashboardAlert]
+    # Nothing in the summary is live market data; the flag lets the page show the offline state.
+    market_data_offline: bool = False

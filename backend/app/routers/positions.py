@@ -7,7 +7,7 @@ from sqlalchemy.orm import selectinload
 from fastapi import APIRouter, Depends
 
 from app.database import get_db
-from app.deps import get_current_user
+from app.deps import get_current_user, market_data_flag
 from app.models.user import User
 from app.services.ownership import get_account, resolve_account_filter
 from app.models.trade import Trade
@@ -27,6 +27,9 @@ async def positions_status(
     payload: PositionsStatusRequest,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
+    # Everything here comes from the DB (rationale snapshot, alerts, signal rows); the header lets
+    # the extension show its "Market data offline" notice.
+    offline: bool = Depends(market_data_flag),
 ) -> dict[str, PositionStatus]:
     # With account_id: only that account's trades (a single linked E*TRADE account).
     # Without: every account of the user (E*TRADE's All view); each match carries its account.
