@@ -1,17 +1,20 @@
 import { useState } from 'react'
-import type { TechnicalsData } from '../../types'
+import type { TechnicalsData, WheelSignalSnapshot } from '../../types'
 import { TechnicalsPanel } from '../shared/TechnicalsPanel'
+import { MarketSnapshotPreview } from './MarketSnapshotPreview'
 
 interface Props {
   ticker: string
-  onSubmit: (note: string, tags: string[], rationale: TechnicalsData | null) => Promise<void>
+  snapshot?: WheelSignalSnapshot | null
+  onSubmit: (note: string, tags: string[], rationale: TechnicalsData | null, signalSnapshot: WheelSignalSnapshot | null) => Promise<void>
 }
 
-export function CommentaryForm({ ticker, onSubmit }: Props) {
+export function CommentaryForm({ ticker, snapshot, onSubmit }: Props) {
   const [note, setNote] = useState('')
   const [tagsInput, setTagsInput] = useState('')
   const [technicals, setTechnicals] = useState<TechnicalsData | null>(null)
   const [techOpen, setTechOpen] = useState(false)
+  const [attachSnapshot, setAttachSnapshot] = useState(false)
   const [loading, setLoading] = useState(false)
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -20,11 +23,12 @@ export function CommentaryForm({ ticker, onSubmit }: Props) {
     setLoading(true)
     try {
       const tags = tagsInput.split(',').map(t => t.trim()).filter(Boolean)
-      await onSubmit(note.trim(), tags, technicals)
+      await onSubmit(note.trim(), tags, technicals, attachSnapshot ? snapshot ?? null : null)
       setNote('')
       setTagsInput('')
       setTechnicals(null)
       setTechOpen(false)
+      setAttachSnapshot(false)
     } finally {
       setLoading(false)
     }
@@ -50,6 +54,20 @@ export function CommentaryForm({ ticker, onSubmit }: Props) {
           </div>
         )}
       </div>
+
+      {snapshot && (
+        <div>
+          <label className="flex items-center gap-1.5 text-xs text-indigo-600">
+            <input type="checkbox" checked={attachSnapshot} onChange={e => setAttachSnapshot(e.target.checked)} />
+            Attach Market Snapshot (CC/SP Timing, RSI, MACD, P&L)
+          </label>
+          {attachSnapshot && (
+            <div className="mt-2">
+              <MarketSnapshotPreview snapshot={snapshot} />
+            </div>
+          )}
+        </div>
+      )}
 
       <button type="submit" disabled={loading}
         className="px-4 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50">

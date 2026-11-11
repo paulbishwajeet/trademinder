@@ -11,9 +11,22 @@
   </div>
 
   <div class="section">
-    <label class="label">Backend URL</label>
-    <input type="text" id="apiUrl" class="input" placeholder="http://127.0.0.1:5431">
-    <div id="statusDot" class="status-dot"></div>
+    <label class="label" for="apiUrl">TradeMinder server address</label>
+    <input type="text" id="apiUrl" class="input" placeholder="http://127.0.0.1:5431" spellcheck="false">
+    <div class="status-row"><span id="statusDot" class="status-dot"></span><span id="statusText" class="status-text">Checking…</span></div>
+  </div>
+
+  <div class="section">
+    <label class="label">Account</label>
+    <div id="authSignedIn" class="auth-row" style="display:none">
+      <span class="auth-email" id="authEmail"></span>
+      <button id="signOut" class="btn-small">Sign out</button>
+    </div>
+    <div id="authSignedOut" style="display:none">
+      <div id="authNotice" class="auth-notice"></div>
+      <button id="signIn" class="btn-secondary">Sign in</button>
+    </div>
+    <div id="authError" class="status-text err-text"></div>
   </div>
 
   <div class="section">

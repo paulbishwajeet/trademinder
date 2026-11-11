@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import type { WheelSlotDetail } from '../../types'
+import { tradePath } from '../../lib/paths'
 
 interface Props {
   slot: WheelSlotDetail
@@ -23,7 +24,7 @@ const STATUS_COLORS: Record<string, string> = {
   sold_put_active: '#3B82F6',
 }
 
-export function WheelSlotCard({ slot, ticker, onResolve, onLinkLeg }: Props) {
+export function WheelSlotCard({ slot, onResolve, onLinkLeg }: Props) {
   const [expanded, setExpanded] = useState(false)
   const color = STATUS_COLORS[slot.status] ?? '#6B7280'
   const label = STATUS_LABELS[slot.status] ?? slot.status
@@ -103,7 +104,7 @@ export function WheelSlotCard({ slot, ticker, onResolve, onLinkLeg }: Props) {
                     <td className="py-1 pr-2">{leg.trade_quantity}</td>
                     <td className="py-1 pr-2">{leg.trade_premium != null ? `$${leg.trade_premium}` : '—'}</td>
                     <td className="py-1 pr-2 capitalize">{leg.trade_status}</td>
-                    <td className="py-1"><Link to={`/trades/${leg.trade_id}`} className="text-blue-500 hover:underline">view</Link></td>
+                    <td className="py-1"><Link to={tradePath(slot.account_id, leg.trade_id)} className="text-blue-500 hover:underline">view</Link></td>
                   </tr>
                 ))}
               </tbody>
@@ -122,7 +123,7 @@ export function WheelSlotCard({ slot, ticker, onResolve, onLinkLeg }: Props) {
                       <td className="py-0.5 pr-2">{leg.trade_strategy}</td>
                       <td className="py-0.5 pr-2">{leg.trade_strike_price != null ? `$${leg.trade_strike_price}` : '—'}</td>
                       <td className="py-0.5 pr-2">{leg.trade_expiry_date ?? '—'}</td>
-                      <td className="py-0.5"><Link to={`/trades/${leg.trade_id}`} className="text-blue-400 hover:underline">view</Link></td>
+                      <td className="py-0.5"><Link to={tradePath(slot.account_id, leg.trade_id)} className="text-blue-400 hover:underline">view</Link></td>
                     </tr>
                   ))}
                 </tbody>

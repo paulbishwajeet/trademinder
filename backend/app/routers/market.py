@@ -10,11 +10,15 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.deps import get_current_user
+from app.models.user import User
 from app.services.alert_engine import run as run_alert_engine
 from app.services.options_scanner import run_scan
 from app.services.price_fetcher import fetch_quote, fetch_rsi_batch, refresh_open_trades
 from app.services.technicals_fetcher import fetch_technicals, fetch_macd_crossover, fetch_rsi_signal, fetch_volume_spikes
 from app.services.cc_signal import compute_cc_signal, compute_combined_signal, compute_sp_signal, fetch_option_mid
+from app.services.cc_timing_signal import compute_cc_timing_signal
+from app.services.sp_timing_signal import compute_sp_timing_signal
 
 router = APIRouter(prefix="/api/market", tags=["market"])
 
@@ -32,9 +36,9 @@ async def get_quote(ticker: str):
 
 
 @router.post("/refresh")
-async def refresh_prices(db: AsyncSession = Depends(get_db)):
-    price_result = await refresh_open_trades(db)
-    alert_result = await run_alert_engine(db)
+async def refresh_prices(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    price_result = await refresh_open_trades(db, user_id=user.id)
+    alert_result = await run_alert_engine(db, user_id=user.id)
     return {
         "trades_updated": price_result["trades_updated"],
         "tickers_fetched": price_result["tickers_fetched"],
@@ -113,6 +117,20 @@ async def get_volume_spikes(ticker: str):
 async def get_cc_signal(ticker: str, refresh: bool = False):
     loop = asyncio.get_running_loop()
     result = await loop.run_in_executor(None, compute_cc_signal, ticker.upper(), refresh)
+    return JSONResponse(content=result)
+
+
+@router.get("/cc-timing-signal/{ticker}")
+async def get_cc_timing_signal(ticker: str, refresh: bool = False):
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(None, compute_cc_timing_signal, ticker.upper(), refresh)
+    return JSONResponse(content=result)
+
+
+@router.get("/sp-timing-signal/{ticker}")
+async def get_sp_timing_signal(ticker: str, refresh: bool = False):
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(None, compute_sp_timing_signal, ticker.upper(), refresh)
     return JSONResponse(content=result)
 
 

@@ -1,6 +1,10 @@
 // frontend/src/components/shared/PnLDisplay.tsx
+import { useMarketDataOffline } from '../../hooks/useMarketDataOffline'
+import { MarketDash } from './MarketDash'
+
 export function PnLDisplay({ value }: { value: number | null }) {
-  if (value === null) return <span className="text-gray-400">—</span>
+  const offline = useMarketDataOffline()
+  if (value === null) return <MarketDash offline={offline} />
   const num = Number(value)
   const isPositive = num >= 0
   return (

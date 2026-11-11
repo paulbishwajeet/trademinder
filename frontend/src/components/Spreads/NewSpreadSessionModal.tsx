@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { SessionSummary, Trade } from '../../types'
 import { sessionsApi } from '../../api/sessions'
 import { tradesApi } from '../../api/trades'
+import { useRequiredAccount } from '../../context/AccountsContext'
 
 interface Props {
   onClose: () => void
@@ -14,6 +15,7 @@ const STRATEGY_OPTIONS = [
 ]
 
 export function NewSpreadSessionModal({ onClose, onCreated }: Props) {
+  const account = useRequiredAccount()
   const [step, setStep] = useState<1 | 2>(1)
   const [ticker, setTicker] = useState('')
   const [strategy, setStrategy] = useState('IRON_CONDOR')
@@ -37,10 +39,11 @@ export function NewSpreadSessionModal({ onClose, onCreated }: Props) {
         strategy,
         status: 'open',
         opened_at: openedAt,
+        account_id: account.id,
       })
       setCreatedSession(session)
       try {
-        const all = await tradesApi.list({ ticker: ticker.trim().toUpperCase() })
+        const all = await tradesApi.list({ ticker: ticker.trim().toUpperCase(), account_id: account.id })
         setAvailableTrades(all.filter(t => !t.session_id))
       } catch {
         // non-fatal — advance to step 2 with empty list

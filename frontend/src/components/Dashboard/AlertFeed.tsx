@@ -1,7 +1,8 @@
 // frontend/src/components/Dashboard/AlertFeed.tsx
-import { useState, useEffect, useCallback } from 'react'
-import type { Alert } from '../../types'
+import { Link } from 'react-router-dom'
+import type { DashboardAlert } from '../../types'
 import { alertsApi } from '../../api/alerts'
+import { accountLabel, tradePath } from '../../lib/paths'
 
 const SEVERITY_STYLES: Record<string, string> = {
   urgent: 'border-l-4 border-red-500 bg-red-50',
@@ -21,75 +22,64 @@ function timeAgo(iso: string): string {
 }
 
 interface Props {
-  onCountChange?: (count: number) => void
+  alerts: DashboardAlert[]
+  /** Called after mark-read / dismiss so the Dashboard can reload its summary. */
+  onChanged: () => void
 }
 
-export function AlertFeed({ onCountChange }: Props) {
-  const [alerts, setAlerts] = useState<Alert[]>([])
+/** Today's alerts across every account, each tagged with its account. */
+export function AlertFeed({ alerts, onChanged }: Props) {
+  const sorted = [...alerts].sort(
+    (a, b) => (SEVERITY_ORDER[a.severity] ?? 3) - (SEVERITY_ORDER[b.severity] ?? 3),
+  )
 
-  const load = useCallback(async () => {
-    const data = await alertsApi.list()
-    const sorted = [...data].sort(
-      (a, b) => (SEVERITY_ORDER[a.severity] ?? 3) - (SEVERITY_ORDER[b.severity] ?? 3),
-    )
-    setAlerts(sorted)
-    onCountChange?.(data.length)
-  }, [onCountChange])
-
-  useEffect(() => {
-    load()
-    const interval = setInterval(load, 60000)
-    return () => clearInterval(interval)
-  }, [load])
-
-  const handleRead = async (id: string) => {
+  async function handleRead(id: string) {
     await alertsApi.markRead(id)
-    load()
+    onChanged()
   }
 
-  const handleDismiss = async (id: string) => {
+  async function handleDismiss(id: string) {
     await alertsApi.dismiss(id)
-    load()
+    onChanged()
   }
 
   return (
     <div className="bg-white rounded-lg border border-gray-200 p-4">
       <h2 className="text-sm font-semibold text-gray-700 mb-3">
-        Alerts
+        Today's alerts
         {alerts.length > 0 && (
           <span className="ml-2 px-1.5 py-0.5 bg-red-100 text-red-700 rounded text-xs">
             {alerts.length}
           </span>
         )}
       </h2>
-
-      {alerts.length === 0 ? (
-        <p className="text-sm text-gray-400">No active alerts.</p>
+      {sorted.length === 0 ? (
+        <p className="text-sm text-gray-400">No alerts today.</p>
       ) : (
         <div className="space-y-2">
-          {alerts.map(alert => (
+          {sorted.map(alert => (
             <div
               key={alert.id}
               className={`rounded p-3 ${SEVERITY_STYLES[alert.severity] ?? 'border-l-4 border-gray-400 bg-gray-50'} ${alert.is_read ? 'opacity-60' : ''}`}
             >
-              <div className="flex justify-between items-start">
+              <div className="flex justify-between items-start gap-2">
                 <p className="text-sm font-medium text-gray-800">{alert.title}</p>
-                <span className="text-xs text-gray-400 ml-2 shrink-0">{timeAgo(alert.triggered_at)}</span>
+                <span className="text-xs text-gray-400 shrink-0">{timeAgo(alert.triggered_at)}</span>
               </div>
               <p className="text-xs text-gray-600 mt-0.5">{alert.message}</p>
-              <div className="flex gap-3 mt-2">
+              <div className="flex items-center gap-3 mt-2">
+                <span className="rounded bg-white px-1.5 py-0.5 text-[11px] text-gray-600 ring-1 ring-gray-200">
+                  {accountLabel(alert.account)}
+                </span>
+                <Link to={tradePath(alert.account.id, alert.trade_id)} className="text-xs text-blue-600 hover:underline">
+                  {alert.ticker}
+                </Link>
                 {!alert.is_read && (
-                  <button
-                    onClick={() => handleRead(alert.id)}
-                    className="text-xs text-blue-600 hover:underline"
-                  >
+                  <button onClick={() => handleRead(alert.id)} className="text-xs text-blue-600 hover:underline">
                     Mark read
                   </button>
                 )}
-                <button
-                  onClick={() => handleDismiss(alert.id)}
-                  className="text-xs text-gray-500 hover:underline"
-                >
+                <button onClick={() => handleDismiss(alert.id)} className="text-xs text-gray-500 hover:underline">
                   Dismiss
                 </button>
               </div>

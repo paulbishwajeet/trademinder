@@ -1,11 +1,18 @@
 import { useState, useEffect } from 'react'
+import { useMarketDataOffline } from '../hooks/useMarketDataOffline'
+import { MARKET_OFFLINE_TOOLTIP, staleTooltip } from '../components/shared/MarketDash'
 import { Link } from 'react-router-dom'
-import type { WheelSessionDetail, WheelSessionSummary, WheelSlotDetail, CCSignalResult, OptionPriceResult } from '../types'
-import { wheelApi, combinedSignalApi, optionPriceApi } from '../api/wheel'
+import type { WheelSessionDetail, WheelSlotDetail, CCSignalResult, OptionPriceResult, TechnicalsData, WheelSignalSnapshot } from '../types'
+import { wheelApi, combinedSignalApi, optionPriceApi, ccTimingSignalApi, spTimingSignalApi } from '../api/wheel'
+import { technicalsApi, type QuoteData } from '../api/technicals'
+import { timeAgo } from '../components/Screener/timeAgo'
 import { NewWheelModalV2 } from '../components/Wheel/NewWheelModalV2'
 import { AddSlotModal } from '../components/Wheel/AddSlotModal'
 import { ResolveModal } from '../components/Wheel/ResolveModal'
 import { LinkLegModalV2 } from '../components/Wheel/LinkLegModalV2'
+import { CommentaryPopover } from '../components/Commentary/CommentaryPopover'
+import { useRequiredAccount } from '../context/AccountsContext'
+import { tradePath, scopedResearchPath } from '../lib/paths'
 
 interface FlatSlot {
   slot: WheelSlotDetail
@@ -25,11 +32,49 @@ function flattenSlots(sessions: WheelSessionDetail[]): FlatSlot[] {
   })))
 }
 
+const SIGNAL_FETCH_CONCURRENCY = 4
+
+// Runs `tasks` with at most `limit` in flight at once. Each task is expected to
+// handle its own errors (they already .catch() internally), so a rejection here
+// would indicate a bug in the caller, not a normal fetch failure.
+async function runWithConcurrency(tasks: Array<() => Promise<void>>, limit: number): Promise<void> {
+  let next = 0
+  async function worker() {
+    while (next < tasks.length) {
+      const task = tasks[next++]
+      await task()
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, tasks.length) }, worker))
+}
+
 const STATUS_LABELS: Record<string, string> = {
   awaiting_cc: 'Awaiting CC',
   cc_active: 'CC Active',
   awaiting_sold_put: 'Awaiting Sold Put',
   sold_put_active: 'Sold Put Active',
+}
+
+const MACD_COLORS: Record<string, string> = {
+  bullish: 'bg-green-100 text-green-700',
+  bearish: 'bg-red-100 text-red-700',
+  neutral: 'bg-gray-100 text-gray-600',
+}
+
+const MACD_FADING_COLOR = 'bg-amber-100 text-amber-700'
+
+function macdWeeklyDisplay(signal: string | null | undefined, trend: string | null | undefined) {
+  if (trend === 'fading_near_flip' && (signal === 'bullish' || signal === 'bearish')) {
+    const arrow = signal === 'bearish' ? '↗' : '↘'
+    const flipsTo = signal === 'bearish' ? 'bullish' : 'bearish'
+    return {
+      label: `${signal === 'bearish' ? 'Bearish' : 'Bullish'} ${arrow}`,
+      colorClass: MACD_FADING_COLOR,
+      title: `${signal === 'bearish' ? 'Bearish' : 'Bullish'}, but momentum fading — may flip ${flipsTo} soon`,
+    }
+  }
+  const label = signal ? signal.charAt(0).toUpperCase() + signal.slice(1) : '—'
+  return { label, colorClass: MACD_COLORS[signal ?? 'neutral'], title: label }
 }
 
 const GRADE_COLORS: Record<string, string> = {
@@ -39,26 +84,70 @@ const GRADE_COLORS: Record<string, string> = {
   wait: 'bg-gray-50 text-gray-400 border-gray-200',
 }
 
+// Module-level (survives page navigation within the SPA, cleared on full reload) caches for
+// signal/quote/technicals lookups, so switching pages and coming back doesn't re-fetch from
+// Schwab every time. Only the "Fetch Signals" button (force=true) bypasses this.
+const CACHE_TTL_MS = 60 * 60 * 1000 // 1 hour
+
+interface CacheEntry<T> { data: T; ts: number }
+
+const signalsCache: Record<string, CacheEntry<CCSignalResult>> = {}
+const spSignalsCache: Record<string, CacheEntry<CCSignalResult>> = {}
+const quotesCache: Record<string, CacheEntry<QuoteData>> = {}
+const technicalsCache: Record<string, CacheEntry<TechnicalsData>> = {}
+const optionPricesCache: Record<string, CacheEntry<OptionPriceResult>> = {}
+const ccTimingCache: Record<string, CacheEntry<CCSignalResult>> = {}
+const spTimingCache: Record<string, CacheEntry<CCSignalResult>> = {}
+
+function seedFromCache<T>(cache: Record<string, CacheEntry<T>>): Record<string, T> {
+  const now = Date.now()
+  const seeded: Record<string, T> = {}
+  for (const [key, entry] of Object.entries(cache)) {
+    if (now - entry.ts < CACHE_TTL_MS) seeded[key] = entry.data
+  }
+  return seeded
+}
+
+function isCacheFresh(cache: Record<string, CacheEntry<unknown>>, key: string): boolean {
+  const entry = cache[key]
+  return entry != null && Date.now() - entry.ts < CACHE_TTL_MS
+}
+
 export function WheelDashboardPage() {
+  const accountId = useRequiredAccount().id
   const [sessions, setSessions] = useState<WheelSessionDetail[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const marketOffline = useMarketDataOffline()
+  // Market-derived cell with no value: a dash, explained while market data is offline.
+  const dashTd = () => (
+    <td className="py-2 pr-3 text-xs text-gray-300" title={marketOffline ? MARKET_OFFLINE_TOOLTIP : undefined}>—</td>
+  )
   const [showNewModal, setShowNewModal] = useState(false)
   const [addSlotSessionId, setAddSlotSessionId] = useState<string | null>(null)
   const [resolveSlotId, setResolveSlotId] = useState<string | null>(null)
   const [linkSlotId, setLinkSlotId] = useState<string | null>(null)
+  const [editingContractsSlotId, setEditingContractsSlotId] = useState<string | null>(null)
+  const [contractsInput, setContractsInput] = useState('')
+  const [savingContracts, setSavingContracts] = useState(false)
   const [expandedSlot, setExpandedSlot] = useState<string | null>(null)
-  const [signals, setSignals] = useState<Record<string, CCSignalResult | 'loading' | 'error'>>({})
-  const [spSignals, setSpSignals] = useState<Record<string, CCSignalResult | 'loading' | 'error'>>({})
+  const [signals, setSignals] = useState<Record<string, CCSignalResult | 'loading' | 'error'>>(() => seedFromCache(signalsCache))
+  const [spSignals, setSpSignals] = useState<Record<string, CCSignalResult | 'loading' | 'error'>>(() => seedFromCache(spSignalsCache))
+  const [ccTimingSignals, setCcTimingSignals] = useState<Record<string, CCSignalResult | 'loading' | 'error'>>(() => seedFromCache(ccTimingCache))
+  const [spTimingSignals, setSpTimingSignals] = useState<Record<string, CCSignalResult | 'loading' | 'error'>>(() => seedFromCache(spTimingCache))
   const [signalDetail, setSignalDetail] = useState<string | null>(null)
   const [signalsFetching, setSignalsFetching] = useState(false)
-  const [optionPrices, setOptionPrices] = useState<Record<string, OptionPriceResult | 'loading' | 'error'>>({})
+  const [sectionFetching, setSectionFetching] = useState<Record<string, boolean>>({})
+  const [rowFetching, setRowFetching] = useState<Record<string, boolean>>({})
+  const [optionPrices, setOptionPrices] = useState<Record<string, OptionPriceResult | 'loading' | 'error'>>(() => seedFromCache(optionPricesCache))
+  const [quotes, setQuotes] = useState<Record<string, QuoteData | 'loading' | 'error'>>(() => seedFromCache(quotesCache))
+  const [technicals, setTechnicals] = useState<Record<string, TechnicalsData | 'loading' | 'error'>>(() => seedFromCache(technicalsCache))
 
   async function load() {
     setLoading(true)
     setError(null)
     try {
-      const summaries = await wheelApi.list()
+      const summaries = await wheelApi.list({ account_id: accountId })
       const detailed = await Promise.all(summaries.map(s => wheelApi.get(s.id)))
       setSessions(detailed)
     } catch (e: unknown) {
@@ -70,13 +159,15 @@ export function WheelDashboardPage() {
 
   useEffect(() => { load() }, [])
 
-  async function loadSignals(force = false) {
+  async function loadSignals(force = false, opts?: { tickers?: string[]; includeOptionPrices?: boolean }) {
     if (sessions.length === 0) return
-    const tickers = [...new Set(sessions.map(s => s.ticker))]
+    const allTickers = [...new Set(sessions.map(s => s.ticker))]
+    const tickers = opts?.tickers ? allTickers.filter(t => opts.tickers!.includes(t)) : allTickers
+    const includeOptionPrices = opts?.includeOptionPrices ?? true
 
     // Collect active option legs (keyed by slot id)
-    const activeLegs = flattenSlots(sessions)
-      .filter(f => f.slot.status === 'cc_active' || f.slot.status === 'sold_put_active')
+    const activeLegs = !includeOptionPrices ? [] : flattenSlots(sessions)
+      .filter(f => (f.slot.status === 'cc_active' || f.slot.status === 'sold_put_active') && tickers.includes(f.ticker))
       .flatMap(f => {
         const openLegs = f.slot.legs.filter(l => l.rotation_number === f.slot.rotation_number && l.trade_status === 'open' && l.leg_role !== 'stock')
         const leg = openLegs[openLegs.length - 1] // latest open leg (legs ordered by created_at)
@@ -85,44 +176,162 @@ export function WheelDashboardPage() {
       })
 
     if (force) {
-      setSignalsFetching(true)
       tickers.forEach(ticker => {
         setSignals(prev => ({ ...prev, [ticker]: 'loading' }))
         setSpSignals(prev => ({ ...prev, [ticker]: 'loading' }))
+        setCcTimingSignals(prev => ({ ...prev, [ticker]: 'loading' }))
+        setSpTimingSignals(prev => ({ ...prev, [ticker]: 'loading' }))
+        setQuotes(prev => ({ ...prev, [ticker]: 'loading' }))
+        setTechnicals(prev => ({ ...prev, [ticker]: 'loading' }))
       })
       activeLegs.forEach(({ slotId }) => setOptionPrices(prev => ({ ...prev, [slotId]: 'loading' })))
     } else {
       tickers.forEach(ticker => {
-        if (!signals[ticker]) setSignals(prev => ({ ...prev, [ticker]: 'loading' }))
-        if (!spSignals[ticker]) setSpSignals(prev => ({ ...prev, [ticker]: 'loading' }))
+        if (!isCacheFresh(signalsCache, ticker)) setSignals(prev => ({ ...prev, [ticker]: 'loading' }))
+        if (!isCacheFresh(spSignalsCache, ticker)) setSpSignals(prev => ({ ...prev, [ticker]: 'loading' }))
+        if (!isCacheFresh(ccTimingCache, ticker)) setCcTimingSignals(prev => ({ ...prev, [ticker]: 'loading' }))
+        if (!isCacheFresh(spTimingCache, ticker)) setSpTimingSignals(prev => ({ ...prev, [ticker]: 'loading' }))
+        if (!isCacheFresh(quotesCache, ticker)) setQuotes(prev => ({ ...prev, [ticker]: 'loading' }))
+        if (!isCacheFresh(technicalsCache, ticker)) setTechnicals(prev => ({ ...prev, [ticker]: 'loading' }))
       })
       activeLegs.forEach(({ slotId }) => {
-        if (!optionPrices[slotId]) setOptionPrices(prev => ({ ...prev, [slotId]: 'loading' }))
+        if (!isCacheFresh(optionPricesCache, slotId)) setOptionPrices(prev => ({ ...prev, [slotId]: 'loading' }))
       })
     }
 
-    const tickersToFetch = tickers.filter(ticker => force || !signals[ticker])
-    const legsToFetch = activeLegs.filter(({ slotId }) => force || !optionPrices[slotId])
+    const tickersToFetch = tickers.filter(ticker => force || !isCacheFresh(signalsCache, ticker))
+    const legsToFetch = activeLegs.filter(({ slotId }) => force || !isCacheFresh(optionPricesCache, slotId))
 
-    await Promise.allSettled([
-      ...tickersToFetch.map(ticker =>
+    const tasks: Array<() => Promise<void>> = [
+      ...tickersToFetch.map(ticker => () =>
         combinedSignalApi.get(ticker, force)
           .then(result => {
             setSignals(prev => ({ ...prev, [ticker]: result.cc }))
             setSpSignals(prev => ({ ...prev, [ticker]: result.sp }))
+            // Stale results (served while market data is offline) aren't cached for the hour.
+            if (!result.cc.stale) {
+              signalsCache[ticker] = { data: result.cc, ts: Date.now() }
+              spSignalsCache[ticker] = { data: result.sp, ts: Date.now() }
+            }
           })
           .catch(() => {
             setSignals(prev => ({ ...prev, [ticker]: 'error' }))
             setSpSignals(prev => ({ ...prev, [ticker]: 'error' }))
           })
       ),
-      ...legsToFetch.map(({ slotId, ticker, strike, expiry, contractType }) =>
+      ...tickersToFetch.map(ticker => () =>
+        ccTimingSignalApi.get(ticker, force)
+          .then(result => {
+            setCcTimingSignals(prev => ({ ...prev, [ticker]: result }))
+            if (!result.stale) ccTimingCache[ticker] = { data: result, ts: Date.now() }
+          })
+          .catch(() => setCcTimingSignals(prev => ({ ...prev, [ticker]: 'error' })))
+      ),
+      ...tickersToFetch.map(ticker => () =>
+        spTimingSignalApi.get(ticker, force)
+          .then(result => {
+            setSpTimingSignals(prev => ({ ...prev, [ticker]: result }))
+            if (!result.stale) spTimingCache[ticker] = { data: result, ts: Date.now() }
+          })
+          .catch(() => setSpTimingSignals(prev => ({ ...prev, [ticker]: 'error' })))
+      ),
+      ...tickersToFetch.map(ticker => () =>
+        technicalsApi.quote(ticker)
+          .then(result => {
+            setQuotes(prev => ({ ...prev, [ticker]: result }))
+            quotesCache[ticker] = { data: result, ts: Date.now() }
+          })
+          .catch(() => setQuotes(prev => ({ ...prev, [ticker]: 'error' })))
+      ),
+      ...tickersToFetch.map(ticker => () =>
+        technicalsApi.fetch(ticker)
+          .then(result => {
+            setTechnicals(prev => ({ ...prev, [ticker]: result }))
+            technicalsCache[ticker] = { data: result, ts: Date.now() }
+          })
+          .catch(() => setTechnicals(prev => ({ ...prev, [ticker]: 'error' })))
+      ),
+      ...legsToFetch.map(({ slotId, ticker, strike, expiry, contractType }) => () =>
         optionPriceApi.get(ticker, strike, expiry, contractType)
-          .then(result => setOptionPrices(prev => ({ ...prev, [slotId]: result })))
+          .then(result => {
+            setOptionPrices(prev => ({ ...prev, [slotId]: result }))
+            optionPricesCache[slotId] = { data: result, ts: Date.now() }
+          })
           .catch(() => setOptionPrices(prev => ({ ...prev, [slotId]: 'error' })))
       ),
-    ])
-    if (force) setSignalsFetching(false)
+    ]
+
+    // Schwab's API gateway rate-limits/blocks bursts of concurrent requests, so
+    // signals for many tickers must be fetched a few at a time, not all at once.
+    await runWithConcurrency(tasks, SIGNAL_FETCH_CONCURRENCY)
+  }
+
+  async function fetchSection(key: string, tickers: string[], includeOptionPrices: boolean) {
+    setSectionFetching(prev => ({ ...prev, [key]: true }))
+    try {
+      await loadSignals(true, { tickers, includeOptionPrices })
+    } finally {
+      setSectionFetching(prev => ({ ...prev, [key]: false }))
+    }
+  }
+
+  async function fetchRow(ticker: string, includeOptionPrices: boolean) {
+    setRowFetching(prev => ({ ...prev, [ticker]: true }))
+    try {
+      await loadSignals(true, { tickers: [ticker], includeOptionPrices })
+    } finally {
+      setRowFetching(prev => ({ ...prev, [ticker]: false }))
+    }
+  }
+
+  async function handleDeleteSlot(slotId: string, ticker: string) {
+    if (!confirm(`Delete this ${ticker} slot? This removes its leg links and premium history (the underlying trades are not deleted).`)) return
+    await wheelApi.deleteSlot(slotId)
+    await load()
+  }
+
+  function startEditContracts(slotId: string, currentContracts: number) {
+    setEditingContractsSlotId(slotId)
+    setContractsInput(String(currentContracts))
+  }
+
+  function cancelEditContracts() {
+    setEditingContractsSlotId(null)
+    setContractsInput('')
+  }
+
+  async function saveContracts(slotId: string) {
+    const contracts = parseInt(contractsInput, 10)
+    if (!Number.isInteger(contracts) || contracts < 1) return
+    setSavingContracts(true)
+    try {
+      await wheelApi.updateSlot(slotId, { contracts })
+      setEditingContractsSlotId(null)
+      setContractsInput('')
+      await load()
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Failed to update contracts')
+    } finally {
+      setSavingContracts(false)
+    }
+  }
+
+  async function fetchAllSignals() {
+    setSignalsFetching(true)
+    try {
+      await loadSignals(true)
+    } finally {
+      setSignalsFetching(false)
+    }
+  }
+
+  function sectionFetchedLabel(tickers: string[]): string {
+    const timestamps = tickers
+      .map(t => quotesCache[t]?.ts)
+      .filter((ts): ts is number => ts != null)
+    if (timestamps.length === 0) return 'Fetched: never'
+    const oldest = Math.min(...timestamps)
+    return `Fetched ${timeAgo(new Date(oldest).toISOString())}`
   }
 
   useEffect(() => { loadSignals() }, [sessions])
@@ -145,6 +354,8 @@ export function WheelDashboardPage() {
       if (!eb) return -1
       return ea < eb ? -1 : ea > eb ? 1 : 0
     })
+  const activeCC = active.filter(f => f.slot.status === 'cc_active')
+  const activeSP = active.filter(f => f.slot.status === 'sold_put_active')
   const emptyWheels = sessions.filter(s => s.slots.length === 0)
 
   const resolveSlotTicker = resolveSlotId
@@ -181,6 +392,25 @@ export function WheelDashboardPage() {
     return parts.length ? parts.join(' ') : null
   }
 
+  function pnlPctFor(slot: WheelSlotDetail): number | null {
+    const isActive = slot.status === 'cc_active' || slot.status === 'sold_put_active'
+    if (!isActive) return null
+    const priceData = optionPrices[slot.id]
+    if (!priceData || priceData === 'loading' || priceData === 'error' || priceData.fetch_status !== 'ok' || priceData.mid == null) return null
+    const openLegs = slot.legs.filter(l => l.rotation_number === slot.rotation_number && l.trade_status === 'open' && l.leg_role !== 'stock')
+    const leg = openLegs[openLegs.length - 1]
+    if (!leg || leg.trade_premium == null) return null
+    const premium = Number(leg.trade_premium)
+    if (!premium) return null
+    return ((premium - priceData.mid) / premium) * 100
+  }
+
+  function gainLossPctFor(f: FlatSlot): number | null {
+    const { stockCostBasis: costBasis, stockCurrentPrice: currentPrice } = f
+    if (costBasis == null || currentPrice == null || !costBasis) return null
+    return ((currentPrice - costBasis) / costBasis) * 100
+  }
+
   function renderPnlCell(slot: WheelSlotDetail) {
     const isActive = slot.status === 'cc_active' || slot.status === 'sold_put_active'
     if (!isActive) return <td className="py-2 pr-3" />
@@ -189,19 +419,9 @@ export function WheelDashboardPage() {
     if (!priceData || priceData === 'loading') {
       return <td className="py-2 pr-3 text-xs text-gray-400 animate-pulse">...</td>
     }
-    if (priceData === 'error' || priceData.fetch_status !== 'ok' || priceData.mid == null) {
-      return <td className="py-2 pr-3 text-xs text-gray-300">—</td>
-    }
+    const pnlPct = pnlPctFor(slot)
+    if (pnlPct == null) return dashTd()
 
-    const openLegs = slot.legs.filter(l => l.rotation_number === slot.rotation_number && l.trade_status === 'open' && l.leg_role !== 'stock')
-    const leg = openLegs[openLegs.length - 1]
-    if (!leg || leg.trade_premium == null) {
-      return <td className="py-2 pr-3 text-xs text-gray-300">—</td>
-    }
-
-    const premium = Number(leg.trade_premium)
-    if (!premium) return <td className="py-2 pr-3 text-xs text-gray-300">—</td>
-    const pnlPct = ((premium - priceData.mid) / premium) * 100
     const isProfit = pnlPct >= 0
     return (
       <td className={`py-2 pr-3 text-xs font-medium ${isProfit ? 'text-green-600' : 'text-red-500'}`}>
@@ -211,11 +431,8 @@ export function WheelDashboardPage() {
   }
 
   function renderGainLossCell(f: FlatSlot) {
-    const { stockCostBasis: costBasis, stockCurrentPrice: currentPrice } = f
-    if (costBasis == null || currentPrice == null || !costBasis) {
-      return <td className="py-2 pr-3 text-xs text-gray-300">—</td>
-    }
-    const pct = ((currentPrice - costBasis) / costBasis) * 100
+    const pct = gainLossPctFor(f)
+    if (pct == null) return dashTd()
     const isProfit = pct >= 0
     return (
       <td className={`py-2 pr-3 text-xs font-medium ${isProfit ? 'text-green-600' : 'text-red-500'}`}>
@@ -224,47 +441,202 @@ export function WheelDashboardPage() {
     )
   }
 
-  function renderSignalBadge(ticker: string, sigMap: Record<string, CCSignalResult | 'loading' | 'error'>, type: 'CC' | 'SP') {
+  function renderEditableSizeCell(slot: WheelSlotDetail) {
+    if (editingContractsSlotId === slot.id) {
+      return (
+        <td className="py-2 pr-3">
+          <div className="flex items-center gap-1">
+            <input
+              type="number"
+              min={1}
+              value={contractsInput}
+              onChange={e => setContractsInput(e.target.value)}
+              className="w-12 border border-gray-300 rounded px-1 py-0.5 text-xs"
+              autoFocus
+            />
+            <button
+              onClick={() => saveContracts(slot.id)}
+              disabled={savingContracts}
+              className="text-green-600 hover:text-green-700 text-xs disabled:opacity-50"
+              title="Save"
+            >
+              ✓
+            </button>
+            <button onClick={cancelEditContracts} className="text-gray-400 hover:text-gray-600 text-xs" title="Cancel">
+              ✗
+            </button>
+          </div>
+        </td>
+      )
+    }
+    return (
+      <td className="py-2 pr-3 text-gray-500 text-xs">
+        <span className="inline-flex items-center gap-1">
+          {slot.contracts}x100
+          <button
+            onClick={() => startEditContracts(slot.id, slot.contracts)}
+            className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-gray-600"
+            title="Edit contracts"
+          >
+            ✎
+          </button>
+        </span>
+      </td>
+    )
+  }
+
+  function buildSignalSnapshot(f: FlatSlot): WheelSignalSnapshot {
+    const { slot, ticker } = f
+    const q = quotes[ticker]
+    const t = technicals[ticker]
+    const cc = ccTimingSignals[ticker]
+    const sp = spTimingSignals[ticker]
+    const quote = q && q !== 'loading' && q !== 'error' ? q : null
+    const tech = t && t !== 'loading' && t !== 'error' && t.fetch_status === 'ok' ? t : null
+    // Only the timing signal shown in whichever box this row lives in gets captured —
+    // ACTIVE COVERED CALLS/AWAITING CC only ever show CC Timing, and the SP counterparts only SP Timing.
+    const showCC = slot.status === 'cc_active' || slot.status === 'awaiting_cc'
+    const showSP = slot.status === 'sold_put_active' || slot.status === 'awaiting_sold_put'
+    return {
+      captured_at: new Date().toISOString(),
+      premium: slot.total_premium,
+      price: quote?.price ?? null,
+      change_pct: quote?.change_pct ?? null,
+      rsi_14: tech?.rsi_14 ?? null,
+      macd_weekly: tech?.macd_signal ?? null,
+      macd_daily: tech?.macd_daily_signal ?? null,
+      macd_3day: tech?.macd_3day_signal ?? null,
+      cc_timing: showCC && cc && cc !== 'loading' && cc !== 'error' ? cc : null,
+      sp_timing: showSP && sp && sp !== 'loading' && sp !== 'error' ? sp : null,
+      pnl_pct: pnlPctFor(slot),
+      gain_loss_pct: gainLossPctFor(f),
+    }
+  }
+
+  function renderPriceCell(ticker: string) {
+    const q = quotes[ticker]
+    if (q === 'loading') return <td className="py-2 pr-3 text-xs text-gray-400 animate-pulse">...</td>
+    if (!q || q === 'error') return dashTd()
+    return <td className="py-2 pr-3 text-xs text-gray-700">${q.price.toFixed(2)}</td>
+  }
+
+  function renderChangeCell(ticker: string) {
+    const q = quotes[ticker]
+    if (q === 'loading') return <td className="py-2 pr-3 text-xs text-gray-400 animate-pulse">...</td>
+    if (!q || q === 'error' || q.change_pct == null) return dashTd()
+    const isProfit = q.change_pct >= 0
+    return (
+      <td className={`py-2 pr-3 text-xs font-medium ${isProfit ? 'text-green-600' : 'text-red-500'}`}>
+        {isProfit ? '+' : ''}{q.change_pct.toFixed(2)}%
+      </td>
+    )
+  }
+
+  function renderRsiCell(ticker: string) {
+    const t = technicals[ticker]
+    if (t === 'loading') return <td className="py-2 pr-3 text-xs text-gray-400 animate-pulse">...</td>
+    if (!t || t === 'error' || t.fetch_status !== 'ok' || t.rsi_14 == null) return dashTd()
+    return <td className="py-2 pr-3 text-xs text-gray-700">{t.rsi_14.toFixed(1)}</td>
+  }
+
+  function renderMacdCell(ticker: string) {
+    const t = technicals[ticker]
+    if (t === 'loading') return <td className="py-2 pr-3 text-xs text-gray-400 animate-pulse">...</td>
+    if (!t || t === 'error' || t.fetch_status !== 'ok') return dashTd()
+    const { label, colorClass, title } = macdWeeklyDisplay(t.macd_signal, t.macd_weekly_trend)
+    return (
+      <td className="py-2 pr-3">
+        <span className={`px-2 py-0.5 rounded text-xs font-medium ${colorClass}`} title={title}>
+          {label}
+        </span>
+      </td>
+    )
+  }
+
+  function renderMacdTrendCell(ticker: string) {
+    const t = technicals[ticker]
+    if (t === 'loading') return <td className="py-2 pr-3 text-xs text-gray-400 animate-pulse">...</td>
+    if (!t || t === 'error' || t.fetch_status !== 'ok') return dashTd()
+    const weekly = macdWeeklyDisplay(t.macd_signal, t.macd_weekly_trend)
+    const pills: { label: string; fullLabel: string; colorClass: string; title: string }[] = [
+      { label: 'D', fullLabel: 'Daily', colorClass: MACD_COLORS[t.macd_daily_signal ?? 'neutral'], title: `Daily: ${t.macd_daily_signal ?? 'unknown'}` },
+      { label: '3D', fullLabel: '3-Day', colorClass: MACD_COLORS[t.macd_3day_signal ?? 'neutral'], title: `3-Day: ${t.macd_3day_signal ?? 'unknown'}` },
+      { label: 'W', fullLabel: 'Weekly', colorClass: weekly.colorClass, title: `Weekly: ${weekly.title}` },
+    ]
+    return (
+      <td className="py-2 pr-3">
+        <div className="flex items-center gap-1">
+          {pills.map(p => (
+            <span
+              key={p.label}
+              className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${p.colorClass}`}
+              title={p.title}
+            >
+              {p.label}
+            </span>
+          ))}
+        </div>
+      </td>
+    )
+  }
+
+  function renderSignalBadge(ticker: string, sigMap: Record<string, CCSignalResult | 'loading' | 'error'>, type: 'CC' | 'SP' | 'CCTiming' | 'SPTiming') {
     const sig = sigMap[ticker]
     const detailKey = `${ticker}-${type}`
     if (sig === 'loading') return <span className="text-xs text-gray-400 animate-pulse">...</span>
-    if (sig === 'error' || !sig) return <span className="text-xs text-gray-300" title="Signal unavailable">&mdash;</span>
+    if (sig === 'error' || !sig) {
+      return <span className="text-xs text-gray-300" title={marketOffline ? MARKET_OFFLINE_TOOLTIP : 'Signal unavailable'}>&mdash;</span>
+    }
     return (
       <button
         onClick={() => setSignalDetail(signalDetail === detailKey ? null : detailKey)}
-        className={`text-xs font-medium px-2 py-0.5 rounded-full border ${GRADE_COLORS[sig.grade] ?? GRADE_COLORS.wait} hover:opacity-80`}
-        title={`Score: ${sig.score}`}
+        className={`text-xs font-medium px-2 py-0.5 rounded-full border ${GRADE_COLORS[sig.grade] ?? GRADE_COLORS.wait} hover:opacity-80 ${sig.stale ? 'opacity-60' : ''}`}
+        title={sig.stale ? `Score: ${sig.score} · ${staleTooltip(sig.as_of)}` : `Score: ${sig.score}`}
       >
         {sig.grade === 'wait' ? 'Wait' : `${sig.grade.charAt(0).toUpperCase() + sig.grade.slice(1)} ${sig.score}`}
       </button>
     )
   }
 
-  function renderSignalDetailRow(ticker: string) {
+  function renderSignalDetailRow(ticker: string, colCount = 11) {
     const ccKey = `${ticker}-CC`
     const spKey = `${ticker}-SP`
+    const ccTimingKey = `${ticker}-CCTiming`
+    const spTimingKey = `${ticker}-SPTiming`
     const isCC = signalDetail === ccKey
     const isSP = signalDetail === spKey
-    if (!isCC && !isSP) return null
-    const sig = isCC ? signals[ticker] : spSignals[ticker]
-    const label = isCC ? 'CC Signal' : 'SP Signal'
+    const isCCTiming = signalDetail === ccTimingKey
+    const isSPTiming = signalDetail === spTimingKey
+    if (!isCC && !isSP && !isCCTiming && !isSPTiming) return null
+    const sig = isCC ? signals[ticker] : isSP ? spSignals[ticker] : isCCTiming ? ccTimingSignals[ticker] : spTimingSignals[ticker]
+    const label = isCC ? 'CC Signal' : isSP ? 'SP Signal' : isCCTiming ? 'CC Timing' : 'SP Timing'
     if (!sig || sig === 'loading' || sig === 'error') return null
 
     return (
       <tr key={`${ticker}-signal-detail`}>
-        <td colSpan={11} className="py-3 px-4 bg-gray-50 border-t border-gray-200">
+        <td colSpan={colCount} className="py-3 px-4 bg-gray-50 border-t border-gray-200">
           <div className="space-y-2 text-xs">
-            <p className="font-medium text-gray-500 mb-1">{label} breakdown</p>
+            <p className="font-medium text-gray-500 mb-1 flex items-center justify-between">
+              <span>{label} breakdown</span>
+              {isSPTiming && (
+                <Link to={scopedResearchPath(accountId, 'chain', { symbol: ticker, strategy: 'sell_put' })} className="text-blue-600 hover:underline font-normal">
+                  Screen strikes on Chain &rarr;
+                </Link>
+              )}
+            </p>
             <div className="grid grid-cols-2 gap-x-6 gap-y-1">
-              {sig.factors.map(f => (
-                <div key={f.name} className="flex justify-between">
-                  <span className="text-gray-500">{f.name}</span>
-                  <span className="text-gray-700 font-medium">
-                    {f.points}/{f.max}{' '}
-                    <span className="text-gray-400 font-normal">{f.detail}</span>
-                  </span>
-                </div>
-              ))}
+              {sig.factors.map(f => {
+                const isFadingMacd = f.name === 'MACD(W)' && f.detail.includes('fading')
+                return (
+                  <div key={f.name} className="flex justify-between">
+                    <span className="text-gray-500">{f.name}</span>
+                    <span className={`font-medium ${isFadingMacd ? 'text-amber-700' : 'text-gray-700'}`}>
+                      {f.points}/{f.max}{' '}
+                      <span className={`font-normal ${isFadingMacd ? 'text-amber-600' : 'text-gray-400'}`}>{f.detail}</span>
+                    </span>
+                  </div>
+                )
+              })}
             </div>
             {sig.commentary && (
               <p className="text-gray-700 pt-1 border-t border-gray-200">{sig.commentary}</p>
@@ -354,13 +726,366 @@ export function WheelDashboardPage() {
     )
   }
 
-  function renderLegRows(f: FlatSlot) {
+  function renderActiveLegSummary(slot: WheelSlotDetail) {
+    const leg = slot.legs.find(l => l.rotation_number === slot.rotation_number && l.trade_status === 'open' && l.leg_role !== 'stock')
+    if (!leg) return null
+    const parts: string[] = []
+    if (leg.trade_expiry_date) {
+      const [y, m, d] = leg.trade_expiry_date.split('-')
+      parts.push(`${parseInt(m)}/${parseInt(d)}/${y.slice(2)}`)
+    }
+    if (leg.trade_strike_price != null) parts.push(`$${leg.trade_strike_price}`)
+    const roleLabel = leg.leg_role === 'covered_call' ? 'CC' : leg.leg_role === 'sold_put' ? 'SP' : null
+    if (!parts.length && !roleLabel) return null
+    const pillClass = leg.leg_role === 'sold_put'
+      ? 'bg-blue-100 text-blue-700'
+      : 'bg-amber-100 text-amber-700'
+    return (
+      <div className="text-xs text-gray-400 font-normal leading-tight flex items-center gap-1">
+        {parts.length > 0 && <span>{parts.join(' ')}</span>}
+        {roleLabel && <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${pillClass}`}>{roleLabel}</span>}
+      </div>
+    )
+  }
+
+  function renderActiveSlotRow(f: FlatSlot) {
+    const { slot, ticker } = f
+    const isExpanded = expandedSlot === slot.id
+
+    return (
+      <tr key={slot.id} className="group">
+        <td className="py-2 pr-3">
+          <span className="font-bold text-gray-900">{ticker}</span>
+          <span className="text-[10px] text-gray-400 align-sub ml-1">{slot.contracts}x100 R{slot.rotation_number}</span>
+          {renderActiveLegSummary(slot)}
+        </td>
+        <td className="py-2 pr-3 text-xs font-medium text-green-600">${slot.total_premium}</td>
+        {renderPriceCell(ticker)}
+        {renderChangeCell(ticker)}
+        {renderRsiCell(ticker)}
+        {renderMacdCell(ticker)}
+        {renderMacdTrendCell(ticker)}
+        <td className="py-2 pr-3">{renderSignalBadge(ticker, ccTimingSignals, 'CCTiming')}</td>
+        <td className="py-2 pr-3">{renderSignalBadge(ticker, spTimingSignals, 'SPTiming')}</td>
+        {renderPnlCell(slot)}
+        {renderGainLossCell(f)}
+        <td className="py-2 pr-3">
+          {(() => {
+            const leg = slot.legs.find(l => l.rotation_number === slot.rotation_number && l.trade_status === 'open' && l.leg_role !== 'stock')
+            const addTarget = leg ? { type: 'trade' as const, tradeId: leg.trade_id } : { type: 'slot' as const }
+            return <CommentaryPopover slotId={slot.id} ticker={ticker} addTarget={addTarget} snapshot={buildSignalSnapshot(f)} />
+          })()}
+        </td>
+        <td className="py-2 text-right">
+          <div className="flex items-center gap-1 justify-end">
+            {(slot.status === 'cc_active' || slot.status === 'sold_put_active' || slot.needs_action) && (
+              <button onClick={() => setResolveSlotId(slot.id)} className="px-2 py-0.5 text-xs bg-amber-100 text-amber-800 rounded hover:bg-amber-200">
+                Resolve
+              </button>
+            )}
+            <button
+              onClick={() => fetchRow(ticker, true)}
+              disabled={rowFetching[ticker]}
+              className="px-1.5 py-0.5 text-xs text-gray-400 hover:text-gray-600 rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Fetch this row"
+            >
+              {rowFetching[ticker] ? '…' : '↻'}
+            </button>
+            <button
+              onClick={() => setExpandedSlot(isExpanded ? null : slot.id)}
+              className="px-1.5 py-0.5 text-xs text-gray-400 hover:text-gray-600 rounded hover:bg-gray-100"
+              title="Show legs"
+            >
+              {isExpanded ? '−' : '+'}
+            </button>
+          </div>
+        </td>
+      </tr>
+    )
+  }
+
+  function renderActiveSection(title: string, color: string, bgColor: string, borderColor: string, fetchKey: string, slots: FlatSlot[]) {
+    if (slots.length === 0) return null
+    const tickers = [...new Set(slots.map(f => f.ticker))]
+    return (
+      <section className="mb-5">
+        <div className="flex items-center gap-2 mb-2">
+          <span className={`text-sm font-bold ${color}`}>{title}</span>
+          <span className={`${bgColor} ${color} text-xs px-2 py-0.5 rounded-full font-medium`}>{slots.length}</span>
+          {renderSectionFetchControls(fetchKey, tickers, true)}
+        </div>
+        <div className={`bg-white border ${borderColor} rounded-lg overflow-x-auto`}>
+          <table className="min-w-max w-full text-sm whitespace-nowrap">
+            <thead>
+              <tr className="text-left text-xs text-gray-400 border-b border-gray-100">
+                <th className="py-2 pr-3 pl-3 font-normal">Ticker</th>
+                <th className="py-2 pr-3 font-normal">Premium</th>
+                <th className="py-2 pr-3 font-normal">Price</th>
+                <th className="py-2 pr-3 font-normal">Change%</th>
+                <th className="py-2 pr-3 font-normal">RSI(D)</th>
+                <th className="py-2 pr-3 font-normal">MACD(W)</th>
+                <th className="py-2 pr-3 font-normal">MACD Trend</th>
+                <th className="py-2 pr-3 font-normal">CC Timing</th>
+                <th className="py-2 pr-3 font-normal">SP Timing</th>
+                <th className="py-2 pr-3 font-normal">P&L %</th>
+                <th className="py-2 pr-3 font-normal">% G/L</th>
+                <th className="py-2 pr-3 font-normal">Notes</th>
+                <th className="py-2 pr-3 font-normal"></th>
+              </tr>
+            </thead>
+            {slots.map((f, idx) => {
+              const isFirstForTicker = slots.findIndex(s => s.ticker === f.ticker) === idx
+              return (
+                <tbody key={f.slot.id} className="border-t border-gray-50">
+                  {renderActiveSlotRow(f)}
+                  {renderLegRows(f, 13)}
+                  {isFirstForTicker && renderSignalDetailRow(f.ticker, 13)}
+                </tbody>
+              )
+            })}
+          </table>
+        </div>
+      </section>
+    )
+  }
+
+  function renderAwaitingCCSlotRow(f: FlatSlot) {
+    const { slot, ticker } = f
+    const isExpanded = expandedSlot === slot.id
+
+    return (
+      <tr key={slot.id} className="group">
+        <td className="py-2 pr-3">
+          <span className="font-bold text-gray-900">{ticker}</span>
+        </td>
+        {renderEditableSizeCell(slot)}
+        <td className="py-2 pr-3 text-xs text-gray-400">R{slot.rotation_number}</td>
+        <td className="py-2 pr-3 text-xs font-medium text-green-600">${slot.total_premium}</td>
+        {renderPriceCell(ticker)}
+        {renderChangeCell(ticker)}
+        {renderRsiCell(ticker)}
+        {renderMacdCell(ticker)}
+        {renderMacdTrendCell(ticker)}
+        <td className="py-2 pr-3">{renderSignalBadge(ticker, ccTimingSignals, 'CCTiming')}</td>
+        {renderGainLossCell(f)}
+        <td className="py-2 pr-3">
+          <CommentaryPopover slotId={slot.id} ticker={ticker} addTarget={{ type: 'slot' }} snapshot={buildSignalSnapshot(f)} />
+        </td>
+        <td className="py-2 text-right">
+          <div className="flex items-center gap-1 justify-end">
+            {!slot.needs_action && (() => {
+              const isUnderwater = f.stockCostBasis != null && f.stockCurrentPrice != null
+                && f.stockCurrentPrice < f.stockCostBasis
+              const className = isUnderwater
+                ? 'px-2 py-0.5 text-xs bg-red-100 text-red-800 rounded hover:bg-red-200'
+                : 'px-2 py-0.5 text-xs bg-blue-100 text-blue-800 rounded hover:bg-blue-200'
+              const title = isUnderwater
+                ? `Cost basis $${f.stockCostBasis} above current price $${f.stockCurrentPrice} — selling a CC may lock in a loss.`
+                : undefined
+              return (
+                <button onClick={() => setLinkSlotId(slot.id)} className={className} title={title}>
+                  + CC
+                </button>
+              )
+            })()}
+            <button
+              onClick={() => fetchRow(ticker, false)}
+              disabled={rowFetching[ticker]}
+              className="px-1.5 py-0.5 text-xs text-gray-400 hover:text-gray-600 rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Fetch this row"
+            >
+              {rowFetching[ticker] ? '…' : '↻'}
+            </button>
+            <button
+              onClick={() => setExpandedSlot(isExpanded ? null : slot.id)}
+              className="px-1.5 py-0.5 text-xs text-gray-400 hover:text-gray-600 rounded hover:bg-gray-100"
+              title="Show legs"
+            >
+              {isExpanded ? '−' : '+'}
+            </button>
+            <button
+              onClick={() => handleDeleteSlot(slot.id, ticker)}
+              className="px-1.5 py-0.5 text-xs text-gray-400 hover:text-red-600 rounded hover:bg-red-50"
+              title="Delete slot"
+            >
+              ×
+            </button>
+          </div>
+        </td>
+      </tr>
+    )
+  }
+
+  function renderSectionFetchControls(key: string, tickers: string[], includeOptionPrices: boolean) {
+    const fetching = sectionFetching[key] ?? false
+    return (
+      <>
+        <span className="text-xs text-gray-400">{sectionFetchedLabel(tickers)}</span>
+        <button
+          onClick={() => fetchSection(key, tickers, includeOptionPrices)}
+          disabled={fetching}
+          className="px-2 py-0.5 text-xs bg-gray-100 text-gray-700 rounded hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {fetching ? 'Fetching…' : 'Fetch'}
+        </button>
+      </>
+    )
+  }
+
+  function renderAwaitingCCSection(slots: FlatSlot[]) {
+    if (slots.length === 0) return null
+    const tickers = [...new Set(slots.map(f => f.ticker))]
+    return (
+      <section className="mb-5">
+        <div className="flex items-center gap-2 mb-2">
+          <span className="text-sm font-bold text-amber-600">AWAITING CC</span>
+          <span className="bg-amber-50 text-amber-600 text-xs px-2 py-0.5 rounded-full font-medium">{slots.length}</span>
+          {renderSectionFetchControls('awaitingCC', tickers, false)}
+        </div>
+        <div className="bg-white border border-amber-200 rounded-lg overflow-x-auto">
+          <table className="min-w-max w-full text-sm whitespace-nowrap">
+            <thead>
+              <tr className="text-left text-xs text-gray-400 border-b border-gray-100">
+                <th className="py-2 pr-3 pl-3 font-normal">Ticker</th>
+                <th className="py-2 pr-3 font-normal">Size</th>
+                <th className="py-2 pr-3 font-normal">Rot</th>
+                <th className="py-2 pr-3 font-normal">Premium</th>
+                <th className="py-2 pr-3 font-normal">Price</th>
+                <th className="py-2 pr-3 font-normal">Change%</th>
+                <th className="py-2 pr-3 font-normal">RSI(D)</th>
+                <th className="py-2 pr-3 font-normal">MACD(W)</th>
+                <th className="py-2 pr-3 font-normal">MACD Trend</th>
+                <th className="py-2 pr-3 font-normal">CC Timing</th>
+                <th className="py-2 pr-3 font-normal">% G/L</th>
+                <th className="py-2 pr-3 font-normal">Notes</th>
+                <th className="py-2 pr-3 font-normal"></th>
+              </tr>
+            </thead>
+            {slots.map((f, idx) => {
+              const isFirstForTicker = slots.findIndex(s => s.ticker === f.ticker) === idx
+              return (
+                <tbody key={f.slot.id} className="border-t border-gray-50">
+                  {renderAwaitingCCSlotRow(f)}
+                  {renderLegRows(f, 13)}
+                  {isFirstForTicker && renderSignalDetailRow(f.ticker, 13)}
+                </tbody>
+              )
+            })}
+          </table>
+        </div>
+      </section>
+    )
+  }
+
+  function renderAwaitingSPSlotRow(f: FlatSlot) {
+    const { slot, ticker } = f
+    const isExpanded = expandedSlot === slot.id
+
+    return (
+      <tr key={slot.id} className="group">
+        <td className="py-2 pr-3">
+          <span className="font-bold text-gray-900">{ticker}</span>
+        </td>
+        {renderEditableSizeCell(slot)}
+        <td className="py-2 pr-3 text-xs text-gray-400">R{slot.rotation_number}</td>
+        <td className="py-2 pr-3 text-xs font-medium text-green-600">${slot.total_premium}</td>
+        {renderPriceCell(ticker)}
+        {renderChangeCell(ticker)}
+        {renderRsiCell(ticker)}
+        {renderMacdCell(ticker)}
+        {renderMacdTrendCell(ticker)}
+        <td className="py-2 pr-3">{renderSignalBadge(ticker, spTimingSignals, 'SPTiming')}</td>
+        {renderGainLossCell(f)}
+        <td className="py-2 pr-3">
+          <CommentaryPopover slotId={slot.id} ticker={ticker} addTarget={{ type: 'slot' }} snapshot={buildSignalSnapshot(f)} />
+        </td>
+        <td className="py-2 text-right">
+          <div className="flex items-center gap-1 justify-end">
+            {!slot.needs_action && (
+              <button onClick={() => setLinkSlotId(slot.id)} className="px-2 py-0.5 text-xs bg-blue-100 text-blue-800 rounded hover:bg-blue-200">
+                + Put
+              </button>
+            )}
+            <button
+              onClick={() => fetchRow(ticker, false)}
+              disabled={rowFetching[ticker]}
+              className="px-1.5 py-0.5 text-xs text-gray-400 hover:text-gray-600 rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Fetch this row"
+            >
+              {rowFetching[ticker] ? '…' : '↻'}
+            </button>
+            <button
+              onClick={() => setExpandedSlot(isExpanded ? null : slot.id)}
+              className="px-1.5 py-0.5 text-xs text-gray-400 hover:text-gray-600 rounded hover:bg-gray-100"
+              title="Show legs"
+            >
+              {isExpanded ? '−' : '+'}
+            </button>
+            <button
+              onClick={() => handleDeleteSlot(slot.id, ticker)}
+              className="px-1.5 py-0.5 text-xs text-gray-400 hover:text-red-600 rounded hover:bg-red-50"
+              title="Delete slot"
+            >
+              ×
+            </button>
+          </div>
+        </td>
+      </tr>
+    )
+  }
+
+  function renderAwaitingSPSection(slots: FlatSlot[]) {
+    if (slots.length === 0) return null
+    const tickers = [...new Set(slots.map(f => f.ticker))]
+    return (
+      <section className="mb-5">
+        <div className="flex items-center gap-2 mb-2">
+          <span className="text-sm font-bold text-orange-600">AWAITING SOLD PUT</span>
+          <span className="bg-orange-50 text-orange-600 text-xs px-2 py-0.5 rounded-full font-medium">{slots.length}</span>
+          {renderSectionFetchControls('awaitingSP', tickers, false)}
+        </div>
+        <div className="bg-white border border-orange-200 rounded-lg overflow-x-auto">
+          <table className="min-w-max w-full text-sm whitespace-nowrap">
+            <thead>
+              <tr className="text-left text-xs text-gray-400 border-b border-gray-100">
+                <th className="py-2 pr-3 pl-3 font-normal">Ticker</th>
+                <th className="py-2 pr-3 font-normal">Size</th>
+                <th className="py-2 pr-3 font-normal">Rot</th>
+                <th className="py-2 pr-3 font-normal">Premium</th>
+                <th className="py-2 pr-3 font-normal">Price</th>
+                <th className="py-2 pr-3 font-normal">Change%</th>
+                <th className="py-2 pr-3 font-normal">RSI(D)</th>
+                <th className="py-2 pr-3 font-normal">MACD(W)</th>
+                <th className="py-2 pr-3 font-normal">MACD Trend</th>
+                <th className="py-2 pr-3 font-normal">SP Timing</th>
+                <th className="py-2 pr-3 font-normal">% G/L</th>
+                <th className="py-2 pr-3 font-normal">Notes</th>
+                <th className="py-2 pr-3 font-normal"></th>
+              </tr>
+            </thead>
+            {slots.map((f, idx) => {
+              const isFirstForTicker = slots.findIndex(s => s.ticker === f.ticker) === idx
+              return (
+                <tbody key={f.slot.id} className="border-t border-gray-50">
+                  {renderAwaitingSPSlotRow(f)}
+                  {renderLegRows(f, 13)}
+                  {isFirstForTicker && renderSignalDetailRow(f.ticker, 13)}
+                </tbody>
+              )
+            })}
+          </table>
+        </div>
+      </section>
+    )
+  }
+
+  function renderLegRows(f: FlatSlot, colCount = 11) {
     if (expandedSlot !== f.slot.id) return null
     const currentLegs = f.slot.legs.filter(l => l.rotation_number === f.slot.rotation_number)
     if (currentLegs.length === 0) {
       return (
         <tr key={`${f.slot.id}-legs`}>
-          <td colSpan={11} className="py-1 pl-8 text-xs text-gray-400 italic">No legs in current rotation.</td>
+          <td colSpan={colCount} className="py-1 pl-8 text-xs text-gray-400 italic">No legs in current rotation.</td>
         </tr>
       )
     }
@@ -373,20 +1098,22 @@ export function WheelDashboardPage() {
           {leg.trade_expiry_date ?? '—'}{leg.trade_premium != null ? ` · $${leg.trade_premium}` : ''}
         </td>
         <td className="py-1 pr-3 text-xs text-gray-400 capitalize">{leg.trade_status}</td>
-        <td colSpan={6} className="py-1 text-xs text-right">
-          <Link to={`/trades/${leg.trade_id}`} className="text-blue-500 hover:underline">view</Link>
+        <td colSpan={colCount - 5} className="py-1 text-xs text-right">
+          <Link to={tradePath(accountId, leg.trade_id)} className="text-blue-500 hover:underline">view</Link>
         </td>
       </tr>
     ))
   }
 
-  function renderSection(title: string, color: string, bgColor: string, borderColor: string, slots: FlatSlot[]) {
+  function renderSection(title: string, color: string, bgColor: string, borderColor: string, slots: FlatSlot[], fetchKey?: string) {
     if (slots.length === 0) return null
+    const tickers = [...new Set(slots.map(f => f.ticker))]
     return (
       <section className="mb-5">
         <div className="flex items-center gap-2 mb-2">
           <span className={`text-sm font-bold ${color}`}>{title}</span>
           <span className={`${bgColor} ${color} text-xs px-2 py-0.5 rounded-full font-medium`}>{slots.length}</span>
+          {fetchKey && renderSectionFetchControls(fetchKey, tickers, true)}
         </div>
         <div className={`bg-white border ${borderColor} rounded-lg overflow-x-auto`}>
           <table className="min-w-max w-full text-sm whitespace-nowrap">
@@ -422,12 +1149,12 @@ export function WheelDashboardPage() {
   }
 
   return (
-    <div className="p-6 max-w-5xl mx-auto">
+    <div className="p-6 max-w-screen-2xl mx-auto">
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-bold text-gray-900">WHEEL Strategy</h1>
         <div className="flex gap-2">
           <button
-            onClick={() => loadSignals(true)}
+            onClick={fetchAllSignals}
             disabled={signalsFetching || sessions.length === 0}
             className="px-4 py-2 bg-gray-100 text-gray-700 rounded text-sm hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
           >
@@ -491,16 +1218,17 @@ export function WheelDashboardPage() {
             </section>
           )}
           {renderSection('NEEDS ACTION', 'text-amber-600', 'bg-amber-100', 'border-amber-300', needsAction)}
-          {renderSection('AWAITING CC', 'text-amber-600', 'bg-amber-50', 'border-amber-200', awaitingCC)}
-          {renderSection('AWAITING SOLD PUT', 'text-orange-600', 'bg-orange-50', 'border-orange-200', awaitingSP)}
-          {renderSection('ACTIVE', 'text-blue-600', 'bg-blue-50', 'border-blue-200', active)}
+          {renderAwaitingCCSection(awaitingCC)}
+          {renderAwaitingSPSection(awaitingSP)}
+          {renderActiveSection('ACTIVE COVERED CALLS', 'text-blue-600', 'bg-blue-50', 'border-blue-200', 'activeCC', activeCC)}
+          {renderActiveSection('ACTIVE SOLD PUTS', 'text-blue-600', 'bg-blue-50', 'border-blue-200', 'activeSP', activeSP)}
         </>
       )}
 
-      {showNewModal && <NewWheelModalV2 onClose={() => setShowNewModal(false)} onCreated={(s) => { setShowNewModal(false); setAddSlotSessionId(s.id); load() }} />}
+      {showNewModal && <NewWheelModalV2 accountId={accountId} onClose={() => setShowNewModal(false)} onCreated={(s) => { setShowNewModal(false); setAddSlotSessionId(s.id); load() }} />}
       {addSlotSessionId && <AddSlotModal sessionId={addSlotSessionId} onClose={() => setAddSlotSessionId(null)} onCreated={() => { setAddSlotSessionId(null); load() }} />}
-      {resolveSlotId && <ResolveModal slotId={resolveSlotId} ticker={resolveSlotTicker} onClose={() => setResolveSlotId(null)} onResolved={() => { setResolveSlotId(null); load() }} />}
-      {linkSlotId && <LinkLegModalV2 slotId={linkSlotId} ticker={linkSlotTicker} slotStatus={linkSlotStatus} onClose={() => setLinkSlotId(null)} onLinked={() => { setLinkSlotId(null); load() }} />}
+      {resolveSlotId && <ResolveModal accountId={accountId} slotId={resolveSlotId} ticker={resolveSlotTicker} onClose={() => setResolveSlotId(null)} onResolved={() => { setResolveSlotId(null); load() }} />}
+      {linkSlotId && <LinkLegModalV2 accountId={accountId} slotId={linkSlotId} ticker={linkSlotTicker} slotStatus={linkSlotStatus} onClose={() => setLinkSlotId(null)} onLinked={() => { setLinkSlotId(null); load() }} />}
     </div>
   )
 }

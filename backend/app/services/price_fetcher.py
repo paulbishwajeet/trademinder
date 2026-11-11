@@ -1,6 +1,7 @@
 # backend/app/services/price_fetcher.py
 import asyncio
 import logging
+import uuid
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -9,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.trade import Trade
-from app.services.schwab_client import get_schwab_client, SchwabAPIError  # noqa: F401
+from app.services.market_data import get_market_data, MarketDataUnavailable, SchwabAPIError  # noqa: F401
 
 log = logging.getLogger(__name__)
 
@@ -48,9 +49,11 @@ def _compute_rsi_14(close: pd.Series) -> float | None:
 def _fetch_prices_from_schwab(tickers: list[str]) -> dict[str, float]:
     """Batch-fetch last prices via Schwab quotes API."""
     try:
-        client = get_schwab_client()
+        client = get_market_data()
         quotes = client.get_quotes(tickers)
         return {t: float(q["lastPrice"]) for t, q in quotes.items() if "lastPrice" in q}
+    except MarketDataUnavailable:
+        raise  # offline as a whole: callers decide (scheduler skips, routers return 503)
     except Exception:
         return {}
 
@@ -61,7 +64,7 @@ async def fetch_quote(ticker: str) -> dict | None:
         loop = asyncio.get_running_loop()
 
         def _sync():
-            client = get_schwab_client()
+            client = get_market_data()
             raw = client.get_quotes([ticker])
             log.debug("fetch_quote %s raw=%s", ticker, raw)
             return raw.get(ticker)
@@ -82,6 +85,8 @@ async def fetch_quote(ticker: str) -> dict | None:
             "change_pct": change_pct,
             "last_updated": datetime.now(timezone.utc).isoformat(),
         }
+    except MarketDataUnavailable:
+        raise
     except Exception:
         log.exception("fetch_quote %s failed", ticker)
         return None
@@ -93,7 +98,7 @@ def _fetch_rsi_from_schwab(tickers: list[str]) -> dict[str, dict | None]:
     if not tickers:
         return result
     try:
-        client = get_schwab_client()
+        client = get_market_data()
     except Exception:
         return result
 
@@ -108,6 +113,8 @@ def _fetch_rsi_from_schwab(tickers: list[str]) -> dict[str, dict | None]:
             price = round(float(close.iloc[-1]), 2)
             rsi = _compute_rsi_14(close)
             return ticker, {"rsi": rsi, "price": price}
+        except MarketDataUnavailable:
+            raise
         except Exception:
             return ticker, None
 
@@ -124,9 +131,12 @@ async def fetch_rsi_batch(tickers: list[str]) -> dict[str, dict | None]:
     return await loop.run_in_executor(None, _fetch_rsi_from_schwab, tickers)
 
 
-async def refresh_open_trades(db: AsyncSession) -> dict:
-    """Fetch prices for all open trades; update current_price, last_price_at, unrealized_pnl."""
+async def refresh_open_trades(db: AsyncSession, user_id: uuid.UUID | None = None) -> dict:
+    """Fetch prices for all open trades (every user's, or one user's when user_id is given);
+    update current_price, last_price_at, unrealized_pnl."""
     stmt = select(Trade).where(Trade.status == "open")
+    if user_id is not None:
+        stmt = stmt.where(Trade.user_id == user_id)
     result = await db.execute(stmt)
     trades = result.scalars().all()
 
@@ -134,7 +144,9 @@ async def refresh_open_trades(db: AsyncSession) -> dict:
         return {"trades_updated": 0, "tickers_fetched": 0, "errors": []}
 
     tickers = list({t.ticker for t in trades})
-    prices = _fetch_prices_from_schwab(tickers)
+    # Provider calls are synchronous and may read/write the token row: never on the event loop.
+    # Raises MarketDataUnavailable while offline (stored prices are left untouched).
+    prices = await asyncio.get_running_loop().run_in_executor(None, _fetch_prices_from_schwab, tickers)
 
     errors: list[str] = []
     now = datetime.now(timezone.utc)

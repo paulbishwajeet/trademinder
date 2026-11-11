@@ -146,6 +146,8 @@ Copy `.env.example` to `.env`.
 | `ALERT_ENGINE_INTERVAL_MINUTES` | `15` | How often the alert engine runs |
 | `PRICE_REFRESH_INTERVAL_MINUTES` | `15` | How often prices are fetched |
 | `BRIEFING_GENERATE_TIME` | `08:00` | Daily briefing generation time |
+| `OWNER_EMAIL` | _(required)_ | Seeds the first (admin) user in migration 015 — the migration fails without it. Until login lands every request runs as this user |
+| `OWNER_DISPLAY_NAME` | `Owner` | Display name for the seeded owner |
 
 ---
 
@@ -153,6 +155,17 @@ Copy `.env.example` to `.env`.
 
 ### Design Philosophy
 Each individual trade (buy, sell, assign) is its own `Trade` record. Trades on the same ticker within a wheel cycle are linked via `wheel_id`. This keeps inserts simple while enabling grouped views.
+
+### Users and Brokerage Accounts (migrations 015–016)
+
+Ownership is **user → brokerage account → trades / wheels / spreads**.
+
+- **`users`** — tenant root. The tenant key is the internal UUID `id`; `email` is unique case-insensitively but never a key, and `external_subject` (nullable) will hold the Google identity once login lands. `role` is `admin` | `user`, `status` is `pending` | `active` | `disabled`. Migration 015 seeds the owner as the first active admin from `OWNER_EMAIL`.
+- **`brokerage_accounts`** — one user owns many, including several at the same broker (e.g. "E\*TRADE Hold" and "E\*TRADE Wheel"). Fields: `broker` (free text; UI offers E\*TRADE, Schwab, Fidelity, Robinhood, Other), `nickname`, `last_four` (only the last four digits — full account numbers are never stored), `external_ref` (links a broker-side account in a later part), `default_category_id`, `is_default` (exactly one per user), `sort_order`, `is_archived`. An account with trades, wheels or spreads can only be archived.
+- **`account_categories`** — categories are a per-user library; each account picks the ones it uses and may set a default for new trades.
+- **`screener_account_memberships`** — one screener row per user per symbol (market data fetched once); each symbol belongs to one or more accounts. Screener notes carry an `account_id` because a note reflects one account's situation.
+- Every user-owned table carries `user_id`. `trades`, `wheel_sessions`, `trade_sessions` (spreads) and `screener_commentary` also carry `account_id`; slots, legs, premium logs, rationale, commentary, alerts and signals inherit their account through their parent. Market data (`schwab_tokens`, quotes, technicals, signal caches) is app-level and shared.
+- Migration 016 backfilled all existing data to the owner and a default account nicknamed "E\*TRADE".
 
 ### Migration 001 — Initial Schema
 
@@ -297,7 +310,32 @@ GET    /api/dashboard/today
 Response per position includes: category, alert severity, last commentary note, active signals, rationale snapshot, and trade details — everything the extension needs in one round trip.
 
 ### Market Data
+
+All market data goes through one provider boundary: `app/services/market_data.py`. `get_market_data()`
+returns the configured provider, set by `MARKET_DATA_PROVIDER`; only `schwab` exists, and unknown values fail
+at startup. Only that module and the Schwab implementation (`schwab_client.py`) know about Schwab. yfinance
+(earnings calendar, LEAPS scanner) is separate.
+
+**When the Schwab refresh token lapses, the app degrades instead of going dark.** This covers an expired token,
+a rejected refresh (`invalid_grant`) and no tokens at all. The provider then stops calling Schwab, so there are
+no retries and no log spam.
+
+| Endpoint kind | While offline |
+|---|---|
+| Pure market endpoints (quote, technicals, signals, chain, option price, RSI, screener preview, single fetch) | Return `503 {"code": "market_data_offline"}`. Signals with a server-side cached result return that result instead, with `stale: true` and its `as_of` time. |
+| Mixed endpoints (trades, trade detail, wheel detail, active slots, positions/status, dashboard summary, screener list) | Return their database data with the `X-Market-Data-Offline: true` header. Market fields are `null` (screener rows are served as stored, with `stale: true`). Object responses also carry `market_data_offline: true`. |
+| Everything else | Keeps working: journal, commentary, wheels, slot resolves, accounts, Reconcile, categories, margin CSV analysis. |
+
+- **Recovery:** re-run `python scripts/schwab_auth.py`. The provider re-reads the token row at most once a
+  minute and resumes on its own, without a restart. Going offline and coming back are each logged once.
+- **Expiry banner:** admins see it in the app. Amber from 72h to 24h left (dismissible for the session), red
+  under 24h, and red "Market data offline" once expired. It is backed by `GET /api/market-data/status`
+  (admin only), and `GET /api/me` tells the SPA whether the user is an admin.
+- **Not yet:** an in-app "Reconnect Schwab" button arrives in Part 5, with HTTPS.
+
 ```
+GET    /api/market-data/status      (admin) provider, state ok|expiring|critical|offline, expiry, last success/error
+GET    /api/me                      current user (id, email, display_name, role)
 GET    /api/market/quote/{ticker}
 GET    /api/market/options/{ticker}
 POST   /api/market/refresh
@@ -320,7 +358,14 @@ Full interactive docs: http://localhost:5431/docs
 
 ## Chrome Extension
 
-The extension overlays TradeMinder data on the E\*TRADE portfolio page in four stages. Enabled/disabled individually via the popup settings UI. API URL is configurable (default: `http://localhost:5431`).
+The extension overlays TradeMinder data on the E\*TRADE portfolio page in four stages. Enabled/disabled individually via the popup settings UI.
+
+### Server address and accounts
+- **Server address**: set once in the popup (default `http://127.0.0.1:5431`). Saving asks Chrome for access to that host (optional host permission). Every API call goes through the service worker, which uses the stored address. If TradeMinder can't be reached, the account bar says so.
+- **Which account is on screen**: read from E\*TRADE's account dropdown. The first time an E\*TRADE account is selected, a **Link this E\*TRADE account** card asks which TradeMinder account it is (existing, or create new — prefilled with E\*TRADE, the nickname and last four). The link is stored server-side, so it survives reinstalls and works on any computer; Settings → Accounts in the app shows it and can unlink it.
+- **Privacy**: the link key is a SHA-256 fingerprint of the broker + full account number, computed in the service worker. The full account number is never sent to TradeMinder, stored, or logged.
+- **Scoping**: in a single linked account, badges, pills, Add trade, Edit and the session picker use only that account. In **All brokerage accounts**, statuses match across all of your accounts and a position held in several accounts shows a chip per account; Add trade asks for the account. Unlinked accounts show nothing until linked.
+- **Reconcile** runs only for a single, linked account and only ever backdate-closes that account's trades. It's disabled (with the reason shown) in the All view and for unlinked accounts.
 
 ### Stage 1 — Category Indicators
 Reads ticker from DOM → calls `/api/positions/status` → injects a TM badge column and adds a filter toolbar above the grid.
@@ -393,26 +438,28 @@ The E\*TRADE portfolio page uses a **div-based virtual scroll grid** (not a `<ta
 Key facts:
 | Property | Value |
 |---|---|
-| Grid ID | `rdt_3` |
-| Total positions (as observed) | 82 |
+| Grid | `[role="grid"][aria-label="Portfolios"]` — the `rdt_N` id is **not stable** (`rdt_2` in captures) |
+| Account selector | `select#accountDropdown`; option value = full account number + `-` + label; All view = `all-…`; selection only in the live `.value` |
+| Account info on rows | none — no account column or group rows in any view |
+| All-accounts view | rows have no Trade button (full symbol comes from the quote link `?symbol=`); no Customize button in the filter bar |
+| Class names | `Block---element---<hash>`; the hash changes between releases, so match the prefix |
 | Row height | 37px fixed, positioned via `transform: translateY(Npx)` |
-| Grid width | 1200px fixed |
-| Row IDs | `r0_0` through `r0_N` (recycled on scroll) |
+| Row IDs | recycled on scroll and on re-render |
 
-### Confirmed Selectors
+### Selectors (prefix-based)
 ```javascript
+// cls(p) → '[class^="p"],[class*=" p"]'
 const ETRADE = {
-  gridRoot:          '#rdt_3',
-  contentArea:       '.Content---root---D2Ylg',
-  positionRows:      '[role="row"][level="0"]:not(.Row---placeholderRow---2t5Gs)',
-  placeholderRow:    '.Row---placeholderRow---2t5Gs',
-  footerRow:         '.Footer---row---g5JDN',
-  symbolContent:     '.SymbolCellRenderer---content---mcwCT',
-  symbolLink:        'a.SymbolCellRenderer---symbol---_S70m',
-  optionClass:       'SymbolCellRenderer---option---qIlje',
-  itmClass:          'SymbolCellRenderer---in-the-money---AQRUo',
-  optionDescription: 'span.SymbolCellRenderer---description---KHPND',
-  headerRow:         '[data-header="true"] [role="row"]',
+  grid:            '[role="grid"][aria-label="Portfolios"]',
+  contentArea:     cls('Content---root---'),
+  positionRows:    '[role="row"][level="0"]' /* minus Row---placeholderRow---* */,
+  symbolContent:   cls('SymbolCellRenderer---content---'),
+  symbolRoot:      cls('SymbolCellRenderer---root---'),
+  optionClassPrefix: 'SymbolCellRenderer---option---',
+  itmClassPrefix:  'SymbolCellRenderer---in-the-money---',
+  headerTitle:     cls('HeaderCell---title---'),
+  customizeView:   cls('PortfoliosFilters---customize-view---'),
+  accountDropdown: 'select#accountDropdown',
 };
 ```
 
@@ -486,34 +533,55 @@ TradeMinder/
 
 ---
 
+## Sign-in and multi-user
+
+TradeMinder is multi-user. Sign-in is with **Google**, which serves only as the identity check.
+
+- **Sessions:** after the Google callback the backend issues its own session.
+  - It's a random token in an httpOnly, Secure, SameSite=Lax `tm_session` cookie. Only its SHA-256 is stored, in
+    `user_sessions`.
+  - It slides for `SESSION_DAYS` (30): any use within that window extends it.
+  - Logout deletes the row. No JWTs, no Redis.
+- **Sign-in rules, in order:**
+  1. match by Google subject;
+  2. else match the seeded owner or an invited user by email and link the subject once (never replaced; the
+     internal user id stays the tenant key);
+  3. else create a **pending** user, who sees only "Waiting for approval".
+
+  Disabled users are refused. Disabling someone ends their sessions and extension tokens immediately.
+- **Admin:** an extra permission on a normal account (the owner from `OWNER_EMAIL` is the bootstrap admin).
+  - The Admin page has a pending queue, invite by email, approve/reject, disable/re-enable and role changes. You
+    can never disable or demote yourself, or the last admin.
+  - It shows account-management fields only, never anyone's trading data.
+- **Every API route** needs a session or an extension token, except `/health` and `/api/auth/*`; a test enforces
+  it. `/api/me` is the one route a pending user may call.
+- **Extension:** the popup's **Sign in** opens the portal's "Connect this browser extension?" page
+  (`chrome.identity.launchWebAuthFlow`). Approving issues a personal token, hashed, revocable and with a
+  last-used time, which the service worker sends as a bearer header on every call. Only extension IDs in
+  `EXTENSION_IDS` can receive tokens.
+- **Settings → Connected extensions** lists and revokes them.
+- **Schwab re-auth is still the CLI** (`scripts/schwab_auth.py`); an in-app reconnect is future work.
+
+Local dev with real sign-in: set `PUBLIC_BASE_URL=http://localhost:5430` and the Google client id/secret in
+`.env`, and add `http://localhost:5430/api/auth/google/callback` to the OAuth client's redirect URIs.
+
 ## QNAP Deployment (Production)
 
-Production target is a **QNAP TS-251+** running Container Station.
+Production is a QNAP NAS (amd64) running a **Portainer stack** (`docker-compose.prod.yml`) with four services:
 
-| Constraint | Detail |
+| Service | Detail |
 |---|---|
-| Architecture | Intel Celeron J1800 — `linux/amd64` only |
-| Port conflicts | QNAP uses 80/443/8080; use 5431 (backend) and 5430 (frontend) |
-| Volumes | Map to `/share/trademinder/` for persistence across Container Station updates |
-| Memory | Keep `shared_buffers=128MB`; full stack fits in ~1GB |
+| `traefik` (`v3.1.6`) | Only port **443**. A Let's Encrypt certificate for `tm.<domain>` through the **Cloudflare DNS-01** challenge (the NAS is never exposed; no port 80), stored on the `traefik-letsencrypt` volume and auto-renewed. Routes `/api` → backend, everything else → frontend, on one origin |
+| `backend` | FastAPI on 5431; runs `alembic upgrade head` on start; trusts Traefik's forwarded headers |
+| `frontend` | nginx serving the SPA build with an `index.html` fallback for deep links |
+| `db` | Postgres 15 |
 
-```bash
-# Build amd64 images on Mac
-docker buildx build --platform linux/amd64 \
-  -t yourdockerhub/trademinder-backend:latest --push ./backend
+`tm.<domain>` is a DNS-only Cloudflare record pointing at the NAS's LAN IP, so the app is reachable on the home
+Wi-Fi only. All secrets (Google client, `AUTH_STATE_SECRET`, Cloudflare token, Schwab keys) are Portainer stack
+environment variables, never in git.
 
-docker buildx build --platform linux/amd64 \
-  -t yourdockerhub/trademinder-frontend:latest --push ./frontend
-
-# Deploy on QNAP
-ssh admin@<qnap-local-ip>
-cd /share/trademinder
-docker compose -f docker-compose.prod.yml pull
-docker compose -f docker-compose.prod.yml up -d
-
-# First deploy only
-docker compose -f docker-compose.prod.yml exec backend alembic upgrade head
-```
+The full step-by-step upgrade (backup, migrations, env vars, certificate, first sign-in, pilot user, extension,
+DNS rebinding) is in **[docs/deployment/qnap-login-and-https.md](docs/deployment/qnap-login-and-https.md)**.
 
 ---
 
@@ -562,6 +630,8 @@ Migration 002 (categories, signals), category CRUD, `/api/positions/status`, com
 **yfinance for prices** — free, zero auth, ~15min delayed intraday. Acceptable for MVP; upgrade to Tradier or Polygon if needed.
 
 **AI briefing is pull, not push** — generated at 8am and stored; page load fetches the stored briefing. Avoids latency and preserves history.
+
+**Multi-user is in progress, behind one current-user seam** — every router touching user data depends on `app/deps.py::get_current_user`, and every per-id lookup goes through `app/services/ownership.py`, which filters by the owning user and returns 404 for other users' ids. Today the seam returns the seeded owner; Google login (a later part) replaces only its body.
 
 **Extension talks directly to local backend** — calls `http://localhost:5431` (configurable). No relay server, no cloud dependency.
 

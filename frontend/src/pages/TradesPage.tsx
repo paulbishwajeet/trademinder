@@ -5,22 +5,24 @@ import type { Trade, TechnicalsData, TradeCreate } from '../types'
 import { isStale } from '../types'
 import { GroupedTradeTable } from '../components/Trades/GroupedTradeTable'
 import { TradeForm } from '../components/Trades/TradeForm'
+import { useRequiredAccount } from '../context/AccountsContext'
 
 export function TradesPage() {
+  const account = useRequiredAccount()
   const [trades, setTrades] = useState<Trade[]>([])
   const [showForm, setShowForm] = useState(false)
   const [statusFilter, setStatusFilter] = useState<string>('open')
   const [staleOnly, setStaleOnly] = useState(false)
 
   const load = async () => {
-    const data = await tradesApi.list()
+    const data = await tradesApi.list({ account_id: account.id })
     setTrades(data)
   }
 
   useEffect(() => { load() }, [])
 
   const handleCreate = async (payload: TradeCreate, technicals: TechnicalsData | null) => {
-    const trade = await tradesApi.create(payload)
+    const trade = await tradesApi.create({ ...payload, account_id: account.id })
     if (technicals) {
       try {
         await technicalsApi.saveTradeRationale(trade.id, technicals)
@@ -85,12 +87,13 @@ export function TradesPage() {
       {showForm && (
         <div className="mb-6 p-4 bg-white border border-gray-200 rounded-lg">
           <h2 className="text-lg font-semibold mb-4">New Trade</h2>
-          <TradeForm onSubmit={handleCreate} onCancel={() => setShowForm(false)} />
+          <TradeForm account={account} onSubmit={handleCreate} onCancel={() => setShowForm(false)} />
         </div>
       )}
 
       <div className="bg-white rounded-lg border border-gray-200">
         <GroupedTradeTable
+          accountId={account.id}
           trades={trades}
           onDelete={handleDelete}
           onClose={handleClose}

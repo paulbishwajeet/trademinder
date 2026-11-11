@@ -3,9 +3,12 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
 from pydantic import BaseModel, ConfigDict
+from app.schemas.commentary import CommentaryResponse
+from app.schemas.account import AccountSummary
 
 
 class WheelSessionCreate(BaseModel):
+    account_id: Optional[uuid.UUID] = None  # None → the user's default account
     ticker: str
     total_shares: int = 0
     opened_at: date
@@ -20,6 +23,8 @@ class WheelSessionUpdate(BaseModel):
 class WheelSessionSummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: uuid.UUID
+    account_id: uuid.UUID
+    account: AccountSummary
     ticker: str
     total_shares: int
     status: str
@@ -33,10 +38,16 @@ class WheelSlotCreate(BaseModel):
     status: str
 
 
+class WheelSlotUpdate(BaseModel):
+    contracts: int
+
+
 class WheelSlotSummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: uuid.UUID
     session_id: uuid.UUID
+    account_id: uuid.UUID
+    account: AccountSummary
     slot_number: int
     contracts: int
     shares_held: int
@@ -94,6 +105,8 @@ class WheelActiveSlotItem(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: uuid.UUID
     session_id: uuid.UUID
+    account_id: uuid.UUID
+    account: AccountSummary
     slot_number: int
     contracts: int
     shares_held: int
@@ -115,3 +128,17 @@ class WheelSessionDetail(WheelSessionSummary):
     total_premium: Decimal = Decimal("0")
     stock_cost_basis: Optional[Decimal] = None
     stock_current_price: Optional[Decimal] = None
+    # True while market data is offline: stock_current_price and legs' trade_current_price are null.
+    market_data_offline: bool = False
+
+
+class WheelSlotHistoryEntry(CommentaryResponse):
+    origin: str  # "slot" | "leg"
+    leg_role: Optional[str] = None
+    rotation_number: Optional[int] = None
+
+
+class WheelSlotHistoryResponse(BaseModel):
+    items: list[WheelSlotHistoryEntry]
+    total: int
+    has_more: bool

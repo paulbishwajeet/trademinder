@@ -3,7 +3,8 @@ import { apiFetch } from './client'
 import type { Trade, TradeCreate, TradeUpdate } from '../types'
 
 export const tradesApi = {
-  list: (params?: { status?: string; ticker?: string }) => {
+  // account_id omitted → every account (only the Dashboard should rely on that)
+  list: (params?: { status?: string; ticker?: string; account_id?: string }) => {
     const qs = params ? '?' + new URLSearchParams(Object.entries(params).filter(([, v]) => v !== undefined) as [string, string][]).toString() : ''
     return apiFetch<Trade[]>(`/trades${qs}`)
   },

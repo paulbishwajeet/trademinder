@@ -5,14 +5,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.database import get_db
+from app.deps import get_current_user
+from app.models.user import User
 from app.models.signal import TechnicalSignal
 
 router = APIRouter(prefix="/api", tags=["signals"])
 
 
 @router.get("/trades/{trade_id}/signals")
-async def get_trade_signals(trade_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
-    stmt = select(TechnicalSignal).where(TechnicalSignal.trade_id == trade_id).order_by(TechnicalSignal.triggered_at.desc())
+async def get_trade_signals(trade_id: uuid.UUID, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    # Unknown and foreign trades both yield [] (pre-existing contract) — the user filter keeps it leak-free.
+    stmt = select(TechnicalSignal).where(TechnicalSignal.trade_id == trade_id, TechnicalSignal.user_id == user.id).order_by(TechnicalSignal.triggered_at.desc())
     result = await db.execute(stmt)
     signals = result.scalars().all()
     return [
@@ -29,7 +32,9 @@ async def get_trade_signals(trade_id: uuid.UUID, db: AsyncSession = Depends(get_
 
 
 @router.post("/market/signals/refresh")
-async def refresh_signals(db: AsyncSession = Depends(get_db)):
+async def refresh_signals(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    from app.services.market_data import market_data_offline_now
     from app.services.signal_engine import run as run_signal_engine
-    result = await run_signal_engine(db)
+    # DB-only; price-based rules are skipped while market data is offline.
+    result = await run_signal_engine(db, user_id=user.id, market_offline=await market_data_offline_now())
     return result

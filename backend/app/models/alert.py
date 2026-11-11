@@ -15,6 +15,7 @@ class Alert(Base):
     __tablename__ = "alerts"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     trade_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("trades.id", ondelete="CASCADE"), nullable=False)
     alert_type: Mapped[str] = mapped_column(String(30), nullable=False)
     severity: Mapped[str] = mapped_column(String(10), nullable=False)
@@ -29,6 +30,7 @@ class Alert(Base):
     trade: Mapped["Trade"] = relationship(back_populates="alerts")
 
     __table_args__ = (
+        Index("idx_alerts_user", "user_id"),
         Index("idx_alerts_trade", "trade_id"),
         Index("idx_alerts_unread", "is_read", "is_dismissed", postgresql_where=text("NOT is_dismissed")),
     )

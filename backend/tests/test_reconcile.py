@@ -1,3 +1,4 @@
+import uuid
 import pytest
 from datetime import date, datetime, timezone, timedelta
 from httpx import AsyncClient
@@ -26,12 +27,21 @@ PUT_TRADE = {
 
 RECONCILE_URL = "/api/positions/reconcile"
 
+# Reconcile requires an account; these tests reconcile the owner's default account.
+_ACCOUNT: dict[str, str] = {}
+
+
+@pytest.fixture(autouse=True)
+def _reconcile_account(default_account):
+    _ACCOUNT["id"] = str(default_account.id)
+
 
 async def test_reconcile_returns_unmatched_position(client: AsyncClient):
     """Position in E*TRADE with no backend trade appears in unmatched_etrade."""
     await client.post("/api/trades", json=STOCK_TRADE)  # AAPL in backend
 
     resp = await client.post(RECONCILE_URL, json={
+        "account_id": _ACCOUNT["id"],
         "positions": [
             {"ticker": "TSLA", "full_symbol": None, "type": "Stock"},  # not in backend
         ]
@@ -54,6 +64,7 @@ async def test_reconcile_matched_trade_gets_last_etrade_seen(
     trade_id = create_resp.json()["id"]
 
     resp = await client.post(RECONCILE_URL, json={
+        "account_id": _ACCOUNT["id"],
         "positions": [{"ticker": "AAPL", "full_symbol": None, "type": "Stock"}]
     })
     assert resp.status_code == 200
@@ -83,6 +94,7 @@ async def test_reconcile_stale_trade_in_stale_backend(
 
     # Reconcile without AAPL in snapshot
     resp = await client.post(RECONCILE_URL, json={
+        "account_id": _ACCOUNT["id"],
         "positions": [{"ticker": "TSLA", "full_symbol": None, "type": "Stock"}]
     })
     assert resp.status_code == 200
@@ -108,6 +120,7 @@ async def test_reconcile_recently_seen_unmatched_is_now_immediately_stale(
 
     # AAPL is in the snapshot but as a Call option — won't match the Stock trade
     resp = await client.post(RECONCILE_URL, json={
+        "account_id": _ACCOUNT["id"],
         "positions": [{"ticker": "AAPL", "full_symbol": "AAPL--261219C00200000", "type": "Call", "strike": 200.0, "expiry": "2026-12-19"}]
     })
     assert resp.status_code == 200
@@ -133,6 +146,7 @@ async def test_reconcile_unmatched_seen_trade_immediately_stale(
 
     # AAPL is in the snapshot but as a Put option — won't match the Stock trade
     resp = await client.post(RECONCILE_URL, json={
+        "account_id": _ACCOUNT["id"],
         "positions": [{"ticker": "AAPL", "full_symbol": "AAPL--261219P00150000", "type": "Put", "strike": 150.0, "expiry": "2026-12-19"}]
     })
     assert resp.status_code == 200
@@ -165,6 +179,7 @@ async def test_reconcile_ticker_absent_from_snapshot_is_backdated(
 
     # Complete snapshot contains only TSLA — AAPL has been fully closed out
     resp = await client.post(RECONCILE_URL, json={
+        "account_id": _ACCOUNT["id"],
         "positions": [{"ticker": "TSLA", "full_symbol": None, "type": "Stock"}]
     })
     assert resp.status_code == 200
@@ -184,6 +199,7 @@ async def test_reconcile_never_seen_not_stale(client: AsyncClient):
     trade_id = create_resp.json()["id"]
 
     resp = await client.post(RECONCILE_URL, json={
+        "account_id": _ACCOUNT["id"],
         "positions": [{"ticker": "TSLA", "full_symbol": None, "type": "Stock"}]
     })
     assert resp.status_code == 200
@@ -201,6 +217,7 @@ async def test_reconcile_never_seen_but_extension_added_is_stale(client: AsyncCl
     trade_id = create_resp.json()["id"]
 
     resp = await client.post(RECONCILE_URL, json={
+        "account_id": _ACCOUNT["id"],
         "positions": [{"ticker": "TSLA", "full_symbol": None, "type": "Stock"}]
     })
     assert resp.status_code == 200
@@ -219,6 +236,7 @@ async def test_reconcile_option_matched_by_strike_and_expiry(
     trade_id = create_resp.json()["id"]
 
     resp = await client.post(RECONCILE_URL, json={
+        "account_id": _ACCOUNT["id"],
         "positions": [{
             "ticker": "NVDA",
             "full_symbol": "NVDA--260919P00120000",
@@ -259,6 +277,7 @@ async def test_reconcile_multi_leg_only_matched_leg_is_tracked(client: AsyncClie
 
     # All four legs of the iron condor are visible in E*TRADE
     resp = await client.post(RECONCILE_URL, json={
+        "account_id": _ACCOUNT["id"],
         "positions": [
             {"ticker": "XSP", "full_symbol": "XSP---260602P00744000", "type": "Put",  "strike": 744.0, "expiry": "2026-06-02"},
             {"ticker": "XSP", "full_symbol": "XSP---260602P00748000", "type": "Put",  "strike": 748.0, "expiry": "2026-06-02"},
@@ -343,3 +362,43 @@ async def test_list_trades_stale_filter(client: AsyncClient, db_session: AsyncSe
     ids = [item["id"] for item in resp.json()]
     assert stale_id in ids
     assert fresh_id not in ids
+
+
+# ── account scoping ─────────────────────────────────────────────────────────
+
+async def test_reconcile_only_touches_named_account(client: AsyncClient, db_session: AsyncSession):
+    """Trades in other accounts are never matched, marked seen, or backdate-closed — even with
+    identical symbols."""
+    from app.models.trade import Trade
+    other = (await client.post("/api/accounts", json={"broker": "E*TRADE", "nickname": "E*TRADE Hold"})).json()
+    symbol = "NVDA--260919P00120000"
+    default_trade = (await client.post("/api/trades", json={**PUT_TRADE, "etrade_symbol": symbol})).json()
+    other_trade = (await client.post("/api/trades", json={
+        **PUT_TRADE, "etrade_symbol": symbol, "account_id": other["id"],
+    })).json()
+    gone_elsewhere = (await client.post("/api/trades", json={
+        **PUT_TRADE, "ticker": "AMD", "etrade_symbol": "AMD--260919P00100000", "account_id": other["id"],
+    })).json()
+
+    resp = await client.post(RECONCILE_URL, json={"account_id": _ACCOUNT["id"], "positions": [
+        {"ticker": "NVDA", "full_symbol": symbol, "type": "Put", "strike": 120.0, "expiry": "2026-09-19"},
+    ]})
+    assert resp.status_code == 200
+    assert resp.json()["stale_backend"] == []
+
+    db_session.expire_all()
+    assert (await db_session.get(Trade, uuid.UUID(default_trade["id"]))).last_etrade_seen is not None
+    assert (await db_session.get(Trade, uuid.UUID(other_trade["id"]))).last_etrade_seen is None
+    assert (await db_session.get(Trade, uuid.UUID(gone_elsewhere["id"]))).last_etrade_seen is None
+
+    # An empty snapshot backdates the named account's trade only.
+    resp = await client.post(RECONCILE_URL, json={"account_id": _ACCOUNT["id"], "positions": []})
+    stale_ids = [s["id"] for s in resp.json()["stale_backend"]]
+    assert stale_ids == [default_trade["id"]]
+    db_session.expire_all()
+    assert (await db_session.get(Trade, uuid.UUID(gone_elsewhere["id"]))).last_etrade_seen is None
+    assert (await db_session.get(Trade, uuid.UUID(other_trade["id"]))).last_etrade_seen is None
+
+    # Reconciling the other account touches only its trades.
+    resp = await client.post(RECONCILE_URL, json={"account_id": other["id"], "positions": []})
+    assert sorted(s["id"] for s in resp.json()["stale_backend"]) == sorted([other_trade["id"], gone_elsewhere["id"]])

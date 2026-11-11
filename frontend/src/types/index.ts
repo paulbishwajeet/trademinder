@@ -27,6 +27,11 @@ export interface Rationale {
 export interface TechnicalsData {
   macd_signal: string | null
   macd_notes: string | null
+  macd_weekly_trend: string | null
+  macd_daily_signal: string | null
+  macd_daily_notes: string | null
+  macd_3day_signal: string | null
+  macd_3day_notes: string | null
   rsi_14: number | null
   rsi_result: string | null
   ma_200d: number | null
@@ -46,8 +51,114 @@ export interface TechnicalsData {
   notes: string | null
 }
 
+// ── Brokerage accounts ──────────────────────────────────────────
+
+// Broker is free text on the backend; these are the choices the UI offers.
+export const KNOWN_BROKERS = ['E*TRADE', 'Schwab', 'Fidelity', 'Robinhood', 'Other'] as const
+export type KnownBroker = (typeof KNOWN_BROKERS)[number]
+
+// Compact label embedded in trade / wheel / spread / screener-note responses.
+export interface AccountSummary {
+  id: string
+  nickname: string
+  broker: string
+  last_four: string | null
+}
+
+// E*TRADE dropdown entry this account is linked to by the Chrome extension (Part 3).
+// The link fingerprint itself is never sent to the browser.
+export interface AccountLink {
+  label: string | null
+  last_seen_at: string | null
+}
+
+export interface BrokerageAccount extends AccountSummary {
+  link: AccountLink | null
+  default_category_id: string | null
+  is_default: boolean
+  sort_order: number
+  is_archived: boolean
+  created_at: string
+  category_ids: string[]
+  can_delete: boolean  // empty account — may be hard-deleted; otherwise archive it
+}
+
+export interface Category {
+  id: string
+  name: string
+  color: string
+  icon: string | null
+  is_system: boolean
+  sort_order: number
+  created_at: string
+}
+
+// ── Dashboard summary (GET /api/dashboard/summary) ──────────────
+
+export interface DashboardAccountCard {
+  account: AccountSummary
+  is_default: boolean
+  open_trades: number
+  active_wheels: number
+  slots_needing_action: number
+  legs_expiring_7d: number
+  net_premium_month: string  // Decimal string, signed
+}
+
+export interface DashboardNeedsActionSlot {
+  slot_id: string
+  session_id: string
+  slot_number: number
+  ticker: string
+  status: string
+  account: AccountSummary
+  open_leg_expiry: string | null
+}
+
+export interface DashboardAlert {
+  id: string
+  trade_id: string
+  ticker: string
+  alert_type: string
+  severity: string
+  title: string
+  message: string
+  is_read: boolean
+  triggered_at: string
+  account: AccountSummary
+}
+
+export interface DashboardSummary {
+  as_of: string  // US/Eastern date
+  accounts: DashboardAccountCard[]
+  needs_action: DashboardNeedsActionSlot[]
+  alerts: DashboardAlert[]
+  market_data_offline?: boolean
+}
+
+export interface BrokerageAccountCreate {
+  broker: string
+  nickname: string
+  last_four?: string | null
+  sort_order?: number
+  is_default?: boolean
+  category_ids?: string[] | null  // omitted → every category in the user's library
+  default_category_id?: string | null
+}
+
+export interface BrokerageAccountUpdate {
+  broker?: string
+  nickname?: string
+  last_four?: string | null
+  sort_order?: number
+  default_category_id?: string | null
+  is_default?: true  // moves the default here; unset by defaulting another account
+}
+
 export interface Trade {
   id: string
+  account_id: string
+  account: AccountSummary
   wheel_id: string | null
   session_id: string | null
   type: string
@@ -67,6 +178,8 @@ export interface Trade {
   current_price: number | null
   unrealized_pnl: number | null
   last_price_at: string | null
+  /** True while market data is offline (current_price / unrealized_pnl are then null). */
+  market_data_offline?: boolean
   created_at: string
   updated_at: string
   last_etrade_seen: string | null
@@ -74,9 +187,10 @@ export interface Trade {
 }
 
 export interface TradeCreate {
+  account_id?: string | null  // omitted → the user's default account
   wheel_id?: string | null
   type: string
-  category: string
+  category?: string  // omitted → the account's default category
   strategy: string
   ticker: string
   open_date: string
@@ -107,14 +221,43 @@ export interface TradeUpdate {
   session_id?: string | null
 }
 
+export interface WheelSignalSnapshot {
+  captured_at: string
+  premium: string | null
+  price: number | null
+  change_pct: number | null
+  rsi_14: number | null
+  macd_weekly: string | null
+  macd_daily: string | null
+  macd_3day: string | null
+  cc_timing: CCSignalResult | null
+  sp_timing: CCSignalResult | null
+  pnl_pct: number | null
+  gain_loss_pct: number | null
+}
+
 export interface Commentary {
   id: string
-  trade_id: string
+  trade_id: string | null
+  slot_id: string | null
   entry_date: string
   note: string
   tags: string[] | null
   created_at: string
   rationale: Rationale | null
+  signal_snapshot: WheelSignalSnapshot | null
+}
+
+export interface WheelSlotHistoryEntry extends Commentary {
+  origin: 'slot' | 'leg'
+  leg_role: string | null
+  rotation_number: number | null
+}
+
+export interface WheelSlotHistoryResponse {
+  items: WheelSlotHistoryEntry[]
+  total: number
+  has_more: boolean
 }
 
 export interface Alert {
@@ -132,6 +275,8 @@ export interface Alert {
 
 export interface SessionSummary {
   id: string
+  account_id: string
+  account: AccountSummary
   ticker: string
   strategy: string
   status: string
@@ -170,6 +315,8 @@ export interface SessionLookupResponse {
 
 export interface WheelSessionSummary {
   id: string
+  account_id: string
+  account: AccountSummary
   ticker: string
   total_shares: number
   status: string
@@ -211,6 +358,8 @@ export interface WheelPremiumLogItem {
 export interface WheelSlotDetail {
   id: string
   session_id: string
+  account_id: string
+  account: AccountSummary
   slot_number: number
   contracts: number
   shares_held: number
@@ -227,11 +376,15 @@ export interface WheelSessionDetail extends WheelSessionSummary {
   total_premium: string
   stock_cost_basis: number | null
   stock_current_price: number | null
+  /** True while market data is offline (stock and leg prices are then null). */
+  market_data_offline?: boolean
 }
 
 export interface WheelActiveSlot {
   id: string
   session_id: string
+  account_id: string
+  account: AccountSummary
   slot_number: number
   contracts: number
   shares_held: number
@@ -260,6 +413,9 @@ export interface CCSignalFactor {
 }
 
 export interface CCSignalResult {
+  /** Served from the server cache while market data is offline (see as_of). */
+  stale?: boolean
+  as_of?: string | null
   ticker: string
   score: number
   grade: string
@@ -278,4 +434,79 @@ export interface CCSignalResult {
 export function isStale(trade: Trade): boolean {
   if (!trade.last_etrade_seen) return false
   return new Date(trade.last_etrade_seen) < new Date(Date.now() - 24 * 60 * 60 * 1000)
+}
+
+export interface VolumeSpike {
+  date: string
+  volume: number
+  avg_volume: number
+  ratio: number
+}
+
+// Decimal-backed fields are serialized as JSON strings by this repo's Pydantic
+// schemas (e.g. "195.50", not 195.5) — parseFloat() at the point of use, don't
+// treat these as numbers. volume_spikes entries are plain JSON ints/floats
+// (not Decimal), so VolumeSpike stays numeric.
+export interface ScreenerFetchedFields {
+  sector: string | null
+  price: string | null
+  prev_close: string | null
+  change_pct: string | null
+  iv_rank: string | null
+  iv_percentile: string | null
+  rsi_14: string | null
+  macd_weekly_signal: string | null
+  macd_daily_signal: string | null
+  ma_20d: string | null
+  ma_50d: string | null
+  ma_100d: string | null
+  ma_200d: string | null
+  bollinger_upper: string | null
+  bollinger_mid: string | null
+  bollinger_lower: string | null
+  bollinger_position: string | null
+  next_earnings_date: string | null
+  volume_spikes: VolumeSpike[] | null
+  fetch_status: string | null
+  fetch_error: string | null
+}
+
+export interface ScreenerRow extends ScreenerFetchedFields {
+  /** True while market data is offline: metrics are the stored ones, as of last_fetched_at. */
+  stale?: boolean
+  id: string
+  symbol: string
+  category: string | null
+  last_fetched_at: string | null
+  created_at: string
+  account_ids: string[]
+}
+
+export interface ScreenerPreview extends ScreenerFetchedFields {
+  symbol: string
+  already_tracked: boolean
+}
+
+export interface ScreenerCommentary {
+  id: string
+  screener_id: string
+  account_id: string
+  account: AccountSummary
+  note: string
+  tags: string[] | null
+  created_at: string
+  updated_at: string | null
+}
+
+export interface ScreenerJobError {
+  symbol: string
+  error: string
+}
+
+export interface ScreenerJobStatus {
+  job_id: string
+  status: 'running' | 'done'
+  total: number
+  completed: number
+  errors: ScreenerJobError[]
 }

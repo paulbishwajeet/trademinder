@@ -1,0 +1,250 @@
+"""Standalone 'CC Timing Signal' — scores how good a moment it is to sell a covered
+call likely to expire OTM (mean-reversion entry timing), independent of the existing
+CC/SP Signal in cc_signal.py, which optimizes for overall wheel P&L instead."""
+import logging
+import time
+from datetime import datetime, timezone
+
+import pandas as pd
+
+from app.services.market_data import get_market_data, MarketDataUnavailable
+from app.services.technicals_fetcher import compute_iv_percentile_from_chain, fetch_technicals
+from app.services.cc_signal import _get_llm_commentary
+
+log = logging.getLogger(__name__)
+
+_cc_timing_cache: dict[str, tuple[dict, float]] = {}
+_CACHE_TTL = 14400  # 4 hours
+
+
+def _score_cc_timing_factors(
+    technicals: dict,
+    daily_closes: pd.Series,
+    live_price: float,
+    prev_close: float,
+) -> tuple[int, str, list[dict]]:
+    factors: list[dict] = []
+
+    # 1. RSI(D) Level (25 pts) — piecewise: gentle slope 50-70, steep slope 30-50.
+    rsi = technicals.get("rsi_14")
+    rsi_pts = 0.0
+    rsi_detail = "N/A"
+    if rsi is not None:
+        rsi = float(rsi)
+        if rsi >= 70:
+            rsi_pts = 25.0
+        elif rsi >= 50:
+            rsi_pts = 17.5 + (rsi - 50) * 0.375
+        elif rsi >= 30:
+            rsi_pts = (rsi - 30) * 0.875
+        else:
+            rsi_pts = 0.0
+        rsi_pts = round(rsi_pts, 1)
+        rsi_detail = f"RSI {rsi:.1f}"
+    factors.append({"name": "RSI(D) Level", "points": rsi_pts, "max": 25, "detail": rsi_detail})
+
+    # 2. RSI(D) Trend (10 pts) — direction of RSI vs its own 14-period signal line
+    #    (rsi_ma_14). A bearish cross (RSI turning down) is ideal for CC; the
+    #    freshness of that cross (rsi_trend) scales the points, mirroring how
+    #    MACD(W) exhaustion is handled below.
+    rsi_cross_direction = technicals.get("rsi_cross_direction")
+    rsi_trend = technicals.get("rsi_trend")
+    if rsi_cross_direction == "bearish":
+        if rsi_trend in ("expanding", "holding_strong"):
+            trend_pts = 10
+            trend_detail = f"Bearish cross, {rsi_trend}"
+        elif rsi_trend == "squeezing":
+            trend_pts = 6
+            trend_detail = "Bearish cross, squeezing"
+        elif rsi_trend == "fading_near_flip":
+            trend_pts = 3
+            trend_detail = "Bearish cross, fading (near flip)"
+        else:
+            trend_pts = 3
+            trend_detail = "Bearish cross"
+    elif rsi_cross_direction == "bullish":
+        trend_pts = 0
+        trend_detail = f"Bullish cross ({rsi_trend or 'n/a'})"
+    else:
+        trend_pts = 3
+        trend_detail = "No RSI crossover data"
+    factors.append({"name": "RSI(D) Trend", "points": trend_pts, "max": 10, "detail": trend_detail})
+
+    # 3. MACD(W) (30 pts) — bearish weekly = overhead pressure, confirms the fade thesis.
+    #    The crossover's trend matters too, in BOTH directions:
+    #    - bearish (ideal) fading toward a flip is a reversal risk, worth less than fresh/sustained.
+    #    - bullish (wrong direction) fading toward a flip is the opposite: the bad trend is running
+    #      out of steam and a bearish flip may be near, so points scale UP as it exhausts.
+    macd = technicals.get("macd_signal", "neutral")
+    macd_trend = technicals.get("macd_weekly_trend")
+    macd_map = {"bearish": 30, "neutral": 14, "bullish": 0}
+    macd_pts = macd_map.get(macd, 0)
+    trend_note = ""
+    if macd == "bearish" and macd_trend == "expanding":
+        macd_pts = 30
+        trend_note = ", expanding (bearish still building)"
+    elif macd == "bearish" and macd_trend == "holding_strong":
+        macd_pts = 26
+        trend_note = ", holding strong"
+    elif macd == "bearish" and macd_trend == "squeezing":
+        macd_pts = 22
+        trend_note = ", squeezing"
+    elif macd == "bearish" and macd_trend == "fading_near_flip":
+        macd_pts = 14
+        trend_note = ", fading (bearish exhaustion)"
+    elif macd == "bullish" and macd_trend == "expanding":
+        macd_pts = 0
+        trend_note = ", expanding (bullish still building)"
+    elif macd == "bullish" and macd_trend == "holding_strong":
+        macd_pts = 4
+        trend_note = ", holding strong"
+    elif macd == "bullish" and macd_trend == "squeezing":
+        macd_pts = 12
+        trend_note = ", squeezing"
+    elif macd == "bullish" and macd_trend == "fading_near_flip":
+        macd_pts = 22
+        trend_note = ", fading (bullish exhaustion)"
+    macd_notes = technicals.get("macd_notes", "")
+    factors.append({"name": "MACD(W)", "points": macd_pts, "max": 30, "detail": f"{macd.capitalize()}, {macd_notes}{trend_note}"})
+
+    # 4. Bollinger %B (15 pts) — continuous position within the bands; sweet spot is
+    #    mid-to-upper without touching the extremes (overextended but not parabolic).
+    bb_pts = 0
+    bb_detail = "N/A"
+    if len(daily_closes) >= 20:
+        mean = float(daily_closes.rolling(20).mean().iloc[-1])
+        std = float(daily_closes.rolling(20).std().iloc[-1])
+        if std > 0:
+            upper = mean + 2 * std
+            lower = mean - 2 * std
+            pct_b = (live_price - lower) / (upper - lower)
+            if 0.65 <= pct_b <= 0.85:
+                bb_pts = 15
+            elif 0.5 <= pct_b < 0.65 or 0.85 < pct_b <= 1.0:
+                bb_pts = 9
+            elif 0.3 <= pct_b < 0.5:
+                bb_pts = 5
+            else:
+                bb_pts = 0
+            bb_detail = f"%B {pct_b:.2f}"
+    factors.append({"name": "Bollinger %B", "points": bb_pts, "max": 15, "detail": bb_detail})
+
+    # 5. Day Color (20 pts) — green day = capturing richer premium on the pop.
+    pct_chg = (live_price - prev_close) / prev_close * 100 if prev_close else 0.0
+    if pct_chg > 0.5:
+        day_pts = 20
+        day_detail = f"Green ({pct_chg:+.1f}%)"
+    elif pct_chg >= -0.5:
+        day_pts = 9
+        day_detail = f"Neutral ({pct_chg:+.1f}%)"
+    else:
+        day_pts = 0
+        day_detail = f"Red ({pct_chg:+.1f}%)"
+    factors.append({"name": "Day Color", "points": day_pts, "max": 20, "detail": day_detail})
+
+    total = round(sum(f["points"] for f in factors))
+
+    # Confluence bonus — reward the literal "perfect setup" beyond additive luck.
+    is_perfect_setup = (
+        rsi is not None and rsi >= 70
+        and macd == "bearish"
+        and pct_chg > 0.5
+    )
+    if is_perfect_setup:
+        total = min(100, total + 10)
+
+    if total >= 80:
+        grade = "strong"
+    elif total >= 60:
+        grade = "moderate"
+    elif total >= 40:
+        grade = "weak"
+    else:
+        grade = "wait"
+
+    return total, grade, factors
+
+
+def _make_error_signal(ticker: str, exc: Exception) -> dict:
+    return {
+        "ticker": ticker, "score": 0, "grade": "wait",
+        "iv_percentile": None, "atm_iv": None, "spot_price": None,
+        "factors": [], "commentary": None, "strike_hint": None, "caution": None,
+        "cached_at": datetime.now(timezone.utc).isoformat(),
+        "fetch_status": "error", "fetch_error": str(exc),
+    }
+
+
+def _compute_cc_timing_fresh(ticker: str) -> dict:
+    technicals, close_d = fetch_technicals(ticker, return_closes=True)
+    if technicals.get("fetch_status") != "ok":
+        raise ValueError(f"Technicals fetch failed: {technicals.get('fetch_error')}")
+    if close_d.empty:
+        raise ValueError(f"No daily data for {ticker}")
+
+    # close_d's last bar is today's live price when the market is open (see
+    # _append_live_bar in technicals_fetcher.py) — reuse it rather than re-fetching
+    # a second quote, so "live price" and "previous close" stay in sync with what
+    # fetch_technicals already used for RSI/MACD-daily/day_color.
+    client = get_market_data()
+    live_price = float(close_d.iloc[-1])
+    prev_close = float(close_d.iloc[-2])
+
+    call_chain = client.get_option_chain(ticker, contract_type="CALL", strike_count=30)
+    iv_percentile, atm_iv = compute_iv_percentile_from_chain(close_d, call_chain, ticker, contract_type="CALL")
+
+    score, grade, factors = _score_cc_timing_factors(technicals, close_d, live_price, prev_close)
+
+    commentary_data = _get_llm_commentary(ticker, score, grade, factors, technicals, iv_percentile, live_price)
+    caution = commentary_data.get("caution")
+
+    # Weekly MACD exhaustion — bearish confirmation that's fading is a reversal risk, not part of the score.
+    if technicals.get("macd_signal") == "bearish" and technicals.get("macd_weekly_trend") == "fading_near_flip":
+        periods = technicals.get("macd_weekly_periods_since_cross")
+        periods_note = f" ({periods} weeks since the last cross)" if periods is not None else ""
+        exhaustion_note = f"Weekly MACD is bearish but fading{periods_note} — reversal risk."
+        caution = f"{caution} {exhaustion_note}" if caution else exhaustion_note
+
+    # IV Percentile gate — caps the grade and flags thin premium; not part of the score.
+    if iv_percentile is not None and iv_percentile < 20:
+        if grade == "strong":
+            grade = "moderate"
+        gate_note = "Premium is thin (low IV percentile) — a technical setup alone might not be worth trading."
+        caution = f"{caution} {gate_note}" if caution else gate_note
+
+    return {
+        "ticker": ticker,
+        "score": score,
+        "grade": grade,
+        "iv_percentile": iv_percentile,
+        "atm_iv": atm_iv,
+        "spot_price": round(live_price, 2),
+        "factors": factors,
+        "commentary": commentary_data.get("commentary"),
+        "strike_hint": commentary_data.get("strike_hint"),
+        "caution": caution,
+        "cached_at": datetime.now(timezone.utc).isoformat(),
+        "fetch_status": "ok",
+        "fetch_error": None,
+    }
+
+
+def compute_cc_timing_signal(ticker: str, force: bool = False) -> dict:
+    ticker = ticker.upper()
+    now = time.time()
+    cached = _cc_timing_cache.get(ticker)
+    if not force and cached and (now - cached[1]) < _CACHE_TTL:
+        return cached[0]
+
+    try:
+        result = _compute_cc_timing_fresh(ticker)
+        _cc_timing_cache[ticker] = (result, now)
+        return result
+    except MarketDataUnavailable:
+        # Offline: serve the last good result (any age) flagged stale; without one, 503.
+        if cached:
+            return {**cached[0], "stale": True, "as_of": cached[0].get("cached_at")}
+        raise
+    except Exception as exc:
+        log.exception("cc_timing_signal failed for %s", ticker)
+        return _make_error_signal(ticker, exc)

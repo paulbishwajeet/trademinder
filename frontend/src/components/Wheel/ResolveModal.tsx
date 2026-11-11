@@ -4,6 +4,7 @@ import { wheelApi } from '../../api/wheel'
 import { tradesApi } from '../../api/trades'
 
 interface Props {
+  accountId: string
   slotId: string
   ticker: string
   onClose: () => void
@@ -32,7 +33,7 @@ const PUT_OUTCOMES: OutcomeOption[] = [
   { value: 'put_rolled', label: 'Rolled to new position', needsNewTrade: true, newTradeLabel: 'New put trade', needsBuybackCost: true },
 ]
 
-export function ResolveModal({ slotId, ticker, onClose, onResolved }: Props) {
+export function ResolveModal({ accountId, slotId, ticker, onClose, onResolved }: Props) {
   const [outcome, setOutcome] = useState('')
   const [buybackCost, setBuybackCost] = useState('')
   const [newTradeId, setNewTradeId] = useState('')
@@ -42,17 +43,17 @@ export function ResolveModal({ slotId, ticker, onClose, onResolved }: Props) {
   const [slotStatus, setSlotStatus] = useState<string>('')
 
   useEffect(() => {
-    tradesApi.list({ ticker, status: 'open' })
+    tradesApi.list({ ticker, status: 'open', account_id: accountId })
       .then(all => setTrades(all.filter(t => !t.session_id)))
       .catch(() => setTrades([]))
-  }, [ticker])
+  }, [ticker, accountId])
 
   useEffect(() => {
-    wheelApi.activeSlots().then(slots => {
+    wheelApi.activeSlots(accountId).then(slots => {
       const slot = slots.find(s => s.id === slotId)
       if (slot) setSlotStatus(slot.status)
     }).catch(() => {})
-  }, [slotId])
+  }, [slotId, accountId])
 
   const outcomes = slotStatus.startsWith('cc') ? CC_OUTCOMES : PUT_OUTCOMES
   const selected = outcomes.find(o => o.value === outcome)

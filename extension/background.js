@@ -1,15 +1,18 @@
 // background.js — service worker
-// Provides API URL to content script and manages settings
+// Owns the TradeMinder server address, relays every API call for the content script (direct
+// fetches from the E*TRADE page are blocked by Chrome's Local Network Access policy), and turns
+// E*TRADE account numbers into link fingerprints. Account numbers are never stored or logged.
+
+const DEFAULT_API_URL = 'http://127.0.0.1:5431';
+const DEFAULT_STAGES = { stage1: true, stage2: true, stage3: true, stage4: true };
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.storage.local.get(['tmApiUrl', 'tmStages'], (result) => {
     if (!result.tmApiUrl) {
-      chrome.storage.local.set({ tmApiUrl: 'http://127.0.0.1:5431' });
+      chrome.storage.local.set({ tmApiUrl: DEFAULT_API_URL });
     }
     if (!result.tmStages) {
-      chrome.storage.local.set({
-        tmStages: { stage1: true, stage2: true, stage3: true, stage4: true }
-      });
+      chrome.storage.local.set({ tmStages: DEFAULT_STAGES });
     }
   });
 
@@ -28,29 +31,200 @@ chrome.runtime.onInstalled.addListener(() => {
   });
 });
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.type === 'FETCH') {
-    const { url, method = 'GET', headers = {}, body } = message;
-    fetch(url, {
+// ── Server address ───────────────────────────────────────────────────────────
+
+async function getApiUrl() {
+  const { tmApiUrl } = await chrome.storage.local.get('tmApiUrl');
+  return (tmApiUrl || DEFAULT_API_URL).replace(/\/+$/, '');
+}
+
+// The address is user-chosen, so host access is granted at runtime (optional_host_permissions).
+async function hasHostPermission(baseUrl) {
+  try {
+    const origin = new URL(baseUrl).origin;
+    return await chrome.permissions.contains({ origins: [`${origin}/*`] });
+  } catch {
+    return false;
+  }
+}
+
+// ── Sign in (Part 5) ─────────────────────────────────────────────────────────
+// The extension acts as a TradeMinder user through a personal bearer token, minted by the portal's
+// /extension/connect page and stored here. Every relayed call carries it.
+
+async function getAuth() {
+  const { tmAuthToken, tmAuthEmail } = await chrome.storage.local.get(['tmAuthToken', 'tmAuthEmail']);
+  return { token: tmAuthToken || null, email: tmAuthEmail || null };
+}
+
+async function clearAuth(reason) {
+  await chrome.storage.local.remove(['tmAuthToken', 'tmAuthEmail']);
+  await chrome.storage.local.set({ tmAuthState: reason || 'signed_out' });
+}
+
+// Runs in the worker (a popup would close as soon as the auth window takes focus).
+async function signIn() {
+  const base = await getApiUrl();
+  const redirect = chrome.identity.getRedirectURL(); // https://<extension id>.chromiumapp.org/
+  const url = `${base}/extension/connect?redirect_uri=${encodeURIComponent(redirect)}`;
+  let finalUrl;
+  try {
+    finalUrl = await chrome.identity.launchWebAuthFlow({ url, interactive: true });
+  } catch (err) {
+    return { ok: false, error: err?.message || 'Sign in was cancelled' };
+  }
+  const fragment = new URLSearchParams(new URL(finalUrl).hash.slice(1));
+  const token = fragment.get('token');
+  if (!token) return { ok: false, error: 'No token returned' };
+  await chrome.storage.local.set({ tmAuthToken: token, tmAuthEmail: fragment.get('email') || '', tmAuthState: 'signed_in' });
+  await chrome.storage.session.remove(RESOLVE_CACHE_KEY); // links belong to the signed-in user
+  return { ok: true, email: fragment.get('email') || '' };
+}
+
+// Sign out: revoke the token server-side first, then forget it.
+async function signOut() {
+  await apiFetch('/api/extension/tokens/current', { method: 'DELETE' });
+  await clearAuth('signed_out_by_user');
+  await chrome.storage.session.remove(RESOLVE_CACHE_KEY);
+  return { ok: true };
+}
+
+// Fetch a TradeMinder API path. Resolves to { ok, status, data, error?, errorKind? } where errorKind
+// is 'no_permission' or 'unreachable' when TradeMinder could not be reached at all, and 'signed_out'
+// when there is no valid token (401 — the token is then cleared).
+async function apiFetch(path, { method = 'GET', headers = {}, body } = {}) {
+  const base = await getApiUrl();
+  if (!(await hasHostPermission(base))) {
+    return { ok: false, status: 0, data: null, error: `No permission for ${base}`, errorKind: 'no_permission', apiUrl: base };
+  }
+  const { token } = await getAuth();
+  if (!token) {
+    return { ok: false, status: 401, data: null, error: 'Signed out', errorKind: 'signed_out', apiUrl: base };
+  }
+  try {
+    const resp = await fetch(`${base}${path}`, {
       method,
-      headers,
+      headers: { ...headers, Authorization: `Bearer ${token}` },
       body: body !== undefined ? body : undefined,
       signal: AbortSignal.timeout(15000),
+    });
+    if (resp.status === 401) {
+      await clearAuth('signed_out');  // revoked, expired or the user was disabled
+      return { ok: false, status: 401, data: null, error: 'Signed out', errorKind: 'signed_out', apiUrl: base };
+    }
+    let data = null;
+    try { data = await resp.json(); } catch {}
+    // Market data offline: mixed endpoints say so in a header, pure market endpoints with a 503 code.
+    const header = resp.headers.get('X-Market-Data-Offline');
+    const marketDataOffline = header !== null ? header === 'true'
+      : (resp.status === 503 && data?.code === 'market_data_offline') ? true : null;
+    return { ok: resp.ok, status: resp.status, data, apiUrl: base, marketDataOffline };
+  } catch (err) {
+    return { ok: false, status: 0, data: null, error: err.message, errorKind: 'unreachable', apiUrl: base };
+  }
+}
+
+// ── Account fingerprints + link resolution ───────────────────────────────────
+
+// Hex SHA-256 of `<broker>:<full account number>`. This is the only place the number is used;
+// it is never logged, stored or sent anywhere.
+async function fingerprint(broker, accountNumber) {
+  const bytes = new TextEncoder().encode(`${broker}:${accountNumber}`);
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// Per-browser-session cache: fingerprint → resolve result. chrome.storage.session lives in memory
+// only (never written to disk) and survives the service worker being suspended.
+const RESOLVE_CACHE_KEY = 'tmResolveCache';
+
+async function readResolveCache() {
+  const { [RESOLVE_CACHE_KEY]: cache } = await chrome.storage.session.get(RESOLVE_CACHE_KEY);
+  return cache || {};
+}
+
+async function writeResolveCache(fp, result) {
+  const cache = await readResolveCache();
+  if (result === null) delete cache[fp];
+  else cache[fp] = result;
+  await chrome.storage.session.set({ [RESOLVE_CACHE_KEY]: cache });
+}
+
+async function resolveAccount({ accountNumber, label, fresh }) {
+  const fp = await fingerprint('E*TRADE', accountNumber);
+  if (!fresh) {
+    const cached = (await readResolveCache())[fp];
+    if (cached) return { ok: true, fingerprint: fp, ...cached };
+  }
+  const resp = await apiFetch('/api/accounts/links/resolve', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fingerprint: fp, label }),
+  });
+  if (!resp.ok) {
+    return { ok: false, fingerprint: fp, status: resp.status, error: resp.data?.detail || resp.error, errorKind: resp.errorKind, apiUrl: resp.apiUrl };
+  }
+  const result = { linked: resp.data.linked, account: resp.data.account, is_archived: resp.data.is_archived };
+  await writeResolveCache(fp, result);
+  return { ok: true, fingerprint: fp, ...result };
+}
+
+// Link calls go through here so the resolve cache is updated in the same place.
+async function linkAccount({ fingerprint: fp, label, accountId, createAccount }) {
+  const resp = createAccount
+    ? await apiFetch('/api/accounts/links', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fingerprint: fp, label, account: createAccount }),
     })
-      .then(async (resp) => {
-        let data = null;
-        try { data = await resp.json(); } catch {}
-        sendResponse({ ok: resp.ok, status: resp.status, data });
-      })
-      .catch((err) => sendResponse({ ok: false, status: 0, data: null, error: err.message }));
+    : await apiFetch(`/api/accounts/${accountId}/link`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fingerprint: fp, label }),
+    });
+  if (!resp.ok) {
+    return { ok: false, status: resp.status, error: resp.data?.detail || resp.error, errorKind: resp.errorKind };
+  }
+  const account = resp.data;
+  const summary = { id: account.id, nickname: account.nickname, broker: account.broker, last_four: account.last_four };
+  await writeResolveCache(fp, { linked: true, account: summary, is_archived: account.is_archived });
+  return { ok: true, linked: true, account: summary, is_archived: account.is_archived };
+}
+
+// ── Messages ─────────────────────────────────────────────────────────────────
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === 'FETCH') {
+    // `path` is an API path; the stored server address is prefixed here.
+    apiFetch(message.path, message).then(sendResponse);
     return true; // keep message channel open for async response
+  }
+
+  if (message.type === 'RESOLVE_ACCOUNT') {
+    resolveAccount(message).then(sendResponse).catch(() => sendResponse({ ok: false, error: 'Resolve failed' }));
+    return true;
+  }
+
+  if (message.type === 'LINK_ACCOUNT') {
+    linkAccount(message).then(sendResponse).catch(() => sendResponse({ ok: false, error: 'Link failed' }));
+    return true;
+  }
+
+  if (message.type === 'SIGN_IN') {
+    signIn().then(sendResponse).catch((err) => sendResponse({ ok: false, error: err?.message }));
+    return true;
+  }
+
+  if (message.type === 'SIGN_OUT') {
+    signOut().then(sendResponse).catch(() => sendResponse({ ok: false }));
+    return true;
   }
 
   if (message.type === 'GET_SETTINGS') {
     chrome.storage.local.get(['tmApiUrl', 'tmStages'], (result) => {
       sendResponse({
-        apiUrl: result.tmApiUrl || 'http://localhost:5431',
-        stages: result.tmStages || { stage1: true, stage2: true, stage3: true, stage4: true },
+        apiUrl: result.tmApiUrl || DEFAULT_API_URL,
+        stages: result.tmStages || DEFAULT_STAGES,
       });
     });
     return true;
@@ -58,9 +232,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === 'ROW_CONTEXT') {
     const isTracked = message.isTracked;
+    // canAdd is false when the account on screen isn't linked (or is archived): writes need a known account.
+    const canAdd = message.canAdd !== false;
     chrome.contextMenus.update('tm-add', {
-      title: isTracked ? 'Already in TradeMinder' : 'Add to TradeMinder',
-      enabled: !isTracked,
+      title: !canAdd ? (message.blockReason || 'Link this E*TRADE account first')
+        : isTracked ? 'Already in TradeMinder' : 'Add to TradeMinder',
+      enabled: canAdd && !isTracked,
     });
     chrome.contextMenus.update('tm-view', {
       title: isTracked ? 'View / Edit Entry' : 'Not in TradeMinder',

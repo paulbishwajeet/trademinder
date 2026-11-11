@@ -7,6 +7,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
+from app.deps import get_current_user
+from app.models.user import User
+from app.services.ownership import (
+    get_trade_session, resolve_account, resolve_account_filter, require_same_account,
+)
 from app.models.trade_session import TradeSession
 from app.schemas.session import (
     SessionCreate, SessionUpdate, SessionSummary,
@@ -21,9 +26,14 @@ async def list_sessions(
     strategy: Optional[str] = Query("WHEEL"),
     status: Optional[str] = Query(None),
     ticker: Optional[str] = Query(None),
+    account_id: Optional[uuid.UUID] = Query(None),
     db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
-    stmt = select(TradeSession)
+    stmt = select(TradeSession).where(TradeSession.user_id == user.id)
+    account_filter = await resolve_account_filter(db, user, account_id)
+    if account_filter is not None:
+        stmt = stmt.where(TradeSession.account_id == account_filter)
     if strategy:
         stmt = stmt.where(TradeSession.strategy == strategy)
     if status:
@@ -36,13 +46,22 @@ async def list_sessions(
 
 
 @router.post("", response_model=SessionSummary, status_code=201)
-async def create_session(payload: SessionCreate, db: AsyncSession = Depends(get_db)):
+async def create_session(
+    payload: SessionCreate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    account = await resolve_account(db, user, payload.account_id)
     if payload.parent_session_id:
-        parent = await db.get(TradeSession, payload.parent_session_id)
-        if parent is None:
+        try:
+            parent = await get_trade_session(db, user, payload.parent_session_id)
+        except HTTPException:
             raise HTTPException(status_code=404, detail="Parent session not found")
+        require_same_account(account.id, parent.account_id, "Parent session")
 
     session = TradeSession(
+        user_id=user.id,
+        account_id=account.id,
         ticker=payload.ticker.upper(),
         strategy=payload.strategy,
         status=payload.status,
@@ -62,11 +81,14 @@ async def create_session(payload: SessionCreate, db: AsyncSession = Depends(get_
 async def lookup_sessions(
     ticker: str = Query(...),
     strategy: Optional[str] = Query(None),   # was: str = Query("WHEEL")
+    account_id: Optional[uuid.UUID] = Query(None),
     db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     stmt = (
         select(TradeSession)
         .where(
+            TradeSession.user_id == user.id,
             TradeSession.ticker == ticker.upper(),
             TradeSession.status.not_in(["completed", "closed"]),  # was: != "completed"
         )
@@ -74,6 +96,9 @@ async def lookup_sessions(
     )
     if strategy is not None:
         stmt = stmt.where(TradeSession.strategy == strategy)
+    account_filter = await resolve_account_filter(db, user, account_id)
+    if account_filter is not None:
+        stmt = stmt.where(TradeSession.account_id == account_filter)
     stmt = stmt.order_by(TradeSession.rotation_number.desc())
     result = await db.execute(stmt)
     sessions = result.scalars().all()
@@ -88,28 +113,31 @@ async def lookup_sessions(
 # NOTE: /active must be defined BEFORE /{session_id} so FastAPI
 # does not try to parse "active" as a UUID path parameter.
 @router.get("/active", response_model=list[SessionLookupItem])
-async def list_active_sessions(db: AsyncSession = Depends(get_db)):
+async def list_active_sessions(
+    account_id: Optional[uuid.UUID] = Query(None),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     stmt = (
         select(TradeSession)
-        .where(TradeSession.status.not_in(["completed", "closed"]))
+        .where(TradeSession.user_id == user.id, TradeSession.status.not_in(["completed", "closed"]))
         .options(selectinload(TradeSession.legs))
     )
+    account_filter = await resolve_account_filter(db, user, account_id)
+    if account_filter is not None:
+        stmt = stmt.where(TradeSession.account_id == account_filter)
     result = await db.execute(stmt)
     sessions = result.scalars().all()
     return [SessionLookupItem.model_validate(s) for s in sessions]
 
 
 @router.get("/{session_id}", response_model=SessionWithLegs)
-async def get_session(session_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
-    stmt = (
-        select(TradeSession)
-        .where(TradeSession.id == session_id)
-        .options(selectinload(TradeSession.legs))
-    )
-    result = await db.execute(stmt)
-    session = result.scalar_one_or_none()
-    if session is None:
-        raise HTTPException(status_code=404, detail="Session not found")
+async def get_session(
+    session_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    session = await get_trade_session(db, user, session_id, options=(selectinload(TradeSession.legs),))
 
     # Walk parent chain to build rotation_chain (oldest first)
     chain: list[TradeSession] = []
@@ -120,7 +148,7 @@ async def get_session(session_id: uuid.UUID, db: AsyncSession = Depends(get_db))
             break
         seen.add(current_parent_id)
         parent = await db.get(TradeSession, current_parent_id)
-        if parent is None:
+        if parent is None or parent.user_id != user.id:
             break
         chain.append(parent)
         current_parent_id = parent.parent_session_id
@@ -130,6 +158,8 @@ async def get_session(session_id: uuid.UUID, db: AsyncSession = Depends(get_db))
 
     return SessionWithLegs(
         id=session.id,
+        account_id=session.account_id,
+        account=session.account,
         ticker=session.ticker,
         strategy=session.strategy,
         status=session.status,
@@ -147,10 +177,9 @@ async def update_session(
     session_id: uuid.UUID,
     payload: SessionUpdate,
     db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
-    session = await db.get(TradeSession, session_id)
-    if session is None:
-        raise HTTPException(status_code=404, detail="Session not found")
+    session = await get_trade_session(db, user, session_id)
 
     for field, value in payload.model_dump(exclude_none=True).items():
         setattr(session, field, value)

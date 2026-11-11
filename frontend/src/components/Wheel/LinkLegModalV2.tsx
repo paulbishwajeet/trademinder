@@ -4,6 +4,7 @@ import { wheelApi } from '../../api/wheel'
 import { tradesApi } from '../../api/trades'
 
 interface Props {
+  accountId: string
   slotId: string
   ticker: string
   slotStatus: string
@@ -11,7 +12,7 @@ interface Props {
   onLinked: () => void
 }
 
-export function LinkLegModalV2({ slotId, ticker, slotStatus, onClose, onLinked }: Props) {
+export function LinkLegModalV2({ accountId, slotId, ticker, slotStatus, onClose, onLinked }: Props) {
   const [trades, setTrades] = useState<Trade[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedId, setSelectedId] = useState('')
@@ -22,11 +23,11 @@ export function LinkLegModalV2({ slotId, ticker, slotStatus, onClose, onLinked }
   const label = slotStatus === 'awaiting_cc' ? 'Covered Call' : 'Sold Put'
 
   useEffect(() => {
-    tradesApi.list({ ticker, status: 'open' })
+    tradesApi.list({ ticker, status: 'open', account_id: accountId })
       .then(all => setTrades(all.filter(t => !t.session_id)))
       .catch(() => setTrades([]))
       .finally(() => setLoading(false))
-  }, [ticker])
+  }, [ticker, accountId])
 
   async function handleLink() {
     if (!selectedId) { setError('Select a trade'); return }

@@ -5,10 +5,12 @@ import { tradesApi } from '../api/trades'
 import { commentaryApi } from '../api/commentary'
 import type { Trade, Commentary, TradeUpdate } from '../types'
 import { StatusBadge } from '../components/shared/StatusBadge'
+import { MARKET_OFFLINE_TOOLTIP } from '../components/shared/MarketDash'
 import { PnLDisplay } from '../components/shared/PnLDisplay'
 import { CommentaryThread } from '../components/Commentary/CommentaryThread'
-
-interface Category { id: string; name: string; color: string }
+import { NotFound } from '../components/Layout/NotFound'
+import { useAccountCategories, useRequiredAccount } from '../context/AccountsContext'
+import { accountPath, scopedResearchPath } from '../lib/paths'
 
 const STRATEGIES = ['Stock', 'Put', 'Call', 'CoveredCall', 'PutCreditSpread', 'Leap']
 const TYPES = ['Buy', 'Sell', 'Assigned']
@@ -17,11 +19,12 @@ const STATUSES = ['open', 'closed', 'expired', 'assigned'] as const
 export function TradeDetailPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const account = useRequiredAccount()
+  const categories = useAccountCategories(account)
   const [trade, setTrade] = useState<Trade | null>(null)
   const [commentary, setCommentary] = useState<Commentary[]>([])
   const [isEditing, setIsEditing] = useState(false)
   const [editForm, setEditForm] = useState<TradeUpdate>({})
-  const [categories, setCategories] = useState<Category[]>([])
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
 
@@ -59,9 +62,6 @@ export function TradeDetailPage() {
       rationale_notes: trade.rationale?.notes ?? undefined,
       signal_action: trade.signal_action ?? undefined,
     })
-    if (categories.length === 0) {
-      fetch('/api/categories').then(r => r.json()).then(setCategories).catch(() => {})
-    }
     setIsEditing(true)
   }
 
@@ -90,13 +90,18 @@ export function TradeDetailPage() {
 
   if (!trade) return <div className="p-6 text-gray-500">Loading...</div>
 
+  // A trade belongs to exactly one account — don't show it under another account's URL.
+  if (trade.account_id !== account.id) {
+    return <NotFound title="Trade not found" message={`This trade isn't in ${account.nickname}.`} />
+  }
+
   const dte = trade.expiry_date
     ? Math.ceil((new Date(trade.expiry_date).getTime() - Date.now()) / 86400000)
     : null
 
   return (
     <div className="p-6 max-w-4xl">
-      <button onClick={() => navigate('/trades')} className="text-sm text-blue-600 hover:underline mb-4 block">
+      <button onClick={() => navigate(accountPath(account.id, 'trades'))} className="text-sm text-blue-600 hover:underline mb-4 block">
         ← Back to trades
       </button>
 
@@ -112,7 +117,7 @@ export function TradeDetailPage() {
         <div className="flex items-center gap-3">
           {!isEditing && trade.strategy === 'Stock' && trade.status === 'open' && (
             <button
-              onClick={() => navigate(`/scanner?ticker=${trade.ticker}`)}
+              onClick={() => navigate(scopedResearchPath(account.id, 'scanner', { symbol: trade.ticker }))}
               className="px-3 py-1.5 text-sm border border-blue-300 text-blue-600 rounded hover:bg-blue-50"
             >
               Scan Options
@@ -166,7 +171,10 @@ export function TradeDetailPage() {
           ].map(([label, value]) => (
             <div key={String(label)} className="bg-gray-50 rounded p-3">
               <p className="text-xs text-gray-500">{label}</p>
-              <p className="text-sm font-medium mt-0.5">{String(value)}</p>
+              <p className="text-sm font-medium mt-0.5"
+                title={label === 'Current Price' && trade.market_data_offline ? MARKET_OFFLINE_TOOLTIP : undefined}>
+                {String(value)}
+              </p>
             </div>
           ))}
           <div className="bg-gray-50 rounded p-3">
@@ -224,6 +232,9 @@ export function TradeDetailPage() {
                   <select value={editForm.category ?? ''}
                     onChange={e => set('category', e.target.value)}
                     className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm">
+                    {editForm.category && !categories.some(c => c.name === editForm.category) && (
+                      <option value={editForm.category} disabled>{editForm.category} (not in this account)</option>
+                    )}
                     {categories.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
                   </select>
                 ) : (

@@ -4,26 +4,46 @@
 'use strict';
 
 // ============================================================
-// ETRADE SELECTOR CONSTANTS — confirmed from live DOM
+// ETRADE SELECTORS
+// E*TRADE's CSS-module classes end in a build hash (Block---element---<hash>) that changes
+// between releases, and the grid's id (rdt_N) isn't stable either. Match class *prefixes* and
+// ARIA structure only. See the Part 3 spec for the verified DOM facts.
 // ============================================================
+// Selector for elements carrying a class that starts with `prefix`.
+function cls(prefix) {
+  return `[class^="${prefix}"],[class*=" ${prefix}"]`;
+}
+function hasClassPrefix(el, prefix) {
+  return !!el && Array.from(el.classList).some(c => c.startsWith(prefix));
+}
+
 const ETRADE = {
-  gridRoot: '#rdt_3',
-  contentArea: '.Content---root---D2Ylg',
-  positionRows: '[role="row"][level="0"]:not(.Row---placeholderRow---2t5Gs)',
-  placeholderRow: '.Row---placeholderRow---2t5Gs',
-  footerRow: '.Footer---row---g5JDN',
-  symbolContent: '.SymbolCellRenderer---content---mcwCT',
-  symbolLink: 'a.SymbolCellRenderer---symbol---_S70m',
-  optionClass: 'SymbolCellRenderer---option---qIlje',
-  itmClass: 'SymbolCellRenderer---in-the-money---AQRUo',
-  optionDesc: 'span.SymbolCellRenderer---description---KHPND',
+  grid: '[role="grid"][aria-label="Portfolios"]',
+  gridFallback: cls('PortfoliosTable---table---'),
+  contentArea: cls('Content---root---'),
+  positionRows: '[role="row"][level="0"]:not([class^="Row---placeholderRow---"]):not([class*=" Row---placeholderRow---"])',
+  symbolContent: cls('SymbolCellRenderer---content---'),
+  symbolLink: 'a[class^="SymbolCellRenderer---symbol---"],a[class*=" SymbolCellRenderer---symbol---"]',
+  symbolRoot: cls('SymbolCellRenderer---root---'),
+  optionClassPrefix: 'SymbolCellRenderer---option---',
+  itmClassPrefix: 'SymbolCellRenderer---in-the-money---',
+  optionDesc: 'span[class^="SymbolCellRenderer---description---"],span[class*=" SymbolCellRenderer---description---"]',
   headerRow: '[data-header="true"] [role="row"]',
+  headerTitle: cls('HeaderCell---title---'),
+  customizeView: cls('PortfoliosFilters---customize-view---'),
+  // Holds "Edit Lots / Reset Sort / Customize" in a single account, only "Reset Sort" in the All view.
+  linksContainer: cls('PortfoliosFilters---links-container---'),
+  accountDropdown: 'select#accountDropdown',
 };
+
+function findGrid() {
+  return document.querySelector(ETRADE.grid) || document.querySelector(ETRADE.gridFallback);
+}
 
 // ============================================================
 // STATE
 // ============================================================
-let tmApiUrl = 'http://localhost:5431';
+let tmApiUrl = 'http://127.0.0.1:5431'; // display only; the service worker owns the address
 let stageEnabled = { stage1: true, stage2: true, stage3: true, stage4: true };
 
 // rowId → cacheKey (ticker or fullSymbol): prevents re-processing unchanged rows
@@ -60,6 +80,7 @@ const reconcileCache = new Map();
 // all base tickers seen while processing rows (for batch RSI fetch)
 const seenTickers = new Set();
 let isProcessing = false;
+let rerunRequested = false; // a run was asked for while one was in flight
 let allCategories = [];
 let activeFilter = 'all';
 let _panelClickOutside = null;
@@ -77,19 +98,28 @@ let columnIndexCache = null;
 
 // ============================================================
 // BACKGROUND FETCH PROXY
-// Chrome's Private Network Access policy blocks content scripts
-// (which run under the E*TRADE origin) from fetching localhost.
-// Route all API calls through the background service worker,
-// which runs in an extension context exempt from PNA.
+// Chrome's Local Network Access policy silently blocks content scripts
+// (which run under the E*TRADE origin) from fetching TradeMinder.
+// Every API call goes through the service worker, which owns the
+// configured server address — callers pass an API path only.
 // ============================================================
-function bgFetch(url, { method = 'GET', headers = {}, body, signal } = {}) {
+function bgFetch(path, { method = 'GET', headers = {}, body, signal } = {}) {
   return new Promise((resolve, reject) => {
     chrome.runtime.sendMessage(
-      { type: 'FETCH', url, method, headers, body },
+      { type: 'FETCH', path, method, headers, body },
       (resp) => {
         if (chrome.runtime.lastError) {
           reject(new Error(chrome.runtime.lastError.message));
           return;
+        }
+        if (resp.apiUrl) tmApiUrl = resp.apiUrl;
+        if (resp.errorKind) {
+          setServerState(resp.errorKind);
+        } else {
+          setServerState('ok');
+        }
+        if (resp.marketDataOffline === true || resp.marketDataOffline === false) {
+          setMarketDataOffline(resp.marketDataOffline);
         }
         if (resp.error && !resp.ok) {
           reject(new Error(resp.error));
@@ -102,6 +132,374 @@ function bgFetch(url, { method = 'GET', headers = {}, body, signal } = {}) {
         });
       }
     );
+  });
+}
+
+// ============================================================
+// ACCOUNT CONTEXT
+// Which E*TRADE account is on screen, read from the #accountDropdown select. A single account is
+// identified by a fingerprint of its full number (computed in the service worker); the number is
+// never stored, sent to TradeMinder, or logged. Every overlay call is scoped by this context and
+// every cache is cleared when it changes, so one account's statuses never paint another's rows.
+// ============================================================
+// kind: 'init' | 'none' (no account selector) | 'all' | 'single' | 'other' (unrecognised value)
+// link (single only): 'pending' | 'linked' | 'unlinked' | 'archived' | 'error'
+let accountCtx = { kind: 'init', key: 'init' };
+let accountGen = 0;            // bumps on every context change; results from an older gen are dropped
+let serverState = 'ok';        // 'ok' | 'unreachable' | 'no_permission' | 'signed_out'
+const resolvedThisPage = new Set(); // context keys already resolved fresh on this page load
+
+function readAccountDropdown() {
+  const select = document.querySelector(ETRADE.accountDropdown);
+  if (!select) return { kind: 'none', key: 'none' };
+  // React-controlled: the selection lives only in the live .value (no `selected` attribute).
+  const value = select.value || '';
+  const option = select.selectedOptions?.[0] || Array.from(select.options).find(o => o.value === value);
+  const label = (option?.textContent || '').replace(/\s+/g, ' ').trim();
+  if (value.startsWith('all-')) return { kind: 'all', key: 'all', label };
+  // Value = full account number + '-' + label; the label itself contains hyphens, so only the
+  // leading digit run is the number.
+  const m = value.match(/^(\d{6,})-/);
+  if (!m) return { kind: 'other', key: 'other', label };
+  const lastFour = (label.match(/-\s*(\d{4})\s*$/) || [])[1] || null;
+  const nickname = label.replace(/\s*-\s*\d{4}\s*$/, '').trim() || label;
+  return { kind: 'single', key: `single:${value}`, accountNumber: m[1], label, lastFour, nickname };
+}
+
+// Re-read the dropdown; returns true when the context changed.
+function checkAccountContext() {
+  const next = readAccountDropdown();
+  if (next.key === accountCtx.key) return false;
+  onAccountChange(next);
+  return true;
+}
+
+function onAccountChange(next) {
+  accountGen++;
+  const gen = accountGen;
+  const { accountNumber, ...ctx } = next; // the number is passed to the worker once, never kept
+  accountCtx = { ...ctx, link: ctx.kind === 'single' ? 'pending' : null, account: null, fingerprint: null };
+  resetOverlay();
+  refreshAccountUi();
+
+  if (ctx.kind !== 'single') {
+    processVisibleRows();
+    return;
+  }
+  const fresh = !resolvedThisPage.has(ctx.key);
+  chrome.runtime.sendMessage({ type: 'RESOLVE_ACCOUNT', accountNumber, label: ctx.label, fresh }, (resp) => {
+    if (chrome.runtime.lastError || gen !== accountGen) return;
+    if (!resp?.ok) {
+      if (resp?.apiUrl) tmApiUrl = resp.apiUrl;
+      if (resp?.errorKind) setServerState(resp.errorKind);
+      accountCtx = { ...accountCtx, link: 'error', fingerprint: resp?.fingerprint || null };
+    } else {
+      resolvedThisPage.add(ctx.key);
+      setServerState('ok');
+      accountCtx = {
+        ...accountCtx,
+        fingerprint: resp.fingerprint,
+        link: !resp.linked ? 'unlinked' : resp.is_archived ? 'archived' : 'linked',
+        account: resp.account || null,
+      };
+    }
+    refreshAccountUi();
+    processVisibleRows();
+  });
+}
+
+// Drop everything derived from the previous account and strip it from the rows.
+function resetOverlay() {
+  processedRows.clear();
+  statusCache.clear();
+  reconcileCache.clear();
+  etradeSymbolIndex = new Map();
+  allActiveSessions = [];
+  activeSessionsFetchedAt = 0;
+  wheelActiveSlots = [];
+  wheelSlotsFetchedAt = 0;
+  hideCommentaryTrigger();
+  document.getElementById('tm-commentary-panel')?.remove();
+  document.querySelectorAll(ETRADE.positionRows).forEach(row => {
+    clearTMFromRow(row);
+    row.querySelectorAll('.tm-wheel-pill, .tm-strategy-pill, .tm-category-pill').forEach(el => el.remove());
+    row.classList.remove('tm-filtered-out');
+  });
+}
+
+function refreshAccountUi() {
+  renderAccountBar();
+  renderLinkCard();
+  updateReconcileButton();
+}
+
+function setServerState(state) {
+  if (state === serverState) return;
+  serverState = state;
+  renderAccountBar();
+}
+
+// Market data (Schwab) offline: learned from the X-Market-Data-Offline header on position status /
+// active-slots, or a market endpoint's 503. Only a notice — every overlay feature keeps working.
+let marketDataOffline = false;
+
+function setMarketDataOffline(offline) {
+  if (offline === marketDataOffline) return;
+  marketDataOffline = offline;
+  renderMarketDataNotice();
+}
+
+function renderMarketDataNotice() {
+  const toolbar = document.getElementById('tm-toolbar');
+  let notice = document.getElementById('tm-market-offline');
+  if (!marketDataOffline || !toolbar) {
+    notice?.remove();
+    return;
+  }
+  if (!notice) {
+    notice = document.createElement('span');
+    notice.id = 'tm-market-offline';
+    notice.className = 'tm-market-offline';
+    notice.textContent = 'Market data offline';
+    notice.title = 'Schwab market data is offline — prices, RSI and signals are unavailable. '
+      + 'Badges, notes, Add/Edit and Reconcile still work.';
+  }
+  const indicator = document.getElementById('tm-account-indicator');
+  if (indicator) indicator.after(notice);
+  else toolbar.insertBefore(notice, toolbar.firstChild);
+}
+
+// What the overlay may read: in a single account only once it is linked.
+function overlayScope() {
+  const c = accountCtx;
+  if (c.kind === 'single') {
+    return c.link === 'linked' ? { allowed: true, accountId: c.account.id } : { allowed: false };
+  }
+  if (c.kind === 'all' || c.kind === 'none') return { allowed: true, accountId: null };
+  return { allowed: false };
+}
+
+function accountQuery(accountId, joiner = '?') {
+  return accountId ? `${joiner}account_id=${encodeURIComponent(accountId)}` : '';
+}
+
+function linkBlockReason() {
+  switch (accountCtx.link) {
+    case 'pending': return 'Checking which TradeMinder account this is…';
+    case 'unlinked': return 'Link this account first';
+    case 'archived': return 'The linked TradeMinder account is archived — restore it in TradeMinder';
+    default: return "Can't reach TradeMinder";
+  }
+}
+
+// Where Add trade writes: the linked account, ask (All view), or blocked with a reason.
+function addTradeScope() {
+  const c = accountCtx;
+  if (c.kind === 'single') {
+    return c.link === 'linked'
+      ? { mode: 'fixed', accountId: c.account.id }
+      : { mode: 'blocked', reason: linkBlockReason() };
+  }
+  if (c.kind === 'all' || c.kind === 'none') return { mode: 'ask' };
+  return { mode: 'blocked', reason: 'Pick an account in the dropdown' };
+}
+
+function reconcileBlockReason() {
+  if (accountCtx.kind !== 'single') return 'Pick a single account in the dropdown';
+  return accountCtx.link === 'linked' ? null : linkBlockReason();
+}
+
+function accountShortLabel(account) {
+  return account.last_four ? `${account.nickname} ····${account.last_four}` : account.nickname;
+}
+
+// ── Account bar (start of the TradeMinder toolbar) ──
+function renderAccountBar() {
+  const toolbar = document.getElementById('tm-toolbar');
+  if (!toolbar) return;
+  let bar = document.getElementById('tm-account-indicator');
+  if (!bar) {
+    bar = document.createElement('span');
+    bar.id = 'tm-account-indicator';
+    toolbar.insertBefore(bar, toolbar.firstChild);
+  }
+  const c = accountCtx;
+  let state = 'neutral';
+  let text;
+  let title = '';
+  if (serverState === 'signed_out') {
+    state = 'error';
+    text = 'Signed out — Sign in again';
+    title = 'Open the TradeMinder extension popup and press Sign in.';
+  } else if (serverState === 'no_permission') {
+    state = 'error';
+    text = `No access to ${tmApiUrl}`;
+    title = 'Open the TradeMinder extension popup and press Save to grant access to this address.';
+  } else if (serverState === 'unreachable') {
+    state = 'error';
+    text = `Can't reach TradeMinder at ${tmApiUrl}`;
+    title = 'Check that TradeMinder is running, or change the server address in the extension popup.';
+  } else if (c.kind === 'all') {
+    state = 'all';
+    text = 'All accounts';
+    title = 'Matching trades across all of your TradeMinder accounts';
+  } else if (c.kind === 'none') {
+    state = 'all';
+    text = 'All accounts';
+    title = 'No E*TRADE account selector on this page — matching across all accounts';
+  } else if (c.kind === 'other') {
+    state = 'warn';
+    text = 'Unrecognised account';
+  } else if (c.kind === 'single') {
+    if (c.link === 'linked') {
+      state = 'linked';
+      text = accountShortLabel(c.account);
+      title = `E*TRADE "${c.label}" is linked to TradeMinder account ${accountShortLabel(c.account)}`;
+    } else if (c.link === 'unlinked') {
+      state = 'warn';
+      text = 'Not linked';
+      title = `E*TRADE "${c.label}" isn't linked to a TradeMinder account yet`;
+    } else if (c.link === 'archived') {
+      state = 'warn';
+      text = `${accountShortLabel(c.account)} (archived)`;
+      title = linkBlockReason();
+    } else if (c.link === 'error') {
+      state = 'error';
+      text = `Can't reach TradeMinder at ${tmApiUrl}`;
+    } else {
+      text = 'Checking account…';
+    }
+  } else {
+    text = 'Checking account…';
+  }
+  bar.className = `tm-account-indicator tm-acct-${state}`;
+  bar.textContent = text;
+  bar.title = title;
+}
+
+// ── Link card (between the toolbar and the grid) ──
+async function renderLinkCard() {
+  const existing = document.getElementById('tm-link-card');
+  const c = accountCtx;
+  if (!(c.kind === 'single' && c.link === 'unlinked')) {
+    existing?.remove();
+    return;
+  }
+  if (existing && existing.dataset.key === c.key) return;
+  existing?.remove();
+  const grid = findGrid();
+  if (!grid?.parentNode) return;
+
+  const gen = accountGen;
+  let accounts = [];
+  try {
+    const resp = await bgFetch('/api/accounts');
+    if (resp.ok) accounts = await resp.json();
+  } catch { /* unreachable state is shown in the account bar */ }
+  if (gen !== accountGen || document.getElementById('tm-link-card')) return;
+
+  const linkable = accounts.filter(a => !a.link);
+  const card = document.createElement('div');
+  card.id = 'tm-link-card';
+  card.dataset.key = c.key;
+  card.innerHTML = `
+    <div class="tm-link-title">Link this E*TRADE account</div>
+    <div class="tm-link-sub">
+      <b>${escapeHtml(c.label)}</b> isn't linked to a TradeMinder account yet. Badges, Add trade and
+      Reconcile stay off for it until you pick the account it belongs to. You only do this once.
+    </div>
+    <div class="tm-link-row">
+      <label><input type="radio" name="tm-link-mode" value="existing" ${linkable.length ? 'checked' : 'disabled'}> Existing account</label>
+      <select id="tm-link-existing" ${linkable.length ? '' : 'disabled'}>
+        ${accounts.map(a => `<option value="${a.id}" ${a.link ? 'disabled' : ''}>${escapeHtml(accountShortLabel(a))}${a.link ? ` (linked to ${escapeHtml(a.link.label || 'another account')})` : ''}</option>`).join('')}
+      </select>
+    </div>
+    <div class="tm-link-row">
+      <label><input type="radio" name="tm-link-mode" value="new" ${linkable.length ? '' : 'checked'}> Create new</label>
+      <input id="tm-link-broker" value="E*TRADE" maxlength="30" title="Broker" />
+      <input id="tm-link-nickname" value="${escapeHtml(c.nickname)}" maxlength="50" title="Nickname" />
+      <input id="tm-link-last4" value="${escapeHtml(c.lastFour || '')}" maxlength="4" inputmode="numeric" title="Last four digits" />
+    </div>
+    <div class="tm-link-actions">
+      <span class="tm-link-error"></span>
+      <button type="button" id="tm-link-submit">Link account</button>
+    </div>`;
+  const firstLinkable = linkable[0];
+  if (firstLinkable) card.querySelector('#tm-link-existing').value = firstLinkable.id;
+
+  card.querySelector('#tm-link-submit').addEventListener('click', async () => {
+    const btn = card.querySelector('#tm-link-submit');
+    const errEl = card.querySelector('.tm-link-error');
+    const mode = card.querySelector('input[name="tm-link-mode"]:checked')?.value;
+    const message = { type: 'LINK_ACCOUNT', fingerprint: c.fingerprint, label: c.label };
+    if (mode === 'new') {
+      const lastFour = card.querySelector('#tm-link-last4').value.trim();
+      const nickname = card.querySelector('#tm-link-nickname').value.trim();
+      const broker = card.querySelector('#tm-link-broker').value.trim();
+      if (!nickname || !broker || (lastFour && !/^\d{4}$/.test(lastFour))) {
+        errEl.textContent = 'Broker and nickname are required; last four must be 4 digits or empty.';
+        return;
+      }
+      message.createAccount = { broker, nickname, last_four: lastFour || null };
+    } else if (mode === 'existing') {
+      message.accountId = card.querySelector('#tm-link-existing').value;
+    } else {
+      return;
+    }
+    btn.disabled = true;
+    btn.textContent = 'Linking…';
+    errEl.textContent = '';
+    chrome.runtime.sendMessage(message, (resp) => {
+      if (chrome.runtime.lastError) return;
+      if (!resp?.ok) {
+        errEl.textContent = resp?.error || 'Link failed';
+        btn.disabled = false;
+        btn.textContent = 'Link account';
+        return;
+      }
+      if (gen !== accountGen) return;
+      accountCtx = { ...accountCtx, link: resp.is_archived ? 'archived' : 'linked', account: resp.account };
+      resetOverlay();
+      refreshAccountUi();
+      processVisibleRows();
+    });
+  });
+
+  grid.parentNode.insertBefore(card, grid);
+}
+
+// Small transient message for blocked actions (e.g. Add trade on an unlinked account).
+function showToast(text) {
+  let toast = document.getElementById('tm-toast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = 'tm-toast';
+    document.body.appendChild(toast);
+  }
+  toast.textContent = text;
+  toast.style.display = 'block';
+  clearTimeout(toast._timer);
+  toast._timer = setTimeout(() => { toast.style.display = 'none'; }, 3500);
+}
+
+// Modal asking the user to pick one of `options` ({value, label}); resolves to the value or null.
+function chooseFrom(title, options) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.id = 'tm-choose-overlay';
+    overlay.innerHTML = `
+      <div id="tm-choose">
+        <div class="tm-choose-title">${escapeHtml(title)}</div>
+        ${options.map((o, i) => `<button type="button" class="tm-choose-option" data-i="${i}">${escapeHtml(o.label)}</button>`).join('')}
+        <button type="button" class="tm-choose-cancel">Cancel</button>
+      </div>`;
+    const done = (value) => { overlay.remove(); resolve(value); };
+    overlay.querySelectorAll('.tm-choose-option').forEach(btn => {
+      btn.addEventListener('click', () => done(options[Number(btn.dataset.i)].value));
+    });
+    overlay.querySelector('.tm-choose-cancel').addEventListener('click', () => done(null));
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) done(null); });
+    document.body.appendChild(overlay);
   });
 }
 
@@ -195,7 +593,7 @@ function renderTechnicalsForm(container, ticker) {
     fetchBtn.disabled = true;
     statusEl.textContent = 'Fetching…';
     try {
-      const resp = await bgFetch(`${tmApiUrl}/api/market/technicals/${ticker.toUpperCase()}`, {
+      const resp = await bgFetch(`/api/market/technicals/${ticker.toUpperCase()}`, {
         signal: AbortSignal.timeout(20000),
       });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
@@ -238,7 +636,7 @@ function renderTechnicalsForm(container, ticker) {
 // ============================================================
 chrome.runtime.sendMessage({ type: 'GET_SETTINGS' }, (resp) => {
   if (resp) {
-    tmApiUrl = resp.apiUrl || 'http://localhost:5431';
+    tmApiUrl = resp.apiUrl || tmApiUrl;
     stageEnabled = resp.stages || stageEnabled;
   }
   if (stageEnabled.stage1) {
@@ -248,7 +646,7 @@ chrome.runtime.sendMessage({ type: 'GET_SETTINGS' }, (resp) => {
 
 async function loadCategoriesAndStart() {
   try {
-    const resp = await bgFetch(`${tmApiUrl}/api/categories`, { signal: AbortSignal.timeout(4000) });
+    const resp = await bgFetch(`/api/categories`, { signal: AbortSignal.timeout(4000) });
     if (resp.ok) {
       allCategories = await resp.json();
     }
@@ -273,7 +671,7 @@ function buildColumnMap() {
     const colNum = cell.getAttribute('col');
     if (colNum == null) return;
     // Use the title span to avoid picking up arrow icon text
-    const titleEl = cell.querySelector('.HeaderCell---title---2VEL5');
+    const titleEl = cell.querySelector(ETRADE.headerTitle);
     const raw = (titleEl ? titleEl.textContent : cell.textContent)
       .trim()
       .replace(/\u00a0/g, ' ')  // &nbsp; → regular space
@@ -312,9 +710,9 @@ function getTickerFromRow(row) {
 }
 
 function getRowInfo(row) {
-  const symbolRoot = row.querySelector('[class*="SymbolCellRenderer---root"]');
-  const isOption = symbolRoot ? symbolRoot.classList.contains(ETRADE.optionClass) : false;
-  const isITM = symbolRoot ? symbolRoot.classList.contains(ETRADE.itmClass) : false;
+  const symbolRoot = row.querySelector(ETRADE.symbolRoot);
+  const isOption = hasClassPrefix(symbolRoot, ETRADE.optionClassPrefix);
+  const isITM = hasClassPrefix(symbolRoot, ETRADE.itmClassPrefix);
 
   const ticker = getTickerFromRow(row);
   if (!ticker) return null;
@@ -326,6 +724,13 @@ function getRowInfo(row) {
   const tradeBtn = row.querySelector('a.split-button-button[href*="Symbol="]');
   if (tradeBtn?.href) {
     const match = tradeBtn.href.match(/[?&]Symbol=([^&]+)/i);
+    if (match) fullSymbol = decodeURIComponent(match[1]);
+  }
+  // The All-accounts view has no Trade button on any row; the symbol's quote link
+  // (snapshot.asp?symbol=AAOI--270115P00050000 / ?symbol=AAPL) carries the same symbol.
+  if (!fullSymbol) {
+    const link = row.querySelector(ETRADE.symbolLink);
+    const match = link?.href?.match(/[?&]symbol=([^&]+)/i);
     if (match) fullSymbol = decodeURIComponent(match[1]);
   }
 
@@ -400,10 +805,20 @@ function parseOptionDescription(desc) {
 // VIRTUAL SCROLL PROCESSING
 // ============================================================
 async function processVisibleRows() {
-  if (isProcessing) return;
+  if (isProcessing) {
+    rerunRequested = true;
+    return;
+  }
   isProcessing = true;
 
   try {
+    // Re-renders (including an account switch) arrive here through the observer; re-read the
+    // dropdown first so rows are never painted with the previous account's statuses.
+    checkAccountContext();
+    const gen = accountGen;
+    const scope = overlayScope();
+    if (!scope.allowed) return; // unlinked / unresolved single account: paint nothing
+
     const rows = document.querySelectorAll(ETRADE.positionRows);
     const toProcess = [];
 
@@ -429,7 +844,9 @@ async function processVisibleRows() {
 
     // Fire-and-forget: fetch all active sessions + wheel slots, then prices for spread sessions
     Promise.all([fetchAllActiveSessions(), fetchWheelActiveSlots()]).then(async () => {
+      if (gen !== accountGen) return;
       await fetchPricesForSpreadSessions();
+      if (gen !== accountGen) return;
       // Re-apply pills now that session/price/wheel data is available
       document.querySelectorAll(ETRADE.positionRows).forEach(row => {
         applyWheelPillToRow(row);
@@ -462,15 +879,17 @@ async function processVisibleRows() {
       is_itm: item.info.isITM,
     }));
 
-    const response = await bgFetch(`${tmApiUrl}/api/positions/status`, {
+    const response = await bgFetch(`/api/positions/status`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ positions }),
+      // With account_id: that account only. Without (All view): every account, with per-account matches.
+      body: JSON.stringify({ positions, ...(scope.accountId && { account_id: scope.accountId }) }),
       signal: AbortSignal.timeout(5000),
     });
 
     if (!response.ok) return;
     const statusMap = await response.json();
+    if (gen !== accountGen) return; // account changed while the request was in flight
 
     needsFetch.forEach(item => {
       let status = statusMap[item.cacheKey] || statusMap[item.info.ticker] || null;
@@ -500,6 +919,10 @@ async function processVisibleRows() {
     }
   } finally {
     isProcessing = false;
+    if (rerunRequested) {
+      rerunRequested = false;
+      setTimeout(processVisibleRows, 0);
+    }
   }
 }
 
@@ -599,6 +1022,24 @@ function injectBadge(row, status, info) {
       });
     }
   }
+
+  // All view: the same position tracked in several accounts gets one chip per account.
+  const matches = status.matches || [];
+  if (accountCtx.kind !== 'single' && matches.length > 1) {
+    matches.forEach(m => badge.appendChild(renderAccountChip(m)));
+  }
+}
+
+function renderAccountChip(match) {
+  const chip = document.createElement('span');
+  chip.className = 'tm-acct-chip';
+  chip.textContent = match.account.nickname.length > 14
+    ? `${match.account.nickname.slice(0, 13)}…` : match.account.nickname;
+  const sevColors = { urgent: '#ef4444', warning: '#f59e0b', info: '#8b5cf6' };
+  chip.style.borderColor = sevColors[match.alert_severity] || match.category_color || '#9ca3af';
+  chip.title = `${accountShortLabel(match.account)} — ${match.category_name || 'no category'}`
+    + (match.alert_severity ? ` · ${match.alert_severity} alert` : '');
+  return chip;
 }
 
 // ============================================================
@@ -760,6 +1201,8 @@ const CATEGORY_PILL_LABELS = {
   LEAP: 'Leap',
   SKIP: 'Skip',
   HOPS: 'Hops',
+  BUY_WRITE: 'Buy-Write',
+  SPECULATIVE: 'Spec',
 };
 
 // Explicit bg/text/border triples per category — distinct hues with enough
@@ -772,6 +1215,8 @@ const CATEGORY_PILL_STYLES = {
   LEAP: { bg: '#EDE9FE', color: '#5B21B6', border: '#C4B5FD' }, // violet
   SKIP: { bg: '#F3F4F6', color: '#374151', border: '#D1D5DB' }, // gray
   HOPS: { bg: '#ECFCCB', color: '#3F6212', border: '#BEF264' }, // lime
+  BUY_WRITE: { bg: '#CCFBF1', color: '#115E59', border: '#5EEAD4' }, // teal
+  SPECULATIVE: { bg: '#FAE8FF', color: '#86198F', border: '#F0ABFC' }, // fuchsia
 };
 
 function renderCategoryPill(status) {
@@ -921,7 +1366,7 @@ async function collectAllPositions() {
   return Array.from(collected.values());
 }
 
-async function fireReconcile(infos) {
+async function fireReconcile(infos, accountId, gen) {
   const positions = infos.map(info => ({
     ticker: info.ticker,
     full_symbol: info.fullSymbol || null,
@@ -933,14 +1378,16 @@ async function fireReconcile(infos) {
   if (positions.length === 0) return null;
 
   try {
-    const resp = await bgFetch(`${tmApiUrl}/api/positions/reconcile`, {
+    const resp = await bgFetch(`/api/positions/reconcile`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ positions }),
+      // Reconcile only ever runs for one linked account; it backdate-closes that account's missing trades.
+      body: JSON.stringify({ positions, account_id: accountId }),
       signal: AbortSignal.timeout(5000),
     });
     if (!resp.ok) return null;
     const data = await resp.json();
+    if (gen !== accountGen) return data; // don't paint another account's rows
 
     reconcileCache.clear();
     (data.unmatched_etrade || []).forEach(item => {
@@ -1041,7 +1488,7 @@ function hideCommentaryTrigger() {
 
 async function fetchCommentaryCount(tradeId) {
   try {
-    const resp = await bgFetch(`${tmApiUrl}/api/trades/${tradeId}/commentary`, {
+    const resp = await bgFetch(`/api/trades/${tradeId}/commentary`, {
       signal: AbortSignal.timeout(5000),
     });
     if (resp.ok) {
@@ -1140,7 +1587,7 @@ function getOrCreatePanel() {
       const techSnapshot = panel._techControl ? panel._techControl.getValue() : null;
       const bodyObj = { note, ...(tags.length > 0 && { tags }) };
       if (techSnapshot) bodyObj.rationale = techSnapshot;
-      const resp = await bgFetch(`${tmApiUrl}/api/trades/${tradeId}/commentary`, {
+      const resp = await bgFetch(`/api/trades/${tradeId}/commentary`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(bodyObj),
@@ -1276,8 +1723,8 @@ async function renderCommentaryThread(tradeId, panel) {
 
   try {
     const [commResp, tradeResp] = await Promise.all([
-      bgFetch(`${tmApiUrl}/api/trades/${tradeId}/commentary`, { signal }),
-      bgFetch(`${tmApiUrl}/api/trades/${tradeId}`, { signal }),
+      bgFetch(`/api/trades/${tradeId}/commentary`, { signal }),
+      bgFetch(`/api/trades/${tradeId}`, { signal }),
     ]);
     if (!commResp.ok) throw new Error(`HTTP ${commResp.status}`);
     const entries = await commResp.json();
@@ -1331,7 +1778,7 @@ async function renderCommentaryThread(tradeId, panel) {
       deleteBtn.textContent = '×';
       deleteBtn.addEventListener('click', async () => {
         try {
-          const r = await bgFetch(`${tmApiUrl}/api/commentary/${entry.id}`, {
+          const r = await bgFetch(`/api/commentary/${entry.id}`, {
             method: 'DELETE',
             signal: AbortSignal.timeout(5000),
           });
@@ -1381,7 +1828,7 @@ async function fetchRsiForAll() {
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Fetching…'; }
 
   try {
-    const resp = await bgFetch(`${tmApiUrl}/api/market/rsi`, {
+    const resp = await bgFetch(`/api/market/rsi`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ tickers }),
@@ -1410,12 +1857,19 @@ async function fetchRsiForAll() {
 
 // Fetches all active sessions (any ticker/strategy) once per page load and
 // builds an etrade_symbol → session index for exact row-to-session matching.
+// Scoped to the linked account (all accounts in the All view). The TTL is per account context:
+// resetOverlay() zeroes the timestamp on every context change.
 async function fetchAllActiveSessions(force = false) {
   if (!force && activeSessionsFetchedAt && (Date.now() - activeSessionsFetchedAt < ACTIVE_SESSIONS_TTL)) return;
+  const scope = overlayScope();
+  if (!scope.allowed) return;
+  const gen = accountGen;
   try {
-    const res = await bgFetch(`${tmApiUrl}/api/sessions/active`);
+    const res = await bgFetch(`/api/sessions/active${accountQuery(scope.accountId)}`);
+    if (gen !== accountGen) return;
     if (!res.ok) { activeSessionsFetchedAt = Date.now(); return; }
     const sessions = await res.json();
+    if (gen !== accountGen) return;
     allActiveSessions = sessions;
     const index = new Map();
     for (const session of sessions) {
@@ -1426,19 +1880,25 @@ async function fetchAllActiveSessions(force = false) {
     etradeSymbolIndex = index;
     activeSessionsFetchedAt = Date.now();
   } catch {
-    activeSessionsFetchedAt = Date.now();
+    if (gen === accountGen) activeSessionsFetchedAt = Date.now();
   }
 }
 
 async function fetchWheelActiveSlots(force = false) {
   if (!force && wheelSlotsFetchedAt && (Date.now() - wheelSlotsFetchedAt < WHEEL_SLOTS_TTL)) return;
+  const scope = overlayScope();
+  if (!scope.allowed) return;
+  const gen = accountGen;
   try {
-    const res = await bgFetch(`${tmApiUrl}/api/wheel/active-slots`);
+    const res = await bgFetch(`/api/wheel/active-slots${accountQuery(scope.accountId)}`);
+    if (gen !== accountGen) return;
     if (!res.ok) { wheelSlotsFetchedAt = Date.now(); return; }
-    wheelActiveSlots = await res.json();
+    const slots = await res.json();
+    if (gen !== accountGen) return;
+    wheelActiveSlots = slots;
     wheelSlotsFetchedAt = Date.now();
   } catch {
-    wheelSlotsFetchedAt = Date.now();
+    if (gen === accountGen) wheelSlotsFetchedAt = Date.now();
   }
 }
 
@@ -1451,7 +1911,7 @@ async function fetchPricesForSpreadSessions() {
   await Promise.all(spreadTickers.map(async ticker => {
     if (priceCache.has(ticker)) return;
     try {
-      const res = await bgFetch(`${tmApiUrl}/api/market/quote/${encodeURIComponent(ticker)}`);
+      const res = await bgFetch(`/api/market/quote/${encodeURIComponent(ticker)}`);
       if (!res.ok) { priceCache.set(ticker, null); return; }
       const data = await res.json();
       priceCache.set(ticker, typeof data.price === 'number' ? data.price : null);
@@ -1466,7 +1926,7 @@ async function fetchPricesForSpreadSessions() {
 // ============================================================
 function insertFilterToolbar() {
   if (document.getElementById('tm-toolbar')) return;
-  const gridRoot = document.querySelector(ETRADE.gridRoot);
+  const gridRoot = findGrid();
   if (!gridRoot?.parentNode) return;
 
   const toolbar = document.createElement('div');
@@ -1501,15 +1961,24 @@ function insertFilterToolbar() {
   toolbar.appendChild(rsiBtn);
 
   gridRoot.parentNode.insertBefore(toolbar, gridRoot);
+  renderAccountBar();
+  renderMarketDataNotice();
+  renderLinkCard();
 }
 
-function insertReconcileButton() {
-  if (document.getElementById('tm-reconcile-btn')) return;
+let _reconcileRetryPending = false;
 
-  const targets = document.querySelectorAll('.PortfoliosFilters---customize-view---Ln4bT');
-  const target = Array.from(targets).find(el => el.offsetParent !== null);
-  if (!target?.parentNode) {
-    setTimeout(insertReconcileButton, 500);
+function insertReconcileButton() {
+  if (document.getElementById('tm-reconcile-btn') || _reconcileRetryPending) return;
+
+  // Next to "Customize" in a single account. The All view has no Customize button, so fall back to
+  // the end of the links container (present in both views) so the disabled button and its reason show.
+  const visible = sel => Array.from(document.querySelectorAll(sel)).find(el => el.offsetParent !== null);
+  const target = visible(ETRADE.customizeView);
+  const container = target ? null : visible(ETRADE.linksContainer);
+  if (!target?.parentNode && !container) {
+    _reconcileRetryPending = true;
+    setTimeout(() => { _reconcileRetryPending = false; insertReconcileButton(); }, 500);
     return;
   }
 
@@ -1523,14 +1992,31 @@ function insertReconcileButton() {
   btn.type = 'button';
   btn.textContent = '🔄 Reconcile';
 
+  const hint = document.createElement('span');
+  hint.id = 'tm-reconcile-hint';
+
   btn.addEventListener('click', async () => {
+    if (reconcileBlockReason()) return;
+    const gen = accountGen;
+    const key = accountCtx.key;
+    const accountId = accountCtx.account.id;
+    btn.dataset.busy = '1';
     btn.disabled = true;
     btn.textContent = '⏳ Reconciling…';
 
     const infos = await collectAllPositions();
-    const data = await fireReconcile(infos);
+    // The snapshot must belong to the account it is sent for: if the dropdown changed while
+    // scrolling, sending it would close the wrong account's trades.
+    let data;
+    let changed = gen !== accountGen || readAccountDropdown().key !== key;
+    if (!changed) {
+      data = await fireReconcile(infos, accountId, gen);
+      changed = gen !== accountGen;
+    }
 
-    if (data === null) {
+    if (changed) {
+      btn.textContent = '✗ Account changed — not reconciled';
+    } else if (data === null) {
       btn.textContent = '✗ Failed';
     } else {
       const n = (data.unmatched_etrade || []).length;
@@ -1538,13 +2024,28 @@ function insertReconcileButton() {
     }
 
     setTimeout(() => {
-      btn.disabled = false;
+      delete btn.dataset.busy;
       btn.textContent = '🔄 Reconcile';
+      updateReconcileButton();
     }, 2000);
   });
 
   wrap.appendChild(btn);
-  target.parentNode.insertBefore(wrap, target);
+  wrap.appendChild(hint);
+  if (target) target.parentNode.insertBefore(wrap, target);
+  else container.appendChild(wrap);
+  updateReconcileButton();
+}
+
+// Enabled only for a single, linked account; otherwise the reason is shown inline.
+function updateReconcileButton() {
+  const btn = document.getElementById('tm-reconcile-btn');
+  const hint = document.getElementById('tm-reconcile-hint');
+  if (!btn || btn.dataset.busy) return;
+  const reason = reconcileBlockReason();
+  btn.disabled = !!reason;
+  btn.title = reason || `Reconcile ${accountShortLabel(accountCtx.account)} against this E*TRADE account`;
+  if (hint) hint.textContent = reason || '';
 }
 
 function makeFilterBtn(label, filterValue) {
@@ -1561,13 +2062,12 @@ function makeFilterBtn(label, filterValue) {
   return btn;
 }
 
+// E*TRADE's grid absolutely positions every row and only renders the rows near the viewport,
+// so hiding a row leaves a gap (and the rows that aren't rendered can't be filtered at all).
+// Non-matching rows are dimmed instead: no gaps, and virtual scrolling keeps working.
 function applyFilter(row, status) {
-  if (activeFilter === 'all') {
-    row.style.display = '';
-    return;
-  }
   const catName = status?.category_name || '';
-  row.style.display = catName === activeFilter ? '' : 'none';
+  row.classList.toggle('tm-filtered-out', activeFilter !== 'all' && catName !== activeFilter);
 }
 
 function applyFiltersToAll() {
@@ -1594,9 +2094,12 @@ document.addEventListener('contextmenu', (e) => {
   const status = statusCache.get(cacheKey) || null;
   const isTracked = !!(status && status.trade_id);
 
+  const addScope = addTradeScope();
   chrome.runtime.sendMessage({
     type: 'ROW_CONTEXT',
     isTracked,
+    canAdd: addScope.mode !== 'blocked',
+    blockReason: addScope.reason || null,
     info: {
       ticker: info.ticker,
       isOption: info.isOption,
@@ -1628,12 +2131,35 @@ chrome.runtime.onMessage.addListener((message) => {
 // ============================================================
 async function fetchCategories() {
   try {
-    const resp = await bgFetch(`${tmApiUrl}/api/categories`, { signal: AbortSignal.timeout(5000) });
+    const resp = await bgFetch(`/api/categories`, { signal: AbortSignal.timeout(5000) });
     if (!resp.ok) return [];
     return await resp.json();
   } catch (_) {
     return [];
   }
+}
+
+async function fetchActiveAccounts() {
+  try {
+    const resp = await bgFetch('/api/accounts', { signal: AbortSignal.timeout(5000) });
+    return resp.ok ? await resp.json() : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+// The categories an account uses (all of them if the account lists none or isn't known).
+function categoriesFor(account, categories) {
+  if (!account?.category_ids?.length) return categories;
+  const allowed = categories.filter(c => account.category_ids.includes(c.id));
+  return allowed.length ? allowed : categories;
+}
+
+function defaultCategoryFor(account, categories) {
+  const list = categoriesFor(account, categories);
+  const preferred = account?.default_category_id && list.find(c => c.id === account.default_category_id);
+  if (preferred) return preferred.name;
+  return list.some(c => c.name === 'WHEEL') ? 'WHEEL' : list[0]?.name;
 }
 
 function buildCategoryOptions(categories, selectedValue = 'WHEEL') {
@@ -1711,9 +2237,22 @@ function getSessionStrategyFromValue(value, sessions) {
 // ADD TRADE MODAL
 // ============================================================
 async function showAddTradeModal(info) {
-  const categories = await fetchCategories();
+  // Writes need a known account: the linked one, or one picked here in the All view.
+  const addScope = addTradeScope();
+  if (addScope.mode === 'blocked') {
+    showToast(addScope.reason);
+    return;
+  }
+  const [categories, accounts] = await Promise.all([fetchCategories(), fetchActiveAccounts()]);
   if (document.getElementById('tm-modal-overlay')) return; // already open
+  if (addScope.mode === 'ask' && accounts.length === 0) {
+    showToast("Can't load your TradeMinder accounts");
+    return;
+  }
   let tickerSessions = [];
+  const initialAccount = addScope.mode === 'fixed'
+    ? accounts.find(a => a.id === addScope.accountId)
+    : (accounts.find(a => a.is_default) || accounts[0]);
 
   const overlay = document.createElement('div');
   overlay.id = 'tm-modal-overlay';
@@ -1733,6 +2272,14 @@ async function showAddTradeModal(info) {
         <button id="tm-modal-close" title="Close">✕</button>
       </div>
       <form id="tm-modal-form" autocomplete="off">
+        ${addScope.mode === 'ask' ? `
+        <div class="tm-field-row tm-field-full">
+          <label>Account <span class="tm-required">*</span></label>
+          <select name="account_id" required>
+            ${accounts.map(a => `<option value="${a.id}" ${a.id === initialAccount?.id ? 'selected' : ''}>${escapeHtml(accountShortLabel(a))}</option>`).join('')}
+          </select>
+        </div>` : `
+        <div class="tm-field-row tm-field-full tm-account-fixed">Account: <b>${escapeHtml(accountShortLabel(accountCtx.account))}</b></div>`}
         <div class="tm-field-row">
           <label>Ticker</label>
           <input type="text" name="ticker" value="${info.ticker || ''}" required />
@@ -1760,7 +2307,7 @@ async function showAddTradeModal(info) {
         <div class="tm-field-row tm-field-full">
           <label>Category <span class="tm-required">*</span></label>
           <select name="category">
-            ${buildCategoryOptions(categories, 'WHEEL')}
+            ${buildCategoryOptions(categoriesFor(initialAccount, categories), defaultCategoryFor(initialAccount, categories))}
           </select>
         </div>
         ${info.isOption ? `
@@ -1812,6 +2359,26 @@ async function showAddTradeModal(info) {
 
   document.body.appendChild(overlay);
 
+  const accountSelect = overlay.querySelector('[name="account_id"]');
+  const selectedAccountId = () => (addScope.mode === 'fixed' ? addScope.accountId : accountSelect.value);
+
+  // All view: the account decides which categories and sessions are offered.
+  if (accountSelect) {
+    accountSelect.addEventListener('change', () => {
+      const account = accounts.find(a => a.id === accountSelect.value);
+      overlay.querySelector('[name="category"]').innerHTML =
+        buildCategoryOptions(categoriesFor(account, categories), defaultCategoryFor(account, categories));
+      const sessionSelect = overlay.querySelector('#tm-session-select');
+      if (sessionSelect) {
+        const ticker = (info.ticker || '').toUpperCase();
+        tickerSessions = allActiveSessions.filter(
+          s => s.ticker.toUpperCase() === ticker && s.account_id === selectedAccountId(),
+        );
+        rebuildSessionDropdown(sessionSelect, tickerSessions, overlay.querySelector('[name="strategy"]').value);
+      }
+    });
+  }
+
   // Populate session picker for option rows (WHEEL, IC, PBWB)
   if (info.isOption) {
     const sessionSelect = overlay.querySelector('#tm-session-select');
@@ -1820,8 +2387,9 @@ async function showAddTradeModal(info) {
     const ticker = (info.ticker || '').toUpperCase();
 
     await fetchAllActiveSessions(true);
+    // A trade can only join a session in its own account.
     tickerSessions = allActiveSessions.filter(
-      s => s.ticker.toUpperCase() === ticker,
+      s => s.ticker.toUpperCase() === ticker && s.account_id === selectedAccountId(),
     );
 
     rebuildSessionDropdown(sessionSelect, tickerSessions, strategySelect.value);
@@ -1880,6 +2448,7 @@ async function showAddTradeModal(info) {
     const strike_price = fd.get('strike_price') ? parseFloat(fd.get('strike_price')) : null;
     const expiry_date = fd.get('expiry_date') || null;
     const payload = {
+      account_id: selectedAccountId(),
       ticker: fd.get('ticker').trim().toUpperCase(),
       type: fd.get('type'),
       strategy: fd.get('strategy'),
@@ -1906,11 +2475,12 @@ async function showAddTradeModal(info) {
     } else if (rawSession.startsWith('__new_')) {
       if (rawSession === '__new_WHEEL__') {
         const wheelStatus = (fd.get('strategy') === 'Sell Put') ? 'put_open' : 'cc_open';
-        const sessionResp = await bgFetch(`${tmApiUrl}/api/sessions`, {
+        const sessionResp = await bgFetch(`/api/sessions`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             ticker: payload.ticker,
+            account_id: payload.account_id,
             strategy: 'WHEEL',
             status: wheelStatus,
             opened_at: payload.open_date,
@@ -1925,11 +2495,12 @@ async function showAddTradeModal(info) {
         resolvedSessionStrategy = 'WHEEL';
       } else {
         const strategy = rawSession === '__new_IC__' ? 'IRON_CONDOR' : 'PUT_B_W_FLY';
-        const sessionResp = await bgFetch(`${tmApiUrl}/api/sessions`, {
+        const sessionResp = await bgFetch(`/api/sessions`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             ticker: payload.ticker,
+            account_id: payload.account_id,
             strategy,
             status: 'open',
             opened_at: payload.open_date,
@@ -1947,7 +2518,7 @@ async function showAddTradeModal(info) {
     if (resolvedSessionId) payload.session_id = resolvedSessionId;
 
     try {
-      const resp = await bgFetch(`${tmApiUrl}/api/trades`, {
+      const resp = await bgFetch(`/api/trades`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -1973,7 +2544,7 @@ async function showAddTradeModal(info) {
         }
         if (newStatus) {
           try {
-            await bgFetch(`${tmApiUrl}/api/sessions/${resolvedSessionId}`, {
+            await bgFetch(`/api/sessions/${resolvedSessionId}`, {
               method: 'PATCH',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ status: newStatus }),
@@ -1988,7 +2559,7 @@ async function showAddTradeModal(info) {
       const techSnapshot = techFormControl ? techFormControl.getValue() : null;
       if (techSnapshot) {
         try {
-          await bgFetch(`${tmApiUrl}/api/trades/${trade.id}/rationale`, {
+          await bgFetch(`/api/trades/${trade.id}/rationale`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(techSnapshot),
@@ -2026,14 +2597,20 @@ async function showAddTradeModal(info) {
 // ============================================================
 async function showEditTradeModal(info) {
   if (document.getElementById('tm-modal-overlay')) return;
+  const scope = overlayScope();
+  if (!scope.allowed) {
+    showToast(linkBlockReason());
+    return;
+  }
 
-  // 1. Look up the trade by etrade_symbol or ticker fallback
+  // 1. Look up the trade by etrade_symbol or ticker fallback — in the linked account only,
+  //    or across accounts in the All view (asking which one when several match).
   let tradeId;
   let trade;
   try {
     const searchUrl = info.fullSymbol
-      ? `${tmApiUrl}/api/trades?etrade_symbol=${encodeURIComponent(info.fullSymbol)}`
-      : `${tmApiUrl}/api/trades?ticker=${encodeURIComponent(info.ticker || '')}&status=open`;
+      ? `/api/trades?etrade_symbol=${encodeURIComponent(info.fullSymbol)}${accountQuery(scope.accountId, '&')}`
+      : `/api/trades?ticker=${encodeURIComponent(info.ticker || '')}&status=open${accountQuery(scope.accountId, '&')}`;
     const searchResp = await bgFetch(searchUrl, { signal: AbortSignal.timeout(6000) });
     if (!searchResp.ok) throw new Error(`HTTP ${searchResp.status}`);
     const matches = await searchResp.json();
@@ -2042,6 +2619,16 @@ async function showEditTradeModal(info) {
       return;
     }
     tradeId = matches[0].id;
+    const accountIds = [...new Set(matches.map(m => m.account_id))];
+    if (accountIds.length > 1) {
+      const chosen = await chooseFrom(`${info.ticker || 'This position'} is tracked in several accounts — edit which?`,
+        accountIds.map(id => {
+          const m = matches.find(x => x.account_id === id);
+          return { value: id, label: accountShortLabel(m.account) };
+        }));
+      if (!chosen) return;
+      tradeId = matches.find(m => m.account_id === chosen).id;
+    }
   } catch (err) {
     alert('Could not reach TradeMinder backend: ' + (err.message || 'unknown error'));
     return;
@@ -2049,7 +2636,7 @@ async function showEditTradeModal(info) {
 
   // 2. Fetch full trade detail (includes rationale.notes)
   try {
-    const detailResp = await bgFetch(`${tmApiUrl}/api/trades/${tradeId}`, { signal: AbortSignal.timeout(6000) });
+    const detailResp = await bgFetch(`/api/trades/${tradeId}`, { signal: AbortSignal.timeout(6000) });
     if (!detailResp.ok) throw new Error(`HTTP ${detailResp.status}`);
     trade = await detailResp.json();
   } catch (err) {
@@ -2150,8 +2737,9 @@ async function showEditTradeModal(info) {
     const ticker = (trade.ticker || '').toUpperCase();
 
     await fetchAllActiveSessions(true);
+    // Only sessions in the trade's own account can hold it.
     tickerSessions = allActiveSessions.filter(
-      s => s.ticker.toUpperCase() === ticker,
+      s => s.ticker.toUpperCase() === ticker && s.account_id === trade.account_id,
     );
 
     rebuildSessionDropdown(sessionSelect, tickerSessions, strategySelect.value);
@@ -2243,11 +2831,12 @@ async function showEditTradeModal(info) {
     } else if (rawSession.startsWith('__new_')) {
       if (rawSession === '__new_WHEEL__') {
         const wheelStatus = (fd.get('strategy') === 'Sell Put') ? 'put_open' : 'cc_open';
-        const sessionResp = await bgFetch(`${tmApiUrl}/api/sessions`, {
+        const sessionResp = await bgFetch(`/api/sessions`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             ticker: payload.ticker || trade.ticker.toUpperCase(),
+            account_id: trade.account_id,
             strategy: 'WHEEL',
             status: wheelStatus,
             opened_at: trade.open_date,
@@ -2263,11 +2852,12 @@ async function showEditTradeModal(info) {
         payload.session_id = resolvedSessionId;
       } else {
         const strategy = rawSession === '__new_IC__' ? 'IRON_CONDOR' : 'PUT_B_W_FLY';
-        const sessionResp = await bgFetch(`${tmApiUrl}/api/sessions`, {
+        const sessionResp = await bgFetch(`/api/sessions`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             ticker: payload.ticker || trade.ticker.toUpperCase(),
+            account_id: trade.account_id,
             strategy,
             status: 'open',
             opened_at: trade.open_date,
@@ -2285,7 +2875,7 @@ async function showEditTradeModal(info) {
     }
 
     try {
-      const resp = await bgFetch(`${tmApiUrl}/api/trades/${tradeId}`, {
+      const resp = await bgFetch(`/api/trades/${tradeId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -2309,7 +2899,7 @@ async function showEditTradeModal(info) {
         }
         if (newStatus) {
           try {
-            await bgFetch(`${tmApiUrl}/api/sessions/${resolvedSessionId}`, {
+            await bgFetch(`/api/sessions/${resolvedSessionId}`, {
               method: 'PATCH',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ status: newStatus }),
@@ -2343,8 +2933,12 @@ async function showEditTradeModal(info) {
 // ============================================================
 // MUTATION OBSERVER — virtual scroll handler
 // ============================================================
+let _observer = null;
+let _observedContent = null;
+
 function startObserver() {
-  const contentArea = document.querySelector(ETRADE.contentArea);
+  const grid = findGrid();
+  const contentArea = grid?.querySelector(ETRADE.contentArea);
   if (!contentArea) {
     setTimeout(startObserver, 500);
     return;
@@ -2354,18 +2948,55 @@ function startObserver() {
   // The guard inside insertFilterToolbar prevents duplicate insertion on retries.
   insertFilterToolbar();
   insertReconcileButton();
+  checkAccountContext();
 
   processVisibleRows();
 
-  const observer = new MutationObserver(() => {
+  _observer?.disconnect();
+  _observer = new MutationObserver(() => {
     clearTimeout(window._tmScrollDebounce);
     window._tmScrollDebounce = setTimeout(processVisibleRows, 150);
   });
+  _observedContent = contentArea;
 
-  observer.observe(contentArea, {
+  _observer.observe(contentArea, {
     childList: true,
     subtree: true,
     attributes: false,
     characterData: false,
   });
 }
+
+// Signed in again from the popup (or signed out): start over for the account on screen.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local' || !('tmAuthToken' in changes)) return;
+  resolvedThisPage.clear();
+  if (changes.tmAuthToken.newValue) {
+    serverState = 'ok';
+    accountCtx = { kind: 'init', key: 'init' };
+    checkAccountContext();
+  } else {
+    setServerState('signed_out');
+    resetOverlay();
+  }
+});
+
+// Account switches: the select's change event (delegated — React may replace the element) …
+document.addEventListener('change', (e) => {
+  if (e.target?.id === 'accountDropdown') setTimeout(checkAccountContext, 0);
+}, true);
+
+// … plus a watchdog for re-renders the observer can't see: the dropdown re-rendering with another
+// selection, or the whole grid being replaced (which detaches the observed content area).
+setInterval(() => {
+  if (!_observedContent) return; // startObserver hasn't found the grid yet
+  checkAccountContext();
+  if (!_observedContent.isConnected) {
+    _observedContent = null;
+    startObserver();
+    return;
+  }
+  insertFilterToolbar();
+  insertReconcileButton();
+  if (accountCtx.link === 'unlinked' && !document.getElementById('tm-link-card')) renderLinkCard();
+}, 1000);

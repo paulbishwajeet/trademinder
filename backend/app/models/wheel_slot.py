@@ -11,12 +11,14 @@ if TYPE_CHECKING:
     from app.models.wheel_session import WheelSession
     from app.models.wheel_slot_leg import WheelSlotLeg
     from app.models.wheel_premium_log import WheelPremiumLog
+    from app.models.commentary import Commentary
 
 
 class WheelSlot(Base):
     __tablename__ = "wheel_slots"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     session_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("wheel_sessions.id", ondelete="CASCADE"), nullable=False)
     slot_number: Mapped[int] = mapped_column(Integer, nullable=False)
     contracts: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
@@ -27,11 +29,22 @@ class WheelSlot(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
-    session: Mapped["WheelSession"] = relationship("WheelSession", back_populates="slots")
+    session: Mapped["WheelSession"] = relationship("WheelSession", back_populates="slots", lazy="selectin")
     legs: Mapped[list["WheelSlotLeg"]] = relationship("WheelSlotLeg", back_populates="slot", cascade="all, delete-orphan")
     premium_logs: Mapped[list["WheelPremiumLog"]] = relationship("WheelPremiumLog", back_populates="slot", cascade="all, delete-orphan")
+    commentary: Mapped[list["Commentary"]] = relationship("Commentary", back_populates="slot", cascade="all, delete-orphan")
+
+    # Slots carry no account column — their account is the parent session's.
+    @property
+    def account_id(self) -> uuid.UUID:
+        return self.session.account_id
+
+    @property
+    def account(self):
+        return self.session.account
 
     __table_args__ = (
+        Index("idx_wheel_slots_user", "user_id"),
         Index("idx_wheel_slots_session", "session_id"),
         Index("idx_wheel_slots_status", "status"),
         Index("idx_wheel_slots_needs_action", "needs_action", postgresql_where=text("needs_action = true")),

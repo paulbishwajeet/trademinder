@@ -1,5 +1,7 @@
 # backend/app/services/signal_engine.py
+import uuid
 from datetime import datetime, timezone
+from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -8,18 +10,43 @@ from app.models.trade import Trade
 from app.models.signal import TechnicalSignal
 
 
+def _num(value) -> float | None:
+    return None if value is None else float(value)
+
+
+def _rationale_value(t: Trade, field: str):
+    return getattr(t.rationale, field) if t.rationale is not None else None
+
+
+def _compare(left, right, op) -> bool | None:
+    """None when an input is missing — "can't evaluate", not "false"."""
+    if left is None or right is None:
+        return None
+    return op(float(left), float(right))
+
+
+def _equals(value, expected) -> bool | None:
+    return None if value is None else value == expected
+
+
+# Each rule returns True (active), False (evaluated: inactive) or None (inputs missing → leave the
+# signal as it is). Signals are only ever deactivated on a real evaluation, never on missing data.
 SIGNAL_RULES: list[tuple[str, callable]] = [
-    ("macd_bullish",      lambda t: t.rationale and t.rationale.macd_signal == "bullish"),
-    ("macd_bearish",      lambda t: t.rationale and t.rationale.macd_signal == "bearish"),
-    ("rsi_oversold",      lambda t: t.rationale and t.rationale.rsi_14 is not None and float(t.rationale.rsi_14) < 30),
-    ("rsi_overbought",    lambda t: t.rationale and t.rationale.rsi_14 is not None and float(t.rationale.rsi_14) > 70),
-    ("bb_breakout_upper", lambda t: t.rationale and t.rationale.bollinger_position == "top"),
-    ("bb_breakout_lower", lambda t: t.rationale and t.rationale.bollinger_position == "bottom"),
-    ("above_ma200",       lambda t: t.rationale and t.rationale.ma_200d is not None and t.current_price is not None and float(t.current_price) > float(t.rationale.ma_200d)),
-    ("below_ma200",       lambda t: t.rationale and t.rationale.ma_200d is not None and t.current_price is not None and float(t.current_price) < float(t.rationale.ma_200d)),
-    ("golden_cross",      lambda t: t.rationale and t.rationale.ma_50d is not None and t.rationale.ma_200d is not None and float(t.rationale.ma_50d) > float(t.rationale.ma_200d)),
-    ("death_cross",       lambda t: t.rationale and t.rationale.ma_50d is not None and t.rationale.ma_200d is not None and float(t.rationale.ma_50d) < float(t.rationale.ma_200d)),
+    ("macd_bullish",      lambda t: _equals(_rationale_value(t, "macd_signal"), "bullish")),
+    ("macd_bearish",      lambda t: _equals(_rationale_value(t, "macd_signal"), "bearish")),
+    ("rsi_oversold",      lambda t: _compare(_rationale_value(t, "rsi_14"), 30, lambda a, b: a < b)),
+    ("rsi_overbought",    lambda t: _compare(_rationale_value(t, "rsi_14"), 70, lambda a, b: a > b)),
+    ("bb_breakout_upper", lambda t: _equals(_rationale_value(t, "bollinger_position"), "top")),
+    ("bb_breakout_lower", lambda t: _equals(_rationale_value(t, "bollinger_position"), "bottom")),
+    ("above_ma200",       lambda t: _compare(t.current_price, _rationale_value(t, "ma_200d"), lambda a, b: a > b)),
+    ("below_ma200",       lambda t: _compare(t.current_price, _rationale_value(t, "ma_200d"), lambda a, b: a < b)),
+    ("golden_cross",      lambda t: _compare(_rationale_value(t, "ma_50d"), _rationale_value(t, "ma_200d"), lambda a, b: a > b)),
+    ("death_cross",       lambda t: _compare(_rationale_value(t, "ma_50d"), _rationale_value(t, "ma_200d"), lambda a, b: a < b)),
 ]
+
+# Rules that read the live price (Trade.current_price, written by the price refresh). Skipped while
+# market data is offline: the stored price stops updating, so it isn't "real evaluated data".
+MARKET_RULES = {"above_ma200", "below_ma200"}
 
 
 def _signal_value(trade: Trade, signal_type: str) -> float | None:
@@ -34,13 +61,16 @@ def _signal_value(trade: Trade, signal_type: str) -> float | None:
     return None
 
 
-async def run(db: AsyncSession) -> dict:
-    """Evaluate signal rules for all open trades. Activate/deactivate signals."""
+async def run(db: AsyncSession, user_id: Optional[uuid.UUID] = None, market_offline: bool = False) -> dict:
+    """Evaluate signal rules for all open trades (every user's, or one user's when user_id is
+    given). Activate/deactivate signals. With market_offline, price-based rules are skipped."""
     stmt = (
         select(Trade)
         .where(Trade.status == "open")
         .options(selectinload(Trade.rationale), selectinload(Trade.signals))
     )
+    if user_id is not None:
+        stmt = stmt.where(Trade.user_id == user_id)
     result = await db.execute(stmt)
     trades = result.scalars().all()
 
@@ -51,11 +81,15 @@ async def run(db: AsyncSession) -> dict:
         existing: dict[str, TechnicalSignal] = {s.signal_type: s for s in trade.signals}
 
         for signal_type, condition in SIGNAL_RULES:
-            should_be_active = False
+            if market_offline and signal_type in MARKET_RULES:
+                continue
             try:
-                should_be_active = bool(condition(trade))
+                outcome = condition(trade)
             except Exception:
-                pass
+                outcome = None
+            if outcome is None:
+                continue  # can't evaluate: never flip a signal on missing data
+            should_be_active = bool(outcome)
 
             existing_signal = existing.get(signal_type)
 
@@ -63,6 +97,7 @@ async def run(db: AsyncSession) -> dict:
                 if existing_signal is None:
                     # Create new active signal
                     sig = TechnicalSignal(
+                        user_id=trade.user_id,
                         trade_id=trade.id,
                         signal_type=signal_type,
                         signal_value=_signal_value(trade, signal_type),

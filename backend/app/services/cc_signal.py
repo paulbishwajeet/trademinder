@@ -1,18 +1,17 @@
 import json
 import logging
-import math
 import os
 import time
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
-import numpy as np
 import pandas as pd
 
 from typing import Optional
 
 from app.services.price_fetcher import _compute_rsi_14
-from app.services.schwab_client import get_schwab_client
+from app.services.market_data import get_market_data, MarketDataUnavailable
+from app.services.technicals_fetcher import compute_iv_percentile_from_chain
 
 
 def _bollinger_pos_from_closes(closes: pd.Series, window: int) -> Optional[str]:
@@ -112,7 +111,7 @@ def fetch_option_mid(ticker: str, strike: float, expiry_str: str, contract_type:
     if cached and (now - cached[1]) < _OPTION_CHAIN_TTL:
         chain = cached[0]
     else:
-        client = get_schwab_client()
+        client = get_market_data()
         to_date = (date.today() + timedelta(days=90)).isoformat()
         chain = client.get_option_chain(
             ticker,
@@ -192,10 +191,20 @@ def compute_combined_signal(ticker: str, force: bool = False, dte: Optional[int]
         if dte is None:
             _combined_signal_cache[ticker] = (result, now)
         return result
+    except MarketDataUnavailable:
+        # Offline: the last good result (any age) beats nothing; without one, the router answers 503.
+        if cached:
+            return {"cc": _stale(cached[0]["cc"]), "sp": _stale(cached[0]["sp"])}
+        raise
     except Exception as exc:
         log.exception("combined_signal failed for %s", ticker)
         err = _make_error_signal(ticker, exc)
         return {"cc": err, "sp": err}
+
+
+def _stale(payload: dict) -> dict:
+    """A cached signal served while market data is offline: flagged stale with its as-of time."""
+    return {**payload, "stale": True, "as_of": payload.get("cached_at")}
 
 
 def compute_cc_signal(ticker: str, force: bool = False) -> dict:
@@ -215,7 +224,7 @@ def _compute_combined_fresh(ticker: str, dte: Optional[int] = None) -> dict:
     if close_d.empty:
         raise ValueError(f"No daily data for {ticker}")
 
-    client = get_schwab_client()
+    client = get_market_data()
 
     quotes = client.get_quotes([ticker])
     quote = quotes.get(ticker, {})
@@ -228,7 +237,9 @@ def _compute_combined_fresh(ticker: str, dte: Optional[int] = None) -> dict:
     call_chain = client.get_option_chain(ticker, contract_type="CALL", strike_count=30)
     put_chain = client.get_option_chain(ticker, contract_type="PUT", strike_count=30)
 
-    prev_close = float(close_d.iloc[-1])
+    # close_d's last bar is today's live price when the market is open (see
+    # _append_live_bar in technicals_fetcher.py), so the previous close is one bar back.
+    prev_close = float(close_d.iloc[-2])
     technicals = dict(technicals)
     technicals["day_color"] = "green" if live_price > prev_close else "red"
     technicals["price_action"] = str(round(live_price, 2))
@@ -239,11 +250,11 @@ def _compute_combined_fresh(ticker: str, dte: Optional[int] = None) -> dict:
     cc_strike_otm_pct = _standard_strike_otm_pct(call_chain, spot, target_delta=0.30, contract_type="CALL")
     sp_strike_otm_pct = _standard_strike_otm_pct(put_chain, spot, target_delta=0.30, contract_type="PUT")
 
-    cc_iv_pct, cc_atm_iv = _compute_iv_percentile_from_chain(close_d, call_chain, ticker, contract_type="CALL")
+    cc_iv_pct, cc_atm_iv = compute_iv_percentile_from_chain(close_d, call_chain, ticker, contract_type="CALL")
     cc_score, cc_grade, cc_factors = _score_factors(technicals, cc_iv_pct, cc_atm_iv, close_d, dte=dte, strike_otm_pct=cc_strike_otm_pct)
     commentary_data = _get_llm_commentary(ticker, cc_score, cc_grade, cc_factors, technicals, cc_iv_pct, spot)
 
-    sp_iv_pct, sp_atm_iv = _compute_iv_percentile_from_chain(close_d, put_chain, ticker, contract_type="PUT")
+    sp_iv_pct, sp_atm_iv = compute_iv_percentile_from_chain(close_d, put_chain, ticker, contract_type="PUT")
     sp_score, sp_grade, sp_factors = _score_sp_factors(technicals, sp_iv_pct, sp_atm_iv, close_d, dte=dte, strike_otm_pct=sp_strike_otm_pct)
 
     return {
@@ -278,58 +289,6 @@ def _compute_combined_fresh(ticker: str, dte: Optional[int] = None) -> dict:
             "fetch_error": None,
         },
     }
-
-
-def _compute_iv_percentile_from_chain(
-    daily_closes: pd.Series, chain: dict, ticker: str = "?", contract_type: str = "CALL"
-) -> tuple[float | None, float | None]:
-    try:
-        log_returns = np.log(daily_closes / daily_closes.shift(1)).dropna()
-        if len(log_returns) < 60:
-            return None, None
-        hv30 = log_returns.rolling(window=30).std() * math.sqrt(252)
-        hv30 = hv30.dropna()
-        if len(hv30) < 30:
-            return None, None
-
-        exp_map_key = "putExpDateMap" if contract_type == "PUT" else "callExpDateMap"
-        call_exp_map = chain.get(exp_map_key, {})
-        if not call_exp_map:
-            return None, None
-
-        spot = float(chain.get("underlyingPrice", 0))
-
-        today = date.today()
-        best_exp_key = None
-        best_dist = float("inf")
-        for exp_key in call_exp_map:
-            exp_str = exp_key.split(":")[0]
-            exp_date = datetime.strptime(exp_str, "%Y-%m-%d").date()
-            dte = (exp_date - today).days
-            if dte < 14:
-                continue
-            dist = abs(dte - 37)
-            if dist < best_dist:
-                best_dist = dist
-                best_exp_key = exp_key
-
-        if best_exp_key is None:
-            return None, None
-
-        strikes = call_exp_map[best_exp_key]
-        best_strike_key = min(strikes.keys(), key=lambda s: abs(float(s) - spot))
-        atm_option = strikes[best_strike_key][0]
-        raw_iv = float(atm_option.get("volatility", 0))
-        if raw_iv <= 1.0:
-            return None, None
-        atm_iv = raw_iv / 100.0
-
-        pct = float((hv30 < atm_iv).sum()) / len(hv30) * 100
-        return round(pct, 1), atm_iv
-
-    except Exception as exc:
-        log.warning("IV percentile failed for %s: %s", ticker, exc)
-        return None, None
 
 
 def _score_factors(
@@ -421,7 +380,7 @@ def _score_factors(
     day_detail = "N/A"
     try:
         live_price = float(technicals.get("price_action") or 0)
-        prev_close = float(daily_closes.iloc[-1]) if not daily_closes.empty else 0
+        prev_close = float(daily_closes.iloc[-2]) if len(daily_closes) >= 2 else 0
         pct_chg = (live_price - prev_close) / prev_close * 100 if prev_close else 0
         if pct_chg > 0.5:
             day_pts = 5
@@ -642,7 +601,7 @@ def _score_sp_factors(
     day_detail = "N/A"
     try:
         live_price = float(technicals.get("price_action") or 0)
-        prev_close = float(daily_closes.iloc[-1]) if not daily_closes.empty else 0
+        prev_close = float(daily_closes.iloc[-2]) if len(daily_closes) >= 2 else 0
         pct_chg = (live_price - prev_close) / prev_close * 100 if prev_close else 0
         if pct_chg < -0.5:
             day_pts = 5

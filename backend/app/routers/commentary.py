@@ -8,6 +8,9 @@ from sqlalchemy.orm import selectinload
 from anthropic import AsyncAnthropic
 
 from app.database import get_db
+from app.deps import get_current_user
+from app.models.user import User
+from app.services.ownership import get_trade, get_commentary
 from app.models.commentary import Commentary
 from app.models.rationale import Rationale
 from app.schemas.commentary import CommentaryCreate, CommentaryResponse
@@ -16,10 +19,11 @@ router = APIRouter(tags=["commentary"])
 
 
 @router.get("/api/trades/{trade_id}/commentary", response_model=list[CommentaryResponse])
-async def list_commentary(trade_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def list_commentary(trade_id: uuid.UUID, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    # Unknown and foreign trades both yield [] (pre-existing contract) — the user filter keeps it leak-free.
     stmt = (
         select(Commentary)
-        .where(Commentary.trade_id == trade_id)
+        .where(Commentary.trade_id == trade_id, Commentary.user_id == user.id)
         .options(selectinload(Commentary.rationale))
         .order_by(Commentary.created_at.desc())
     )
@@ -28,11 +32,14 @@ async def list_commentary(trade_id: uuid.UUID, db: AsyncSession = Depends(get_db
 
 
 @router.post("/api/trades/{trade_id}/commentary", response_model=CommentaryResponse, status_code=201)
-async def add_commentary(trade_id: uuid.UUID, payload: CommentaryCreate, db: AsyncSession = Depends(get_db)):
+async def add_commentary(trade_id: uuid.UUID, payload: CommentaryCreate, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    await get_trade(db, user, trade_id)
     comment = Commentary(
+        user_id=user.id,
         trade_id=trade_id,
         note=payload.note,
         tags=payload.tags,
+        signal_snapshot=payload.signal_snapshot,
     )
     db.add(comment)
     await db.flush()  # get comment.id before creating rationale
@@ -41,6 +48,7 @@ async def add_commentary(trade_id: uuid.UUID, payload: CommentaryCreate, db: Asy
         rat_data = payload.rationale.model_dump(exclude_none=True)
         rat_data["fetch_status"] = "ok"
         rationale = Rationale(
+            user_id=user.id,
             trade_id=trade_id,
             commentary_id=comment.id,
             **rat_data,
@@ -59,25 +67,24 @@ async def add_commentary(trade_id: uuid.UUID, payload: CommentaryCreate, db: Asy
 
 
 @router.delete("/api/commentary/{comment_id}", status_code=204)
-async def delete_commentary(comment_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
-    stmt = select(Commentary).where(Commentary.id == comment_id)
-    result = await db.execute(stmt)
-    comment = result.scalar_one_or_none()
-    if comment is None:
-        raise HTTPException(status_code=404, detail="Commentary entry not found")
+async def delete_commentary(comment_id: uuid.UUID, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    comment = await get_commentary(db, user, comment_id)
     await db.delete(comment)
     await db.commit()
 
 
-# Simple in-memory cache: trade_id -> (summary_text, inferred_actions, cached_at)
+# Simple in-memory cache: "user_id:trade_id" -> (summary_text, inferred_actions, cached_at).
+# Ownership is checked before the cache is consulted, so a cached summary never leaks across users.
 _summary_cache: dict[str, tuple[str, list[str], datetime]] = {}
 _CACHE_TTL_HOURS = 6
 
 
 @router.get("/api/trades/{trade_id}/commentary/summary")
-async def commentary_summary(trade_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def commentary_summary(trade_id: uuid.UUID, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
     from app.config import settings
-    cache_key = str(trade_id)
+    from app.models.trade import Trade
+    trade = await get_trade(db, user, trade_id, options=(selectinload(Trade.rationale),))
+    cache_key = f"{user.id}:{trade_id}"
     now = datetime.now(timezone.utc)
 
     # Return cached result if fresh
@@ -90,24 +97,11 @@ async def commentary_summary(trade_id: uuid.UUID, db: AsyncSession = Depends(get
     # Load commentary
     stmt = (
         select(Commentary)
-        .where(Commentary.trade_id == trade_id)
+        .where(Commentary.trade_id == trade_id, Commentary.user_id == user.id)
         .order_by(Commentary.created_at.asc())
     )
     result = await db.execute(stmt)
     comments = result.scalars().all()
-
-    # Load trade + rationale
-    from app.models.trade import Trade
-    from sqlalchemy.orm import selectinload
-    trade_stmt = (
-        select(Trade)
-        .where(Trade.id == trade_id)
-        .options(selectinload(Trade.rationale))
-    )
-    trade_result = await db.execute(trade_stmt)
-    trade = trade_result.scalar_one_or_none()
-    if trade is None:
-        raise HTTPException(status_code=404, detail="Trade not found")
 
     if not settings.anthropic_api_key:
         return {"summary": "AI summary not configured (ANTHROPIC_API_KEY missing).", "inferred_actions": []}

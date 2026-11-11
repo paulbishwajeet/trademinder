@@ -142,7 +142,7 @@ def test_compute_fresh_calls_schwab_for_quote_and_chain():
         },
     }
 
-    with patch("app.services.cc_signal.get_schwab_client", return_value=mock_client), \
+    with patch("app.services.cc_signal.get_market_data", return_value=mock_client), \
          patch("app.services.technicals_fetcher.fetch_technicals") as mock_tech, \
          patch("app.services.cc_signal._get_llm_commentary", return_value={"commentary": None, "strike_hint": None, "caution": None}):
         mock_tech.return_value = (_make_technicals(), closes)
@@ -160,7 +160,7 @@ def test_iv_percentile_from_chain_parses_atm_iv():
     from datetime import date, timedelta
     import pandas as pd
     import numpy as np
-    from app.services.cc_signal import _compute_iv_percentile_from_chain
+    from app.services.technicals_fetcher import compute_iv_percentile_from_chain
 
     closes = _make_daily_closes(252)
     exp_date = (date.today() + timedelta(days=37)).strftime("%Y-%m-%d")
@@ -172,7 +172,7 @@ def test_iv_percentile_from_chain_parses_atm_iv():
             }
         },
     }
-    iv_pct, atm_iv = _compute_iv_percentile_from_chain(closes, chain)
+    iv_pct, atm_iv = compute_iv_percentile_from_chain(closes, chain)
     assert atm_iv is not None
     assert 0.01 < atm_iv < 2.0  # 35% / 100 = 0.35
 
@@ -180,7 +180,7 @@ def test_iv_percentile_from_chain_parses_atm_iv():
 def test_iv_percentile_from_chain_skips_expired_expirations():
     """Expirations with DTE < 14 should be ignored."""
     from datetime import date, timedelta
-    from app.services.cc_signal import _compute_iv_percentile_from_chain
+    from app.services.technicals_fetcher import compute_iv_percentile_from_chain
 
     closes = _make_daily_closes(252)
     near_exp = (date.today() + timedelta(days=5)).strftime("%Y-%m-%d")
@@ -190,7 +190,7 @@ def test_iv_percentile_from_chain_skips_expired_expirations():
             f"{near_exp}:5": {"100.0": [{"volatility": 35.0}]},
         },
     }
-    iv_pct, atm_iv = _compute_iv_percentile_from_chain(closes, chain)
+    iv_pct, atm_iv = compute_iv_percentile_from_chain(closes, chain)
     assert iv_pct is None
     assert atm_iv is None
 
@@ -274,9 +274,15 @@ def _day_pts(pct_chg: float, scorer: str):
     closes = _make_daily_closes()
     prev_close = float(closes.iloc[-1])
     live_price = prev_close * (1 + pct_chg / 100)
+    # daily_closes' last bar is always today's live price in production (see
+    # _append_live_bar in technicals_fetcher.py) — mirror that here so prev_close
+    # is read from the correct (second-to-last) bar.
+    closes_with_live = pd.concat(
+        [closes, pd.Series([live_price], index=[closes.index[-1] + pd.Timedelta(days=1)])]
+    )
     technicals = _make_technicals({"price_action": str(round(live_price, 2))})
     fn = _score_factors if scorer == "cc" else _score_sp_factors
-    _, _, factors = fn(technicals, iv_percentile=55.0, atm_iv=0.30, daily_closes=closes)
+    _, _, factors = fn(technicals, iv_percentile=55.0, atm_iv=0.30, daily_closes=closes_with_live)
     return next(f for f in factors if f["name"] == "Day Color")["points"]
 
 

@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react'
-import type { TradeCreate, TechnicalsData } from '../../types'
+import type { BrokerageAccount, Category, TradeCreate, TechnicalsData } from '../../types'
 import { TechnicalsPanel } from '../shared/TechnicalsPanel'
-
-interface Category { id: string; name: string; color: string }
+import { useAccountCategories } from '../../context/AccountsContext'
 
 interface Props {
+  /** Account the trade is created in — limits the category picker to its categories. */
+  account: BrokerageAccount
   onSubmit: (payload: TradeCreate, technicals: TechnicalsData | null) => Promise<void>
   onCancel: () => void
 }
@@ -12,21 +13,32 @@ interface Props {
 const STRATEGIES = ['Stock', 'Put', 'Call', 'CoveredCall', 'PutCreditSpread', 'Leap']
 const TYPES = ['Buy', 'Sell', 'Assigned']
 
-export function TradeForm({ onSubmit, onCancel }: Props) {
+// Account default category, else WHEEL if the account uses it, else its first category.
+function defaultCategoryName(account: BrokerageAccount, categories: Category[]): string {
+  const preferred = categories.find(c => c.id === account.default_category_id)
+    ?? categories.find(c => c.name === 'WHEEL')
+    ?? categories[0]
+  return preferred?.name ?? ''
+}
+
+export function TradeForm({ account, onSubmit, onCancel }: Props) {
   const today = new Date().toISOString().split('T')[0]
-  const [form, setForm] = useState<TradeCreate>({
-    type: 'Sell', category: 'WHEEL', strategy: 'Put',
+  const categories = useAccountCategories(account)
+  const [form, setForm] = useState<TradeCreate>(() => ({
+    type: 'Sell', category: defaultCategoryName(account, categories), strategy: 'Put',
     ticker: '', open_date: today, quantity: 1,
-  })
+  }))
   const [technicals, setTechnicals] = useState<TechnicalsData | null>(null)
   const [techOpen, setTechOpen] = useState(false)
-  const [categories, setCategories] = useState<Category[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // Categories may arrive after mount — pick the default once they do.
   useEffect(() => {
-    fetch('/api/categories').then(r => r.json()).then(setCategories).catch(() => {})
-  }, [])
+    if (categories.length > 0 && !categories.some(c => c.name === form.category)) {
+      setForm(prev => ({ ...prev, category: defaultCategoryName(account, categories) }))
+    }
+  }, [account, categories, form.category])
 
   const set = (field: keyof TradeCreate, value: unknown) =>
     setForm(prev => ({ ...prev, [field]: value }))

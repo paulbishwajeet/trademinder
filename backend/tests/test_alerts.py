@@ -22,7 +22,10 @@ async def _create_trade_and_alert(client: AsyncClient, db_session: AsyncSession)
     trade_resp = await client.post("/api/trades", json=TRADE_PAYLOAD)
     trade_id = trade_resp.json()["id"]
 
+    from app.models.trade import Trade
+    trade = await db_session.get(Trade, uuid.UUID(trade_id))
     alert = Alert(
+        user_id=trade.user_id,
         trade_id=uuid.UUID(trade_id),
         alert_type="profit_target",
         severity="warning",

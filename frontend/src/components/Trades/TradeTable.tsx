@@ -5,6 +5,7 @@ import { StatusBadge } from '../shared/StatusBadge'
 import { PnLDisplay } from '../shared/PnLDisplay'
 import { CommentaryCell } from './CommentaryCell'
 import { CATEGORY_COLORS } from './categories'
+import { scopedResearchPath, tradePath } from '../../lib/paths'
 
 interface Props {
   trades: Trade[]
@@ -37,7 +38,7 @@ export function TradeTable({ trades, onDelete }: Props) {
             return (
               <tr key={trade.id} style={rowStyle} className={`hover:brightness-95${!color ? ' hover:bg-gray-50' : ''}`}>
                 <td className="px-4 py-3 font-semibold">
-                  <Link to={`/trades/${trade.id}`} className="text-blue-600 hover:underline">
+                  <Link to={tradePath(trade.account_id, trade.id)} className="text-blue-600 hover:underline">
                     {trade.ticker}
                   </Link>
                 </td>
@@ -62,7 +63,7 @@ export function TradeTable({ trades, onDelete }: Props) {
                   <div className="flex items-center gap-3">
                     {trade.strategy === 'Stock' && trade.status === 'open' && (
                       <Link
-                        to={`/scanner?ticker=${trade.ticker}`}
+                        to={scopedResearchPath(trade.account_id, 'scanner', { symbol: trade.ticker })}
                         className="text-blue-500 hover:text-blue-700 text-xs"
                       >
                         Scan →
