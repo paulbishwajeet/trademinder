@@ -7,11 +7,13 @@ import { wheelApi, combinedSignalApi, optionPriceApi, ccTimingSignalApi, spTimin
 import { technicalsApi, type QuoteData } from '../api/technicals'
 import { timeAgo } from '../components/Screener/timeAgo'
 import { NewWheelModalV2 } from '../components/Wheel/NewWheelModalV2'
+import { EditWheelModal } from '../components/Wheel/EditWheelModal'
 import { AddSlotModal } from '../components/Wheel/AddSlotModal'
 import { ResolveModal } from '../components/Wheel/ResolveModal'
 import { LinkLegModalV2 } from '../components/Wheel/LinkLegModalV2'
 import { CommentaryPopover } from '../components/Commentary/CommentaryPopover'
 import { useRequiredAccount } from '../context/AccountsContext'
+import { ChevronDown, ChevronRight } from 'lucide-react'
 import { tradePath, scopedResearchPath } from '../lib/paths'
 import { matchSymbols } from '../lib/tickers'
 import { FilterBar } from '../components/shared/FilterBar'
@@ -128,6 +130,9 @@ export function WheelDashboardPage() {
   )
   const [showNewModal, setShowNewModal] = useState(false)
   const [addSlotSessionId, setAddSlotSessionId] = useState<string | null>(null)
+  const [editWheelId, setEditWheelId] = useState<string | null>(null)
+  // NEW — NEEDS SLOT starts collapsed on every visit; null = no click yet (see newWheelsSectionOpen).
+  const [newWheelsOpen, setNewWheelsOpen] = useState<boolean | null>(null)
   const [resolveSlotId, setResolveSlotId] = useState<string | null>(null)
   const [linkSlotId, setLinkSlotId] = useState<string | null>(null)
   const [editingContractsSlotId, setEditingContractsSlotId] = useState<string | null>(null)
@@ -307,6 +312,17 @@ export function WheelDashboardPage() {
     }
   }
 
+  async function handleDeleteWheel(sessionId: string, ticker: string) {
+    if (!confirm(`Delete the ${ticker} wheel? It has no slots, so nothing else is removed.`)) return
+    try {
+      await wheelApi.deleteSession(sessionId)
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Failed to delete wheel')
+      return
+    }
+    await load()
+  }
+
   async function handleDeleteSlot(slotId: string, ticker: string) {
     if (!confirm(`Delete this ${ticker} slot? This removes its leg links and premium history (the underlying trades are not deleted).`)) return
     await wheelApi.deleteSlot(slotId)
@@ -364,7 +380,7 @@ export function WheelDashboardPage() {
   // Capture phase: overlays close themselves on the same keypress (and unmount their [data-escape-layer]
   // marker before a bubbling listener would run), so this must look first.
   const overlayOpen = showNewModal || addSlotSessionId != null || resolveSlotId != null || linkSlotId != null
-    || editingContractsSlotId != null
+    || editingContractsSlotId != null || editWheelId != null
   useEffect(() => {
     function handleKey(e: KeyboardEvent) {
       if (overlayOpen || document.querySelector('[data-escape-layer]')) return
@@ -417,6 +433,10 @@ export function WheelDashboardPage() {
   const symbolHasWheel = symbol == null || sessions.some(s => matchesFilter(s.ticker))
   const hiddenNeedsAction = symbol ? needsAction.filter(f => !matchesFilter(f.ticker)).length : 0
   const shownEmptyWheels = emptyWheels.filter(s => matchesFilter(s.ticker))
+  // Until the header is clicked, a symbol filter that matches a new wheel opens the section, so a match isn't
+  // hidden behind the collapse. A click always wins.
+  const newWheelsSectionOpen = newWheelsOpen ?? (symbol != null && shownEmptyWheels.length > 0)
+  const editWheel = editWheelId ? sessions.find(s => s.id === editWheelId) ?? null : null
 
   const resolveSlotTicker = resolveSlotId
     ? allSlots.find(f => f.slot.id === resolveSlotId)?.ticker ?? ''
@@ -1296,11 +1316,18 @@ export function WheelDashboardPage() {
         <>
           {emptyWheels.length > 0 && (
             <section className="mb-5">
-              <div className="flex items-center gap-2 mb-2">
+              <button
+                onClick={() => setNewWheelsOpen(!newWheelsSectionOpen)}
+                aria-expanded={newWheelsSectionOpen}
+                className="flex items-center gap-2 mb-2 rounded hover:bg-purple-50/60"
+              >
+                {newWheelsSectionOpen
+                  ? <ChevronDown size={14} className="text-purple-600" />
+                  : <ChevronRight size={14} className="text-purple-600" />}
                 <span className="text-sm font-bold text-purple-600">NEW — NEEDS SLOT</span>
                 <span className="bg-purple-50 text-purple-600 text-xs px-2 py-0.5 rounded-full font-medium">{countLabel(shownEmptyWheels.length, emptyWheels.length)}</span>
-              </div>
-              {shownEmptyWheels.length === 0 ? renderFilteredEmpty(`No new ${symbol} wheels`) : <div className="bg-white border border-purple-200 rounded-lg overflow-hidden">
+              </button>
+              {!newWheelsSectionOpen ? null : shownEmptyWheels.length === 0 ? renderFilteredEmpty(`No new ${symbol} wheels`) : <div className="bg-white border border-purple-200 rounded-lg overflow-hidden">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="text-left text-xs text-gray-400 border-b border-gray-100">
@@ -1316,13 +1343,29 @@ export function WheelDashboardPage() {
                         <td className="py-2 pr-3 pl-3">{renderTicker(s.ticker)}</td>
                         <td className="py-2 pr-3 text-gray-500 text-xs">{s.total_shares}</td>
                         <td className="py-2 pr-3 text-gray-400 text-xs">{s.opened_at}</td>
-                        <td className="py-2 text-right">
-                          <button
-                            onClick={() => setAddSlotSessionId(s.id)}
-                            className="px-2 py-0.5 text-xs bg-purple-100 text-purple-800 rounded hover:bg-purple-200"
-                          >
-                            + Add Slot
-                          </button>
+                        <td className="py-2 pr-3 text-right">
+                          <div className="flex items-center gap-1 justify-end">
+                            <button
+                              onClick={() => setAddSlotSessionId(s.id)}
+                              className="px-2 py-0.5 text-xs bg-purple-100 text-purple-800 rounded hover:bg-purple-200"
+                            >
+                              + Add Slot
+                            </button>
+                            <button
+                              onClick={() => setEditWheelId(s.id)}
+                              className="px-1.5 py-0.5 text-xs text-gray-400 hover:text-gray-600 rounded hover:bg-gray-100"
+                              title="Edit wheel"
+                            >
+                              ✎
+                            </button>
+                            <button
+                              onClick={() => handleDeleteWheel(s.id, s.ticker)}
+                              className="px-1.5 py-0.5 text-xs text-gray-400 hover:text-red-600 rounded hover:bg-red-50"
+                              title="Delete wheel"
+                            >
+                              ×
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -1340,6 +1383,7 @@ export function WheelDashboardPage() {
       )}
 
       {showNewModal && <NewWheelModalV2 accountId={accountId} onClose={() => setShowNewModal(false)} onCreated={(s) => { setShowNewModal(false); setAddSlotSessionId(s.id); load() }} />}
+      {editWheel && <EditWheelModal session={editWheel} onClose={() => setEditWheelId(null)} onSaved={() => { setEditWheelId(null); load() }} />}
       {addSlotSessionId && <AddSlotModal sessionId={addSlotSessionId} onClose={() => setAddSlotSessionId(null)} onCreated={() => { setAddSlotSessionId(null); load() }} />}
       {resolveSlotId && <ResolveModal accountId={accountId} slotId={resolveSlotId} ticker={resolveSlotTicker} onClose={() => setResolveSlotId(null)} onResolved={() => { setResolveSlotId(null); load() }} />}
       {linkSlotId && <LinkLegModalV2 accountId={accountId} slotId={linkSlotId} ticker={linkSlotTicker} slotStatus={linkSlotStatus} onClose={() => setLinkSlotId(null)} onLinked={() => { setLinkSlotId(null); load() }} />}

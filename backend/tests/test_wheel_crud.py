@@ -219,3 +219,65 @@ async def test_session_detail_exact_match_wins_over_alias(client: AsyncClient):
     detail = await client.get(f"/api/wheel/{session_id}")
     assert detail.json()["stock_cost_basis"] == "342.51"
     assert detail.json()["stock_current_price"] == "330.00"
+
+
+# ── Delete / edit a wheel that has no slot yet (the "NEW — NEEDS SLOT" rows) ──
+
+from tests.conftest import make_user_with_account  # noqa: E402
+
+
+async def test_delete_wheel_without_slots(client: AsyncClient):
+    session_id = (await client.post("/api/wheel", json=SESSION_PAYLOAD)).json()["id"]
+    resp = await client.delete(f"/api/wheel/{session_id}")
+    assert resp.status_code == 204
+    assert (await client.get(f"/api/wheel/{session_id}")).status_code == 404
+    assert (await client.get("/api/wheel")).json() == []
+
+
+async def test_delete_wheel_with_slots_is_refused(client: AsyncClient):
+    session_id = (await client.post("/api/wheel", json=SESSION_PAYLOAD)).json()["id"]
+    await client.post(f"/api/wheel/{session_id}/slots", json={"contracts": 1, "status": "awaiting_cc"})
+    resp = await client.delete(f"/api/wheel/{session_id}")
+    assert resp.status_code == 409
+    assert "slot" in resp.json()["detail"].lower()
+    assert (await client.get(f"/api/wheel/{session_id}")).status_code == 200
+
+
+async def test_delete_wheel_of_another_user_is_404(client: AsyncClient, act_as):
+    session_id = (await client.post("/api/wheel", json=SESSION_PAYLOAD)).json()["id"]
+    other, _ = await make_user_with_account("b@test.local", nickname="B")
+    act_as(other)
+    assert (await client.delete(f"/api/wheel/{session_id}")).status_code == 404
+
+
+async def test_edit_wheel_ticker_shares_and_date(client: AsyncClient):
+    session_id = (await client.post("/api/wheel", json=SESSION_PAYLOAD)).json()["id"]
+    resp = await client.patch(f"/api/wheel/{session_id}", json={
+        "ticker": " amd ", "total_shares": 200, "opened_at": "2026-10-01",
+    })
+    assert resp.status_code == 200
+    data = resp.json()
+    assert (data["ticker"], data["total_shares"], data["opened_at"]) == ("AMD", 200, "2026-10-01")
+
+
+async def test_edit_wheel_rejects_bad_ticker(client: AsyncClient):
+    session_id = (await client.post("/api/wheel", json=SESSION_PAYLOAD)).json()["id"]
+    for bad in ["", "   ", "TOOLONGTICKER", "BRK B"]:
+        resp = await client.patch(f"/api/wheel/{session_id}", json={"ticker": bad})
+        assert resp.status_code == 422, bad
+
+
+async def test_edit_wheel_rejects_negative_shares(client: AsyncClient):
+    session_id = (await client.post("/api/wheel", json=SESSION_PAYLOAD)).json()["id"]
+    assert (await client.patch(f"/api/wheel/{session_id}", json={"total_shares": -1})).status_code == 422
+
+
+async def test_edit_ticker_refused_once_wheel_has_slots(client: AsyncClient):
+    session_id = (await client.post("/api/wheel", json=SESSION_PAYLOAD)).json()["id"]
+    await client.post(f"/api/wheel/{session_id}/slots", json={"contracts": 1, "status": "awaiting_cc"})
+    resp = await client.patch(f"/api/wheel/{session_id}", json={"ticker": "AMD"})
+    assert resp.status_code == 409
+    # Other fields stay editable, and resending the same ticker isn't a change.
+    resp = await client.patch(f"/api/wheel/{session_id}", json={"ticker": "nvda", "total_shares": 300})
+    assert resp.status_code == 200
+    assert resp.json()["total_shares"] == 300

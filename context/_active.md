@@ -1,12 +1,15 @@
 # Active Feature
 
-**Feature:** WHEEL page symbol filter (filter bar v1)
-**Context File:** context/feature-wheel-filter-bar.md
-**Branch:** feature/wheel-filter-bar (off develop 471dd1e), in worktree `.claude/worktrees/wheel-filter-bar`
+**Feature:** NEW — NEEDS SLOT: collapse, delete, edit
+**Context File:** context/feature-wheel-new-wheel-actions.md
+**Branch:** feature/wheel-new-wheel-actions (stacked on feature/wheel-filter-bar 2281724), in worktree `.claude/worktrees/new-wheel-actions`
 **Session Started:** 2026-11-11
-**Status:** Implemented and verified (build, lint, Playwright on a DB copy); not committed.
+**Status:** Implemented and verified (pytest, build, lint, Playwright on a DB copy); not committed.
 
 ---
+
+**Previous feature:** WHEEL page symbol filter (filter bar v1) — context/feature-wheel-filter-bar.md — committed (2281724) on feature/wheel-filter-bar; not pushed or merged; user built and tried it.
+
 
 **Previous feature:** Login and HTTPS (Part 5 of 5) — context/feature-login-and-https.md — complete; released on master (8b60b68) and in production on the QNAP.
 
