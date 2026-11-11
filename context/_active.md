@@ -2,9 +2,9 @@
 
 **Feature:** Login and HTTPS (multi-user Part 5 of 5)
 **Context File:** context/feature-login-and-https.md
-**Branch:** feature/login-and-https, merged into develop and pushed.
+**Branch:** feature/login-and-https, merged into develop (3f045fc) and master (8b60b68), all pushed.
 **Session Started:** 2026-11-05
-**Status:** Deployed on the QNAP (https://tm.aipathstudio.com) and merged into develop (2026-11-11). Next: point the Portainer stack at develop.
+**Status:** Complete. Released on master and in production on the QNAP (https://tm.aipathstudio.com, stack at refs/heads/master, only 443 published) as of 2026-11-11. Next: Schwab re-auth before 2026-11-17; optionally invite the pilot user.
 
 ---
 

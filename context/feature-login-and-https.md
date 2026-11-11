@@ -120,17 +120,29 @@ wheel or DOM changes.
     NAS data via a scratch DB and rename. The user signed in on the NAS and the data is there.
 - 2026-11-11: The extension signed in to the NAS; `trademinder_nas_old` dropped. Removed the rollout host ports
   (`5430`, `5431`) from `docker-compose.prod.yml` (only Traefik's 443 is published) and `FRONTEND_PORT` from
-  `.env.example`; added the deployment notes to the guide. Merged into `develop`.
+  `.env.example`; added the deployment notes to the guide (`bb05cad`). Merged into `develop` (`3f045fc`), then
+  `develop` into `master` (`8b60b68`, Parts 1–5; master's tree == develop's). The user switched the Portainer stack
+  to `refs/heads/master` and redeployed; checked from the Mac: 5430/5431 closed, 443 open, https `/` 200,
+  `/api/me` 401, `/extension/connect` 200.
 
 ## Current State
-**Part 5 is deployed on the QNAP at https://tm.aipathstudio.com and merged into `develop`.**
+**The 5-part multi-user plan is complete, released on `master` and running in production on the QNAP.**
 
-- **The NAS holds the real data** (since 2026-11-10); the Mac DB is development only, and the two diverge.
-- **Stack:** Portainer Git stack `trademinder` (volume `trademinder_pgdata`); four services. Only Traefik
-  publishes a port (443).
-- **Local:** dev servers on the main checkout; sign in at http://localhost:5430; local extension server address
-  `http://localhost:5430`.
+- **Production:** https://tm.aipathstudio.com (LAN only); Portainer Git stack `trademinder` at
+  `refs/heads/master` (volume `trademinder_pgdata`); Traefik + Let's Encrypt (renews automatically, cert to
+  2027-02-08); only port 443 published. The NAS holds the real data (since 2026-11-10); the owner and the extension
+  are signed in.
+- **Branches:** `master` = `develop` (`8b60b68` / `3f045fc`), both pushed. The five feature branches are on origin.
+  The main checkout is still on `feature/login-and-https` (clean; same code as develop minus the merge commit).
+- **Local:** the Mac DB is development only (018, 446 trades; diverges from the NAS). Dev servers on 5430/5431;
+  sign in at http://localhost:5430; local extension address `http://localhost:5430`. Latest Mac backup:
+  `backups/trademinder-20261110-1222.dump`.
+- **Verification:** pytest 476 passed / 6 known failures; `npm run build` (incl. `tsc -b`) clean; both prod images
+  build for amd64.
 
-**Single next action:** in Portainer, switch the stack's Git reference to `refs/heads/develop` and Pull and
-redeploy. Afterwards `http://192.168.86.44:5430` and `:5431` stop answering, and https keeps working. Optional:
-invite the pilot user (guide step 7).
+**Next actions (user's choice):**
+1. Re-authorise Schwab before **2026-11-17** (on the Mac, then copy the `schwab_tokens` row to the NAS).
+2. Invite the pilot user (guide step 7; their Gmail must be a test user on the Google consent screen).
+3. Back up the NAS DB regularly (`docker exec trademinder-db-1 pg_dump -U trademinder -Fc trademinder > …`).
+4. Future ideas: in-app Schwab reconnect; a fixed extension `key` for one stable ID; the margin page's raw fetch
+   bypassing the 401 handler.
