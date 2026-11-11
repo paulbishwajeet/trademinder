@@ -139,8 +139,9 @@ The backend **refuses to start** if `PUBLIC_BASE_URL` is https and the Google cl
    the browser. It renews automatically; the certificate is stored on the `traefik-letsencrypt` volume, so
    recreating the container doesn't request a new one.
 
-The old `http://<NAS IP>:5430` and `:5431` ports still work during rollout. That's for checking only, because
-Google sign-in needs the https URL.
+Only Traefik publishes a host port (443). The backend and frontend have no `ports:` of their own; Traefik reaches
+them on the stack's internal network (`backend:5431`, `frontend:80`), so `http://<NAS IP>:5430` and `:5431` don't
+answer.
 
 ---
 
@@ -213,11 +214,32 @@ Sign in again".
 
 ---
 
-## 9. After HTTPS sign-in works: close the old ports
+## 9. Old rollout ports (done)
 
-Once steps 6–8 work, remove both rollout `ports:` mappings from `docker-compose.prod.yml` in your deployment:
-`5431:5431` on the backend and `${FRONTEND_PORT:-5430}:80` on the frontend. Redeploy. All traffic then goes
-through Traefik on 443.
+The first rollout also published `5431` (backend) and `5430` (frontend) on the NAS, as a way to check the stack
+before HTTPS worked. Those mappings were removed from `docker-compose.prod.yml` once sign-in through
+`https://tm.<domain>` was verified (2026-11-11). Nothing needs doing; if you add a host port back for debugging,
+remember it bypasses HTTPS and sign-in for anyone on the Wi-Fi.
+
+---
+
+## Notes from the first deployment (2026-11-10)
+
+- **The stack must be created in Portainer.** If it was started outside Portainer (`docker compose up`,
+  Container Station), Portainer marks it *Limited* and has no stack environment variables. Recreate it under
+  Stacks → Add stack → Repository. First remove the old containers (keep the volume; never `down -v`), because
+  Portainer refuses a name that existing containers already use.
+- **Keep the stack name `trademinder`.** The database lives on the volume `<stack name>_pgdata`; another name
+  starts an empty database. Keep the old `DB_PASSWORD` too: Postgres keeps the password it was created with.
+- **The frontend image type-checks.** `npm run build` runs `tsc -b`, which the dev server doesn't, so an unused
+  import that works locally fails the stack build. Run `cd frontend && npm run build` before pushing a deploy.
+- **Replacing the NAS data with the Mac's** (what was done): back up both, stop only the backend, restore the Mac
+  dump into a scratch database `trademinder_check`, check revision / trade count / owner, truncate
+  `user_sessions` and `extension_tokens`, rename it over `trademinder` (old one kept as `trademinder_nas_old`),
+  start the backend. The dump carries its schema and `alembic_version`, so no migration runs. From then on the NAS
+  holds the real data.
+- **Never `pg_restore` straight into a live database.** A failed `--clean` restore leaves a half-old, half-new
+  schema. Restore into a scratch database, check it, then swap by renaming.
 
 ---
 

@@ -6,8 +6,8 @@
 #   else    → frontend:80 (nginx serves the SPA with an index.html fallback for deep links)
 # Every secret is a Portainer stack environment variable — never commit real values.
 #
-# Rollout: the old 5430/5431 host ports stay published until HTTPS sign-in is verified, then remove
-# both `ports:` blocks below so all traffic goes through Traefik.
+# Only Traefik publishes a host port (443). backend and frontend are reachable only on the stack's
+# internal network, so nothing on the LAN can bypass HTTPS and sign-in.
 
 services:
   traefik:
@@ -74,8 +74,6 @@ services:
       MARKET_HOURS_END: ${MARKET_HOURS_END:-16:00}
       PRICE_REFRESH_INTERVAL_MINUTES: ${PRICE_REFRESH_INTERVAL_MINUTES:-15}
       BRIEFING_GENERATE_TIME: ${BRIEFING_GENERATE_TIME:-08:00}
-    ports:
-      - "5431:5431"     # rollout only — remove once HTTPS sign-in works
     depends_on:
       db:
         condition: service_healthy
@@ -94,8 +92,6 @@ services:
     build:
       context: ./frontend
       target: prod
-    ports:
-      - "${FRONTEND_PORT:-5430}:80"   # rollout only — remove once HTTPS sign-in works
     depends_on:
       - backend
     restart: unless-stopped

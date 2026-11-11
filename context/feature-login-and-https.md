@@ -80,16 +80,15 @@ wheel or DOM changes.
 | `cryptography<46` | 46+ wheels fail to load in the macOS dev venv; 45.x works on macOS and in Docker |
 
 ## Open Questions
-1. **Schwab tokens on the NAS.** The old prod DB has no Schwab token row, and the CLI isn't in the image. The guide
-   copies the row from the Mac DB. An in-app reconnect (needs HTTPS, so now possible) is future work.
-2. **Extension IDs differ per computer** (unpacked extensions derive the ID from the folder path). Each must be
+1. **Extension IDs differ per computer** (unpacked extensions derive the ID from the folder path). Each must be
    added to `EXTENSION_IDS`. A fixed `key` in `manifest.json` would give one stable ID if that becomes annoying.
-3. **The local dev app needs Google sign-in after merge.** Add the localhost redirect URI to the OAuth client, and
-   set `PUBLIC_BASE_URL` and the Google id/secret in the Mac's `.env`.
-4. Margin page's raw `fetch('/api/market/rsi')` doesn't trigger the global 401 → Sign in (it shows its market
+2. Margin page's raw `fetch('/api/market/rsi')` doesn't trigger the global 401 → Sign in (it shows its market
    error instead).
-5. Not testable before deployment: the real Google round trip, the Traefik certificate, launchWebAuthFlow — the
-   post-deployment checklist in the spec.
+3. **Schwab re-auth on the NAS.** The NAS got the Mac's token row with the data (valid to 2026-11-17). The CLI
+   isn't in the image, so re-auth means: re-auth on the Mac, then copy the `schwab_tokens` row to the NAS. Both
+   DBs now hold the same refresh token. An in-app reconnect (possible now that there's HTTPS) is future work.
+4. Resolved: the real Google round trip, the Traefik certificate and the extension's launchWebAuthFlow all work on
+   the NAS (2026-11-10/11).
 
 ## Progress Log
 - 2026-11-05:
@@ -104,20 +103,34 @@ wheel or DOM changes.
   `.env` (checked: all set, `PUBLIC_BASE_URL=http://localhost:5430`, one extension ID). Committed Part 5, backed
   up the live DB and migrated it to 018, and switched the main checkout to `feature/login-and-https`.
 
+- 2026-11-05 (later): Local extension sign-in failed with "Authorization page could not be loaded": the popup's
+  server address was the backend (`:5431`), but `/extension/connect` is an SPA page; locally it must be
+  `http://localhost:5430`. On the NAS there's one address.
+- 2026-11-10:
+  - Pushed `feature/login-and-https`. The NAS had no Traefik because only `develop` (Parts 1–4) was on GitHub.
+  - The user's Portainer stack was *Limited* (no stack env vars); they removed the old containers (volume kept)
+    and created a Portainer Git stack `trademinder` at `refs/heads/feature/login-and-https`.
+  - The stack build failed at `npm run build`: two pre-existing unused names (`WheelSlotCard` `ticker`,
+    `WheelDashboardPage` `WheelSessionSummary`). Fixed in `ce09fd7`; checked by building both images for amd64.
+  - Local DB incident: the user restored an 11/04 dump over the live DB; it failed halfway (revision 016 with some
+    018 tables). Restored `backups/trademinder-pre-018-20261105-1338.dump` into a scratch DB, swapped it in,
+    migrated to 018 (446 trades). Changes after 11/05 13:38 were lost; the broken copy was dropped.
+  - Deployed: Let's Encrypt certificate for `tm.aipathstudio.com`. The Mac DB
+    (`backups/trademinder-for-nas-20261110-1502.dump`, 018, 446 trades, Schwab token valid to 11/17) replaced the
+    NAS data via a scratch DB and rename. The user signed in on the NAS and the data is there.
+- 2026-11-11: The extension signed in to the NAS; `trademinder_nas_old` dropped. Removed the rollout host ports
+  (`5430`, `5431`) from `docker-compose.prod.yml` (only Traefik's 443 is published) and `FRONTEND_PORT` from
+  `.env.example`; added the deployment notes to the guide. Merged into `develop`.
+
 ## Current State
-**Part 5 is committed on `feature/login-and-https` (not pushed or merged), running locally from the main checkout.
-Not deployed to the QNAP.**
+**Part 5 is deployed on the QNAP at https://tm.aipathstudio.com and merged into `develop`.**
 
-- **Branch and checkout:**
-  - The main checkout is on `feature/login-and-https` (off `develop` `635f31d`); the worktree was removed.
-  - The user's dev servers (uvicorn `--reload` on 5431, Vite on 5430) serve Part 5. The local app now requires
-    Google sign-in at http://localhost:5430.
-- **Live DB:** revision 018, after a backup in `backups/` (`trademinder-pre-018-*.dump`).
-- **Local `.env`:** `PUBLIC_BASE_URL=http://localhost:5430`, the Google client id/secret, `AUTH_STATE_SECRET` and
-  `EXTENSION_IDS` (one id) are set. The OAuth client has the localhost callback.
-- **Verification:** pytest 476 passed / 6 known; `tsc -b` 2 pre-existing; local run on a DB copy as in the spec.
+- **The NAS holds the real data** (since 2026-11-10); the Mac DB is development only, and the two diverge.
+- **Stack:** Portainer Git stack `trademinder` (volume `trademinder_pgdata`); four services. Only Traefik
+  publishes a port (443).
+- **Local:** dev servers on the main checkout; sign in at http://localhost:5430; local extension server address
+  `http://localhost:5430`.
 
-**Single next action:** the user signs in locally with Google (it should land in the existing data as admin).
-Then they sign the extension in from its popup (server `http://localhost:5431`, Save, Sign in). Then deploy to
-the QNAP per `docs/deployment/qnap-login-and-https.md` and run the post-deployment checklist. Merge
-`feature/login-and-https` → `develop` when satisfied.
+**Single next action:** in Portainer, switch the stack's Git reference to `refs/heads/develop` and Pull and
+redeploy. Afterwards `http://192.168.86.44:5430` and `:5431` stop answering, and https keeps working. Optional:
+invite the pilot user (guide step 7).

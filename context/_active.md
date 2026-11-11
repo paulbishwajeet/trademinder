@@ -2,9 +2,9 @@
 
 **Feature:** Login and HTTPS (multi-user Part 5 of 5)
 **Context File:** context/feature-login-and-https.md
-**Branch:** feature/login-and-https (off develop 635f31d, which has Parts 1–4). Checked out in the main checkout.
+**Branch:** feature/login-and-https, merged into develop and pushed.
 **Session Started:** 2026-11-05
-**Status:** Committed (not pushed); running locally against the live DB at 018; not deployed to the QNAP.
+**Status:** Deployed on the QNAP (https://tm.aipathstudio.com) and merged into develop (2026-11-11). Next: point the Portainer stack at develop.
 
 ---
 
