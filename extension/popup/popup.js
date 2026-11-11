@@ -49,6 +49,45 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  // ── Sign in / Sign out (runs in the service worker: this popup closes when the auth window opens) ──
+  const signedInEl = document.getElementById('authSignedIn');
+  const signedOutEl = document.getElementById('authSignedOut');
+  const authEmail = document.getElementById('authEmail');
+  const authNotice = document.getElementById('authNotice');
+  const authError = document.getElementById('authError');
+  const signInBtn = document.getElementById('signIn');
+
+  function renderAuth() {
+    chrome.storage.local.get(['tmAuthToken', 'tmAuthEmail', 'tmAuthState'], (r) => {
+      const signedIn = !!r.tmAuthToken;
+      signedInEl.style.display = signedIn ? 'flex' : 'none';
+      signedOutEl.style.display = signedIn ? 'none' : 'block';
+      authEmail.textContent = r.tmAuthEmail || '';
+      authNotice.textContent = !signedIn && r.tmAuthState === 'signed_out' ? 'Signed out — Sign in again' : '';
+    });
+  }
+
+  signInBtn.addEventListener('click', () => {
+    authError.textContent = '';
+    signInBtn.disabled = true;
+    signInBtn.textContent = 'Signing in…';
+    chrome.runtime.sendMessage({ type: 'SIGN_IN' }, (resp) => {
+      signInBtn.disabled = false;
+      signInBtn.textContent = 'Sign in';
+      if (!resp?.ok) authError.textContent = resp?.error || 'Sign in failed';
+      renderAuth();
+    });
+  });
+
+  document.getElementById('signOut').addEventListener('click', () => {
+    chrome.runtime.sendMessage({ type: 'SIGN_OUT' }, () => renderAuth());
+  });
+
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && ('tmAuthToken' in changes || 'tmAuthState' in changes)) renderAuth();
+  });
+  renderAuth();
+
   // Load saved settings
   chrome.storage.local.get(['tmApiUrl', 'tmStages'], (result) => {
     apiUrlInput.value = result.tmApiUrl || DEFAULT_API_URL;

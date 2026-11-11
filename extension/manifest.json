@@ -5,7 +5,8 @@
   "description": "Overlay TradeMinder data on E*TRADE portfolio page",
   "permissions": [
     "storage",
-    "contextMenus"
+    "contextMenus",
+    "identity"
   ],
   "host_permissions": [
     "https://*.etrade.com/*",

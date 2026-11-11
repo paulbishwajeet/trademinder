@@ -10,3 +10,4 @@ class CurrentUserResponse(BaseModel):
     email: str
     display_name: str | None = None
     role: str
+    status: str

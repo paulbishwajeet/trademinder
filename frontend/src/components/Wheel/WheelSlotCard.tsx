@@ -24,7 +24,7 @@ const STATUS_COLORS: Record<string, string> = {
   sold_put_active: '#3B82F6',
 }
 
-export function WheelSlotCard({ slot, ticker, onResolve, onLinkLeg }: Props) {
+export function WheelSlotCard({ slot, onResolve, onLinkLeg }: Props) {
   const [expanded, setExpanded] = useState(false)
   const color = STATUS_COLORS[slot.status] ?? '#6B7280'
   const label = STATUS_LABELS[slot.status] ?? slot.status

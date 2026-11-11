@@ -1,11 +1,39 @@
-# Production compose — use this for QNAP Container Station deployment.
-# 1. Copy this file and .env.example to your NAS (or git clone the repo).
-# 2. Create .env from .env.example and fill in real values.
-# 3. In Container Station → Create Application → paste the compose or point to this file.
+# Production stack (QNAP, deployed as a Portainer stack). See docs/deployment/qnap-login-and-https.md.
 #
-# Access the app at http://<NAS_IP>:<FRONTEND_PORT>  (default port 5430)
+# https://${TM_HOSTNAME} goes through Traefik (port 443 only; Let's Encrypt certificate via the
+# Cloudflare DNS-01 challenge, so nothing is exposed to the internet):
+#   /api/*  → backend:5431
+#   else    → frontend:80 (nginx serves the SPA with an index.html fallback for deep links)
+# Every secret is a Portainer stack environment variable — never commit real values.
+#
+# Only Traefik publishes a host port (443). backend and frontend are reachable only on the stack's
+# internal network, so nothing on the LAN can bypass HTTPS and sign-in.
 
 services:
+  traefik:
+    image: traefik:v3.1.6           # pinned; bump deliberately
+    command:
+      - --log.level=INFO
+      # Only containers that opt in with traefik.enable=true are routed
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      # One entry point: HTTPS on 443. No port 80 — DNS-01 doesn't need it.
+      - --entrypoints.websecure.address=:443
+      # Let's Encrypt via Cloudflare DNS-01 (reads CF_DNS_API_TOKEN from the environment)
+      - --certificatesresolvers.le.acme.email=${ACME_EMAIL:?ACME_EMAIL is required}
+      - --certificatesresolvers.le.acme.storage=/letsencrypt/acme.json
+      - --certificatesresolvers.le.acme.dnschallenge=true
+      - --certificatesresolvers.le.acme.dnschallenge.provider=cloudflare
+      - --certificatesresolvers.le.acme.dnschallenge.resolvers=1.1.1.1:53,1.0.0.1:53
+    environment:
+      CF_DNS_API_TOKEN: ${CF_DNS_API_TOKEN:?CF_DNS_API_TOKEN is required (Zone DNS Edit on the domain)}
+    ports:
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro   # discovers the labelled services below
+      - traefik-letsencrypt:/letsencrypt               # certificates survive container recreation
+    restart: unless-stopped
+
   db:
     image: postgres:15-alpine
     environment:
@@ -27,31 +55,53 @@ services:
       DATABASE_URL: postgresql+asyncpg://trademinder:${DB_PASSWORD}@db:5432/trademinder
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      OWNER_EMAIL: ${OWNER_EMAIL:?OWNER_EMAIL is required (seeds the first user in migration 015)}
+      OWNER_EMAIL: ${OWNER_EMAIL:?OWNER_EMAIL is required (the bootstrap admin; seeds the first user in migration 015)}
       OWNER_DISPLAY_NAME: ${OWNER_DISPLAY_NAME:-Owner}
+      # Login (Part 5)
+      PUBLIC_BASE_URL: https://${TM_HOSTNAME:?TM_HOSTNAME is required, e.g. tm.example.com}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:?GOOGLE_CLIENT_ID is required}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:?GOOGLE_CLIENT_SECRET is required}
+      AUTH_STATE_SECRET: ${AUTH_STATE_SECRET:?AUTH_STATE_SECRET is required (openssl rand -hex 32)}
+      SESSION_DAYS: ${SESSION_DAYS:-30}
+      EXTENSION_IDS: ${EXTENSION_IDS:-}
+      # Market data (Parts 3–4)
+      SCHWAB_APP_KEY: ${SCHWAB_APP_KEY:-}
+      SCHWAB_APP_SECRET: ${SCHWAB_APP_SECRET:-}
+      MARKET_DATA_PROVIDER: ${MARKET_DATA_PROVIDER:-schwab}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       ALERT_ENGINE_INTERVAL_MINUTES: ${ALERT_ENGINE_INTERVAL_MINUTES:-15}
       MARKET_HOURS_START: ${MARKET_HOURS_START:-09:30}
       MARKET_HOURS_END: ${MARKET_HOURS_END:-16:00}
       PRICE_REFRESH_INTERVAL_MINUTES: ${PRICE_REFRESH_INTERVAL_MINUTES:-15}
       BRIEFING_GENERATE_TIME: ${BRIEFING_GENERATE_TIME:-08:00}
-    ports:
-      - "5431:5431"
     depends_on:
       db:
         condition: service_healthy
     restart: unless-stopped
-    # Run DB migrations before starting the server (idempotent — safe on every restart)
-    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 5431"
+    # Run DB migrations before starting the server (idempotent — safe on every restart).
+    # --proxy-headers: trust X-Forwarded-Proto/For from Traefik (only the stack network reaches us).
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 5431 --proxy-headers --forwarded-allow-ips='*'"
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.tm-api.rule=Host(`${TM_HOSTNAME}`) && PathPrefix(`/api`)
+      - traefik.http.routers.tm-api.entrypoints=websecure
+      - traefik.http.routers.tm-api.tls.certresolver=le
+      - traefik.http.services.tm-api.loadbalancer.server.port=5431
 
   frontend:
     build:
       context: ./frontend
       target: prod
-    ports:
-      - "${FRONTEND_PORT:-5430}:80"
     depends_on:
       - backend
     restart: unless-stopped
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.tm-web.rule=Host(`${TM_HOSTNAME}`)
+      - traefik.http.routers.tm-web.entrypoints=websecure
+      - traefik.http.routers.tm-web.tls.certresolver=le
+      - traefik.http.services.tm-web.loadbalancer.server.port=80
 
 volumes:
   pgdata:
+  traefik-letsencrypt:

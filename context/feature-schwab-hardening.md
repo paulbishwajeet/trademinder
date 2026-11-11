@@ -99,17 +99,19 @@ Turn a lapsed Schwab refresh token into a labelled "market data offline" mode in
   - Sandbox torn down; the live DB and token row are untouched.
 - 2026-11-04: Switched the main checkout to the branch for user testing. The user checked the live app (amber
   banner, ~40h left) and approved it; they'll watch the real expiry on Nov 6 to see offline mode.
-- 2026-11-04: Committed Part 4 and merged Parts 1–4 into `develop` (local, `--no-ff`, one merge commit per part,
-  in order). Not pushed.
+- 2026-11-04: Committed Part 4 and merged Parts 1–4 into `develop` (`--no-ff`, one merge commit per part, in
+  order). Pushed `develop` (`a99629f..635f31d`) and the four feature branches to origin.
 
 ## Current State
-**Parts 1–4 are merged into local `develop` (not pushed). The main checkout is on `develop`.**
+**Parts 1–4 are merged into `develop` and pushed, together with the four feature branches. The main checkout is
+on `develop`.**
 
 - **Branches:**
   - `develop` = the previous `4872ac1` plus four `--no-ff` merges: `feature/multi-account-foundation`,
     `feature/account-container-ui`, `feature/extension-account-awareness`, `feature/schwab-hardening`.
-  - `origin/develop` is behind: it doesn't even have `4872ac1`. Nothing has been pushed; the feature branches
-    exist only locally.
+  - `origin/develop` is at `635f31d`. `feature/multi-account-foundation`, `feature/account-container-ui`,
+    `feature/extension-account-awareness` and `feature/schwab-hardening` are on origin.
+  - `master` is untouched.
 - **Live environment:**
   - The dev servers (5430/5431) serve `develop` (same code as Part 4) against the live DB at revision 017.
   - Backups: `backups/trademinder-pre-016-*.dump` and `backups/trademinder-pre-017-20261104-1233.dump`.
@@ -121,5 +123,6 @@ Turn a lapsed Schwab refresh token into a labelled "market data offline" mode in
   - Part 3: the remaining real-page checks (Reconcile scoping, All-view chips, extension reinstall).
   - Fingerprint strength (Part 3 Open Question 3).
 
-**Single next action:** push `develop` to origin (and, per the branching rule, merge `develop` → `master` when
-the user decides to release). Then start Part 5 (login/OAuth + HTTPS + in-app Schwab Reconnect) off `develop`.
+**Single next action:** watch offline mode at the real token expiry (2026-11-06 16:17 UTC), then run
+`scripts/schwab_auth.py`. When the user decides to release, merge `develop` → `master` (branching rule). Part 5
+(login/OAuth + HTTPS + in-app Schwab Reconnect) branches off `develop`.

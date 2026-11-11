@@ -146,7 +146,7 @@ function bgFetch(path, { method = 'GET', headers = {}, body, signal } = {}) {
 // link (single only): 'pending' | 'linked' | 'unlinked' | 'archived' | 'error'
 let accountCtx = { kind: 'init', key: 'init' };
 let accountGen = 0;            // bumps on every context change; results from an older gen are dropped
-let serverState = 'ok';        // 'ok' | 'unreachable' | 'no_permission'
+let serverState = 'ok';        // 'ok' | 'unreachable' | 'no_permission' | 'signed_out'
 const resolvedThisPage = new Set(); // context keys already resolved fresh on this page load
 
 function readAccountDropdown() {
@@ -327,7 +327,11 @@ function renderAccountBar() {
   let state = 'neutral';
   let text;
   let title = '';
-  if (serverState === 'no_permission') {
+  if (serverState === 'signed_out') {
+    state = 'error';
+    text = 'Signed out — Sign in again';
+    title = 'Open the TradeMinder extension popup and press Sign in.';
+  } else if (serverState === 'no_permission') {
     state = 'error';
     text = `No access to ${tmApiUrl}`;
     title = 'Open the TradeMinder extension popup and press Save to grant access to this address.';
@@ -2962,6 +2966,20 @@ function startObserver() {
     characterData: false,
   });
 }
+
+// Signed in again from the popup (or signed out): start over for the account on screen.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local' || !('tmAuthToken' in changes)) return;
+  resolvedThisPage.clear();
+  if (changes.tmAuthToken.newValue) {
+    serverState = 'ok';
+    accountCtx = { kind: 'init', key: 'init' };
+    checkAccountContext();
+  } else {
+    setServerState('signed_out');
+    resetOverlay();
+  }
+});
 
 // Account switches: the select's change event (delegated — React may replace the element) …
 document.addEventListener('change', (e) => {

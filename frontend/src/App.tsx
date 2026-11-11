@@ -1,6 +1,7 @@
 // frontend/src/App.tsx
 import { BrowserRouter, Navigate, Outlet, Route, Routes } from 'react-router-dom'
 import { AccountsProvider } from './context/AccountsContext'
+import { AuthProvider, RequireActive, RequireAdmin } from './context/AuthContext'
 import { MarketDataProvider } from './context/MarketDataContext'
 import { MarketDataBanner } from './components/MarketData/MarketDataBanner'
 import { Sidebar } from './components/Layout/Sidebar'
@@ -16,26 +17,43 @@ import { SpreadsDashboardPage } from './pages/SpreadsDashboardPage'
 import { ScreenerPage } from './pages/ScreenerPage'
 import { ChainPage } from './pages/ChainPage'
 import { SettingsAccountsPage } from './pages/SettingsAccountsPage'
+import { SettingsExtensionsPage } from './pages/SettingsExtensionsPage'
+import { SettingsLayout } from './components/Layout/SettingsLayout'
+import { AdminPage } from './pages/AdminPage'
+import { SignInPage } from './pages/SignInPage'
+import { WaitingPage } from './pages/WaitingPage'
+import { ExtensionConnectPage } from './pages/ExtensionConnectPage'
 import { LegacyAccountRedirect, LegacyResearchRedirect, LegacyTradeRedirect } from './pages/LegacyRedirects'
 
 function AppShell() {
   return (
-    <div className="flex min-h-screen bg-gray-50">
-      <Sidebar />
-      <main className="min-w-0 flex-1">
-        <MarketDataBanner />
-        <Outlet />
-      </main>
-    </div>
+    <RequireActive>
+      {/* Data providers live inside the guard: nothing is fetched until the user is active. */}
+      <AccountsProvider>
+        <MarketDataProvider>
+          <div className="flex min-h-screen bg-gray-50">
+            <Sidebar />
+            <main className="min-w-0 flex-1">
+              <MarketDataBanner />
+              <Outlet />
+            </main>
+          </div>
+        </MarketDataProvider>
+      </AccountsProvider>
+    </RequireActive>
   )
 }
 
 export default function App() {
   return (
     <BrowserRouter>
-      <AccountsProvider>
-        <MarketDataProvider>
+      <AuthProvider>
         <Routes>
+          {/* Outside the app shell */}
+          <Route path="signin" element={<SignInPage />} />
+          <Route path="waiting" element={<WaitingPage />} />
+          <Route path="extension/connect" element={<RequireActive><ExtensionConnectPage /></RequireActive>} />
+
           <Route element={<AppShell />}>
             <Route index element={<DashboardPage />} />
 
@@ -61,10 +79,13 @@ export default function App() {
               <Route path="scanner" element={<ScannerPage />} />
             </Route>
 
-            <Route path="settings">
+            <Route path="settings" element={<SettingsLayout />}>
               <Route index element={<Navigate to="accounts" replace />} />
               <Route path="accounts" element={<SettingsAccountsPage />} />
+              <Route path="extensions" element={<SettingsExtensionsPage />} />
             </Route>
+
+            <Route path="admin" element={<RequireAdmin><AdminPage /></RequireAdmin>} />
 
             {/* Legacy flat URLs */}
             <Route path="trades" element={<LegacyAccountRedirect page="trades" />} />
@@ -79,8 +100,7 @@ export default function App() {
             <Route path="*" element={<NotFound />} />
           </Route>
         </Routes>
-        </MarketDataProvider>
-      </AccountsProvider>
+      </AuthProvider>
     </BrowserRouter>
   )
 }

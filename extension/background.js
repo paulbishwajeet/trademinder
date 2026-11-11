@@ -48,20 +48,70 @@ async function hasHostPermission(baseUrl) {
   }
 }
 
+// ── Sign in (Part 5) ─────────────────────────────────────────────────────────
+// The extension acts as a TradeMinder user through a personal bearer token, minted by the portal's
+// /extension/connect page and stored here. Every relayed call carries it.
+
+async function getAuth() {
+  const { tmAuthToken, tmAuthEmail } = await chrome.storage.local.get(['tmAuthToken', 'tmAuthEmail']);
+  return { token: tmAuthToken || null, email: tmAuthEmail || null };
+}
+
+async function clearAuth(reason) {
+  await chrome.storage.local.remove(['tmAuthToken', 'tmAuthEmail']);
+  await chrome.storage.local.set({ tmAuthState: reason || 'signed_out' });
+}
+
+// Runs in the worker (a popup would close as soon as the auth window takes focus).
+async function signIn() {
+  const base = await getApiUrl();
+  const redirect = chrome.identity.getRedirectURL(); // https://<extension id>.chromiumapp.org/
+  const url = `${base}/extension/connect?redirect_uri=${encodeURIComponent(redirect)}`;
+  let finalUrl;
+  try {
+    finalUrl = await chrome.identity.launchWebAuthFlow({ url, interactive: true });
+  } catch (err) {
+    return { ok: false, error: err?.message || 'Sign in was cancelled' };
+  }
+  const fragment = new URLSearchParams(new URL(finalUrl).hash.slice(1));
+  const token = fragment.get('token');
+  if (!token) return { ok: false, error: 'No token returned' };
+  await chrome.storage.local.set({ tmAuthToken: token, tmAuthEmail: fragment.get('email') || '', tmAuthState: 'signed_in' });
+  await chrome.storage.session.remove(RESOLVE_CACHE_KEY); // links belong to the signed-in user
+  return { ok: true, email: fragment.get('email') || '' };
+}
+
+// Sign out: revoke the token server-side first, then forget it.
+async function signOut() {
+  await apiFetch('/api/extension/tokens/current', { method: 'DELETE' });
+  await clearAuth('signed_out_by_user');
+  await chrome.storage.session.remove(RESOLVE_CACHE_KEY);
+  return { ok: true };
+}
+
 // Fetch a TradeMinder API path. Resolves to { ok, status, data, error?, errorKind? } where errorKind
-// is 'no_permission' or 'unreachable' when TradeMinder could not be reached at all.
+// is 'no_permission' or 'unreachable' when TradeMinder could not be reached at all, and 'signed_out'
+// when there is no valid token (401 — the token is then cleared).
 async function apiFetch(path, { method = 'GET', headers = {}, body } = {}) {
   const base = await getApiUrl();
   if (!(await hasHostPermission(base))) {
     return { ok: false, status: 0, data: null, error: `No permission for ${base}`, errorKind: 'no_permission', apiUrl: base };
   }
+  const { token } = await getAuth();
+  if (!token) {
+    return { ok: false, status: 401, data: null, error: 'Signed out', errorKind: 'signed_out', apiUrl: base };
+  }
   try {
     const resp = await fetch(`${base}${path}`, {
       method,
-      headers,
+      headers: { ...headers, Authorization: `Bearer ${token}` },
       body: body !== undefined ? body : undefined,
       signal: AbortSignal.timeout(15000),
     });
+    if (resp.status === 401) {
+      await clearAuth('signed_out');  // revoked, expired or the user was disabled
+      return { ok: false, status: 401, data: null, error: 'Signed out', errorKind: 'signed_out', apiUrl: base };
+    }
     let data = null;
     try { data = await resp.json(); } catch {}
     // Market data offline: mixed endpoints say so in a header, pure market endpoints with a 503 code.
@@ -157,6 +207,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === 'LINK_ACCOUNT') {
     linkAccount(message).then(sendResponse).catch(() => sendResponse({ ok: false, error: 'Link failed' }));
+    return true;
+  }
+
+  if (message.type === 'SIGN_IN') {
+    signIn().then(sendResponse).catch((err) => sendResponse({ ok: false, error: err?.message }));
+    return true;
+  }
+
+  if (message.type === 'SIGN_OUT') {
+    signOut().then(sendResponse).catch(() => sendResponse({ ok: false }));
     return true;
   }
 

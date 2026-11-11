@@ -46,6 +46,15 @@ export function subscribeMarketDataOffline(fn: () => void): () => void {
   return () => { offlineListeners.delete(fn) }
 }
 
+// ── 401 handling ──────────────────────────────────────────────────────────
+// AuthContext registers a handler; any 401 from the API (session expired, logged out elsewhere,
+// user disabled) sends the app back to Sign in.
+let onUnauthorized: (() => void) | null = null
+
+export function setUnauthorizedHandler(handler: (() => void) | null) {
+  onUnauthorized = handler
+}
+
 export async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(`${BASE_URL}${path}`, {
     headers: { 'Content-Type': 'application/json' },
@@ -58,6 +67,7 @@ export async function apiFetch<T>(path: string, options?: RequestInit): Promise<
     const detail = typeof body.detail === 'string' ? body.detail : 'Request failed'
     const code = typeof body.code === 'string' ? body.code : null
     if (code === MARKET_DATA_OFFLINE) setMarketDataOffline(true)
+    if (response.status === 401) onUnauthorized?.()
     throw new ApiError(response.status, detail, code)
   }
   if (response.status === 204) return undefined as T
