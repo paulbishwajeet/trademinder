@@ -1,5 +1,7 @@
 # Extension Context
 
+**Status:** Reference notes (extension internals); no active work. Last updated 2026-11-04.
+
 **Branch:** `master` (strategy-labels feature merged and deployed to QNAP production)
 **Files:** `extension/content.js`, `extension/content.css`, `extension/manifest.json`, `extension/background.js`, `extension/popup/`
 

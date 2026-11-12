@@ -1,66 +1,71 @@
 # Project Overview
 
-**Name:** TradeMinder — personal trading assistant for active stock/options traders (Wheel strategy focus)
+> A short map for starting a session. The detailed, authoritative reference is
+> **`docs/TRADEMINDER_MASTER_CONTEXT.md`** (its dated Current State section wins over anything here); decision
+> history is in `docs/decisions.md`. Keep this file short so the two don't drift into duplicates.
+
+**Name:** TradeMinder — trading assistant for an options income trader running the Wheel strategy. Multi-user
+(small LAN pilot) since 2026-11-11; production on a QNAP NAS at `https://tm.<domain>` (LAN only).
 
 **Stack:**
-- Backend: FastAPI (Python 3.14+), SQLAlchemy 2.0 async, Alembic migrations, PostgreSQL 15, yfinance, Anthropic Claude API, APScheduler
-- Frontend: React 19, Vite 8, TypeScript 6, Tailwind CSS 3, shadcn/ui (Radix UI), React Router 7
-- Extension: Chrome MV3 content script (vanilla JS + CSS), overlays onto E*TRADE positions page
+- **Backend:** FastAPI, SQLAlchemy 2.0 async (asyncpg), Alembic, PostgreSQL 15, APScheduler. Python 3.13 in Docker
+  (`pyproject` allows >=3.11).
+- **Market data:** Schwab REST behind a provider boundary; yfinance only for earnings and the LEAPS scanner.
+- **LLMs:** Gemini 2.5 Flash for signal commentary, Claude Haiku 4.5 for commentary summaries; both optional.
+- **Auth:** Google OIDC with backend sessions, plus extension bearer tokens.
+- **Frontend:** React 19, Vite 8, TypeScript 6 (strict), Tailwind 3, React Router 7, Radix (Dialog, Collapsible,
+  Popover), cmdk, lucide. shadcn-style primitives are written by hand in `src/components/ui/`; the shadcn CLI isn't
+  set up.
+- **Extension:** Chrome MV3, vanilla JS, no build step.
+- **Deploy:** Docker Compose as a Portainer Git stack; Traefik on 443 (Let's Encrypt via Cloudflare DNS-01).
 
-**Package Manager:**
-- Frontend: npm (package.json in `frontend/`)
-- Backend: uv (workspace in `stockpile-main/`, app in `backend/`)
+**Package managers:**
+- Frontend: npm (`frontend/package.json`).
+- Backend: uv (`backend/pyproject.toml`, `backend/uv.lock`; venv at `backend/.venv`). An older `backend/venv`
+  also exists [?].
 
-**Key Directories:**
+**Key directories:**
 ```
-/backend/         FastAPI app (app/, alembic/, tests/, docker/)
-/frontend/        React app (src/pages/, src/components/, src/api/, src/types/)
-/extension/       Chrome extension (content.js, content.css, manifest.json, background.js, popup/)
-/stockpile-main/  Python workspace with shared libs (positions, options-scanner, cost-basis-charts, shared)
-/docs/            Design specs, DOM samples, planning docs
-/context/         Session context files (this directory)
+backend/            FastAPI app: app/{routers,services,models,schemas}, alembic/versions (head 018), tests/
+frontend/           React SPA: src/{pages,components,api,context,lib,hooks,types}
+extension/          Chrome MV3: content.js, background.js, popup/, manifest.json
+docs/               TRADEMINDER_MASTER_CONTEXT.md, decisions.md, deployment/, superpowers/{specs,plans}
+context/            Working notes (this directory); see README.md for the template
+stockpile-main/     Older Python workspace (options scanner etc.), partly superseded
 ```
 
-**Frontend Pages (`frontend/src/pages/`):**
-- `DashboardPage.tsx` — morning briefing, AI summary, active positions overview
-- `TradesPage.tsx` — trade list table with alert coloring and filters
-- `TradeDetailPage.tsx` — single trade view with commentary thread
-- `ScannerPage.tsx` — IV surface options scanner (routes to /scanner)
-- `MarginDashboardPage.tsx` — CSV-based portfolio margin analysis; fires `POST /api/market/rsi` on CSV load to fetch current price + RSI per ticker for Black-Scholes assignment probability
+**Conventions (observed):**
+- Branches: `feature/<name>` off `develop`; `--no-ff` merges into `develop`, then `develop` into `master` (done in
+  the `../trademinder-release` worktree, which is on `master`). Feature branches are pushed and kept.
+- Commits: conventional prefixes (`feat(wheel):`, `fix(...)`, `docs(...)`); never commit unless asked.
+- Backend: thin routers, logic in services, Pydantic schemas as the contract. Every router except auth and me is
+  mounted behind the `get_current_user` seam; all data is scoped by user and account.
+- Frontend: TypeScript strict, functional components, Tailwind only, typed fetch wrappers in `src/api/`. Filter
+  state lives in URL search params, and open overlays carry `data-escape-layer`.
+- Decimals arrive from the API as JSON strings.
+- Extension: every network call goes through `bgFetch` to the service worker.
+- Development happens in `.claude/worktrees/<name>` while the user's dev servers run from the main checkout;
+  verification runs on a copy of the dev DB.
 
-**Frontend Components (`frontend/src/components/`):**
-- `Commentary/` — commentary thread UI
-- `Dashboard/` — briefing/dashboard widgets
-- `Trades/` — trade table, detail, forms
-- `shared/` — shared UI primitives
+**Testing:**
+- Backend: pytest (`backend/tests`, run from `backend/`); 6 known pre-existing failures.
+- Frontend: no test suite. The production build (`npm run build` = `tsc -b && vite build`) is the type gate, and
+  the NAS runs it.
 
-**Coding Conventions:**
-- TypeScript strict mode; functional React components with hooks
-- Tailwind utility classes only (no custom CSS in frontend)
-- shadcn/ui + Radix UI for interactive components
-- API calls via `src/api/` — fetch wrappers typed against backend models
-- Extension: vanilla JS only (no build step); CSS in `content.css`; badge injection via MutationObserver on E*TRADE DOM
-- Backend routes in `backend/app/routers/`; models in `backend/app/models/`; schemas in `backend/app/schemas/`
+**Env/config notes:**
+- Local `.env` at the repo root (git-ignored); `.env.example` lists the names.
+- Production values live only in the Portainer stack's environment.
+- Dev servers: Vite `:5430` (proxies `/api` to `:5431`), uvicorn `--reload` `:5431`, Postgres `:5432` in Docker.
+  Locally the extension's server address is `http://localhost:5430`.
 
-**Testing Framework:**
-- Backend: pytest (testpaths = `backend/tests/` and `stockpile-main/*/src`)
-- Frontend: no test suite configured yet
-
-**Env/Config Notes:**
-- `docker-compose.yml` — local dev (postgres + backend)
-- `docker-compose.prod.yml` — production
-- Backend env: DATABASE_URL, ANTHROPIC_API_KEY (set in docker env or .env)
-- Extension connects to backend at `http://localhost:5431` (configurable via popup; default in content.js, background.js)
-
-**Modules/Features List:**
-- Trade CRUD + alert engine (core)
-- Commentary threads per trade
-- Morning briefing (AI-generated via Claude)
-- Chrome extension overlay (E*TRADE positions page)
-  - Status badges (DTE, RSI, commentary count)
-  - Hover-reveal commentary panel
-  - Inline add-trade modal
-  - Filter toolbar
-- Options scanner (IV surface, yfinance)
-- Margin dashboard (CSV import, client-side analysis, Black-Scholes assignment probability, confidence-adjusted obligation)
-- RSI column / scanner integration
+**Modules/Features list** (✅ = done and on `master`):
+- ✅ Trades CRUD, categories, commentary threads, rationale snapshots
+- ✅ Alert engine and signal engine (alerts cover trades only, not wheel slots)
+- ✅ WHEEL v2: slots, legs, signed premium logs, resolve flow, CC/SP Signal and Timing, slot commentary
+- ✅ WHEEL filter bar (symbol) and NEW — NEEDS SLOT collapse/edit/delete
+- ✅ Spreads (legacy `trade_sessions`)
+- ✅ Screener, Chain screener (sell_put only), Scanner (LEAPS IV surface)
+- ✅ Margin dashboard (CSV, client-side Black-Scholes)
+- ✅ Chrome extension: badges, hover commentary, alert tinting, wheel pills, Reconcile, account awareness, sign-in
+- ✅ Multi-user: accounts and ownership, account container UI, Schwab hardening, Google sign-in and HTTPS
+- ⏳ Morning briefing: endpoint returns 501 (stub)

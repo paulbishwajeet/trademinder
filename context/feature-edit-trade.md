@@ -1,5 +1,7 @@
 # Feature: Edit Trade
 
+**Status:** Complete — merged to `master`
+
 **Branch:** `frontend-edittrade` (merged to `master`)
 **Spec:** `docs/superpowers/specs/2026-05-22-edit-trade-design.md`
 **Plan:** `docs/superpowers/plans/2026-05-22-edit-trade.md`
@@ -14,14 +16,10 @@
 | 2026-05-24 | Confirmed merged to `master` (commits `c2f6c9d`–`465c9de`). Feature is live on master. |
 
 ---
+- 2026-11-12: Context audit: marked Complete; code verified on `master`.
 
-## Current State
-
-**Feature is complete and merged to `master`.** Commits `c2f6c9d`–`465c9de` are on master. Nothing left to do for this feature.
-
-The `TradeDetailPage` has an "Edit" button in the top-right. Clicking it flips the page into a full form: all static fields (type, strategy, category, strike, expiry, qty, premium, collateral, signal_action) become inputs; exit_strategy and rationale notes become textareas; status becomes a select with a conditional closed_date date input that appears only when status is set to "closed". Ticker and open_date are locked. Save calls `PATCH /api/trades/{id}` and returns to read mode; Cancel discards without a network call.
-
----
+## Current State (Resume Here)
+COMPLETE — merged to `master` (commits c2f6c9d–465c9de on `master`). Nothing pending here.
 
 ## Key Files
 

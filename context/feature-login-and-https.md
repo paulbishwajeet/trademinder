@@ -1,5 +1,7 @@
 # Feature: Login and HTTPS (multi-user Part 5 of 5)
 
+**Status:** Complete — merged to `master`
+
 ## Goal
 - Google sign-in, admin approval and server-side sessions.
 - The extension's one-button Sign in.
@@ -80,6 +82,8 @@ wheel or DOM changes.
 | `cryptography<46` | 46+ wheels fail to load in the macOS dev venv; 45.x works on macOS and in Docker |
 
 ## Open Questions
+> Still-open items were carried to `docs/TRADEMINDER_MASTER_CONTEXT.md` §0 Open items in the 2026-11-12 audit.
+
 1. **Extension IDs differ per computer** (unpacked extensions derive the ID from the folder path). Each must be
    added to `EXTENSION_IDS`. A fixed `key` in `manifest.json` would give one stable ID if that becomes annoying.
 2. Margin page's raw `fetch('/api/market/rsi')` doesn't trigger the global 401 → Sign in (it shows its market
@@ -124,25 +128,7 @@ wheel or DOM changes.
   `develop` into `master` (`8b60b68`, Parts 1–5; master's tree == develop's). The user switched the Portainer stack
   to `refs/heads/master` and redeployed; checked from the Mac: 5430/5431 closed, 443 open, https `/` 200,
   `/api/me` 401, `/extension/connect` 200.
+- 2026-11-12: Context audit: marked Complete; code verified on `master`.
 
-## Current State
-**The 5-part multi-user plan is complete, released on `master` and running in production on the QNAP.**
-
-- **Production:** https://tm.aipathstudio.com (LAN only); Portainer Git stack `trademinder` at
-  `refs/heads/master` (volume `trademinder_pgdata`); Traefik + Let's Encrypt (renews automatically, cert to
-  2027-02-08); only port 443 published. The NAS holds the real data (since 2026-11-10); the owner and the extension
-  are signed in.
-- **Branches:** `master` = `develop` (`8b60b68` / `3f045fc`), both pushed. The five feature branches are on origin.
-  The main checkout is still on `feature/login-and-https` (clean; same code as develop minus the merge commit).
-- **Local:** the Mac DB is development only (018, 446 trades; diverges from the NAS). Dev servers on 5430/5431;
-  sign in at http://localhost:5430; local extension address `http://localhost:5430`. Latest Mac backup:
-  `backups/trademinder-20261110-1222.dump`.
-- **Verification:** pytest 476 passed / 6 known failures; `npm run build` (incl. `tsc -b`) clean; both prod images
-  build for amd64.
-
-**Next actions (user's choice):**
-1. Re-authorise Schwab before **2026-11-17** (on the Mac, then copy the `schwab_tokens` row to the NAS).
-2. Invite the pilot user (guide step 7; their Gmail must be a test user on the Google consent screen).
-3. Back up the NAS DB regularly (`docker exec trademinder-db-1 pg_dump -U trademinder -Fc trademinder > …`).
-4. Future ideas: in-app Schwab reconnect; a fixed extension `key` for one stable ID; the margin page's raw fetch
-   bypassing the 401 handler.
+## Current State (Resume Here)
+COMPLETE — merged to `master` (`develop` 3f045fc → `master` 8b60b68 (multi-user release, 2026-11-11)). Part 5; in production on the QNAP. Nothing pending here.

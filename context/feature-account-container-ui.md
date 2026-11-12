@@ -1,5 +1,7 @@
 # Feature: Account Container UI (Part 2 of 5)
 
+**Status:** Complete — merged to `master`
+
 ## Goal
 Reorganize the SPA around brokerage accounts: left sidebar, account-scoped pages, account management,
 Research pages spanning accounts, and a cross-account Dashboard. No login.
@@ -49,6 +51,8 @@ See spec "Frontend structure". Current account comes only from the URL (`/accoun
 | Part 2 committed as a single feature commit (code + spec + plan + context) | Backend, UI and page changes only work together; no reason to split |
 
 ## Open Questions
+> Still-open items were carried to `docs/TRADEMINDER_MASTER_CONTEXT.md` §0 Open items in the 2026-11-12 audit.
+
 1. Part 1 (`feature/multi-account-foundation`) is still unmerged and unpushed; this branch is stacked on it.
    Merge Part 1 into develop first, then rebase this branch.
 2. Trades page shows empty group headers for categories the account doesn't use (unchanged behaviour) — hide them?
@@ -71,23 +75,7 @@ See spec "Frontend structure". Current account comes only from the URL (`/accoun
   in the spec). Fixed: new accounts were inserted at sort_order 0. Sandbox torn down.
 - 2026-11-04: User approved; all Part 2 work committed as one commit on `feature/account-container-ui` (on top of
   Part 1's `1364bd5`). Not pushed.
+- 2026-11-12: Context audit: marked Complete; code verified on `master`.
 
-## Current State
-**Part 2 is implemented, verified and committed (not pushed).**
-
-- Branch `feature/account-container-ui` = develop (`4872ac1`) + Part 1's 3 commits (`92447f1`, `c7c2893`,
-  `1364bd5`, all unpushed, not in develop) + one Part 2 commit `feat(accounts): account container UI (Part 2 of 5)`.
-  Working tree clean apart from pre-existing untracked `.claude/worktrees/` and `docs/learnings/` (not ours —
-  leave them out of commits).
-- Verification done: pytest 377 passed / 6 known failures (`test_cc_signal.py`, `test_market_router_p2.py`,
-  `test_schwab_client.py`); `tsc -b` shows only the 2 pre-existing unused-symbol errors (`WheelSlotCard.tsx:27`,
-  `WheelDashboardPage.tsx:3`); 12/12 manual checklist items pass (results table in the spec).
-- Live DB is at revision 016; Part 2 needs no migration. The user's dev servers (`uvicorn --reload` on 5431,
-  Vite on 5430) serve this code. The user had not yet clicked through the new UI on real data at session close.
-- `@radix-ui/react-collapsible@1.1.12` is in package.json/lockfile and installed in `frontend/node_modules`;
-  anyone on a fresh checkout needs `npm install` in `frontend/`.
-
-**Single next action:** click through http://localhost:5430 on real data (sidebar, each account page, Settings →
-Accounts, Dashboard); then land Part 1 — run its extension/Reconcile smoke test, push
-`feature/multi-account-foundation` and PR it into develop — and after it merges, rebase this branch onto develop
-and open its PR.
+## Current State (Resume Here)
+COMPLETE — merged to `master` (`develop` cac0b17 → `master` 8b60b68 (multi-user release, 2026-11-11)). Part 2. Nothing pending here.

@@ -1,5 +1,7 @@
 # Feature: Multi-Account & Multi-User Foundation (Part 1 of 5)
 
+**Status:** Complete — merged to `master`
+
 ## Goal
 Introduce users and brokerage accounts (user → account → trades / wheels / spreads) and a single
 current-user seam (`app/deps.py::get_current_user`) in front of every user-owned query, so Part 5
@@ -69,12 +71,14 @@ wheel state machine, E*TRADE DOM handling.
 | One-open-trade-per-E*TRADE-symbol rescoped per account | Same contract can be open in two accounts; other users must never collide |
 | Child lists (trade commentary / signals / alerts) keep returning `[]` for unknown or foreign trades | Existing contract (pinned by a test); user filter makes unknown and foreign indistinguishable |
 | Manual market/signal refresh endpoints run for the caller only; scheduler runs for everyone | Counts would otherwise reveal other users' trade volume |
-| Owner email is `bjeet.pauls@gmail.com` (set in `.env`, seeded in `users`) | The address the user will sign in with via Google in Part 5 |
+| Owner email is the owner's Gmail address (set in `.env` as `OWNER_EMAIL`, seeded in `users`) | The address the user will sign in with via Google in Part 5 |
 | Live DB migrated to 016 only after a full `pg_dump` backup and explicit user approval | It is the only copy of real data; migration was first proven on `createdb -T trademinder` copies |
 | SPECULATIVE category committed separately, before the feature | Unrelated work that was uncommitted in the working tree; keeps history reviewable |
 | `docs/TradeMinder-Context.md` committed as part of the feature | The brief treats it as the in-repo master context and it was updated for multi-user |
 
 ## Open Questions
+> Still-open items were carried to `docs/TRADEMINDER_MASTER_CONTEXT.md` §0 Open items in the 2026-11-12 audit.
+
 1. Merge the duplicate active wheels so `(account_id, ticker) WHERE status <> 'closed'` can be enforced?
 2. Require a trade's category to be in its account's category list? (not enforced in Part 1)
 3. Unarchive endpoint (needed by Part 2 UI).
@@ -103,29 +107,10 @@ wheel state machine, E*TRADE DOM handling.
 - 2026-11-03: Frontend types + `src/api/accounts.ts` (tsc: no new errors; 2 pre-existing unused-var errors remain).
   README + docs/TradeMinder-Context.md updated.
 - 2026-11-03: Live dev DB backed up (`backups/trademinder-pre-016-20261103-2122.dump`) and migrated 014 → 016 with
-  `OWNER_EMAIL=bjeet.pauls@gmail.com`; API verified: 440 trades, 65 wheels, 39 screener rows, 12 categories, 833 alerts.
+  `OWNER_EMAIL` set to the owner's Gmail; API verified: 440 trades, 65 wheels, 39 screener rows, 12 categories, 833 alerts.
 - 2026-11-03: Committed `92447f1` (SPECULATIVE category) and `c7c2893` (this feature) on
   `feature/multi-account-foundation`. Not pushed.
+- 2026-11-12: Context audit: marked Complete; code verified on `master`.
 
-## Current State
-**Part 1 is complete and committed; the branch is not pushed or merged.**
-
-- Branch `feature/multi-account-foundation` (off `develop`) has two commits on top of develop's `4872ac1`:
-  `92447f1` feat(categories): SPECULATIVE category, and `c7c2893` feat(accounts): multi-account foundation.
-  Working tree is clean apart from pre-existing untracked `.claude/worktrees/` and `docs/learnings/` (not ours).
-- The local live DB (`trademinder` in the `trademinder-db-1` container) is at Alembic revision **016**. Owner user
-  `bjeet.pauls@gmail.com` (admin, active) owns everything via one default account nicknamed "E*TRADE".
-  `.env` holds `OWNER_EMAIL` / `OWNER_DISPLAY_NAME` (required: `get_current_user` 500s without it).
-- The user's dev server (`uvicorn --reload --port 5431`, cwd `backend/`, miniconda python) is running this
-  branch's code against the migrated DB and returns all data.
-- To roll back if something is wrong: `cd backend && alembic downgrade 014` (proven to restore the exact schema),
-  or restore `backups/trademinder-pre-016-20261103-2122.dump` with `pg_restore --clean`.
-- Tests: `cd backend && source venv/bin/activate && python -m pytest tests -q` → 362 passed, 6 known pre-existing
-  failures (test_cc_signal ×4, test_market_router_p2::test_prefetch_still_501, test_schwab_client::test_schwab_alias_maps_spx).
-
-**Single next action:** manually smoke-test the E*TRADE extension overlay (badges, commentary hover, add-trade
-modal) and run Reconcile once against the migrated live DB; if both behave as before, push
-`feature/multi-account-foundation` and open a PR into `develop` (never directly to master).
-
-After that: Part 2 (account container UI) builds on `frontend/src/api/accounts.ts`; Part 3 replaces the
-default-account pinning in `backend/app/routers/positions.py` using `brokerage_accounts.external_ref`.
+## Current State (Resume Here)
+COMPLETE — merged to `master` (`develop` 67a5a4d → `master` 8b60b68 (multi-user release, 2026-11-11)). Part 1 of the multi-user plan. Nothing pending here.

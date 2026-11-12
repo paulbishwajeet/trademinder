@@ -1,5 +1,5 @@
 # Feature: Trade Grouping
-**Status:** Implementation Complete — branch ready to push
+**Status:** Complete — merged to `master`
 **Branch:** frontend-groupby
 **Created:** 2026-05-23
 
@@ -53,14 +53,7 @@ Replace the flat trade table on the Trades page with a grouped view that organis
 ## Progress Log
 - 2026-05-23 — Feature created; design spec written and approved; spec at `docs/superpowers/specs/2026-05-23-trade-grouping-design.md`
 - 2026-05-24 — Full implementation complete via subagent-driven development (5 tasks, 7 commits). All tasks passed spec compliance and code quality review. Branch `frontend-groupby` is ready to push.
+- 2026-11-12: Context audit: marked Complete; code verified on `master`.
 
 ## Current State (Resume Here)
-All implementation is done and reviewed. The branch `frontend-groupby` has not been pushed yet.
-
-**Next action:** Push the branch and open a PR against `master`:
-```bash
-git push -u origin frontend-groupby
-gh pr create --title "feat: replace flat trade table with grouped category view" --body "..."
-```
-
-The feature is fully working locally. To verify before pushing: start the dev server (`npm run dev` in `frontend/`) and navigate to `/trades` — groups should appear with accent-bar headers, default filter "open", sort by Ticker/Expiry, collapsible sections, and drag-to-reorder via the ⠿ handle.
+COMPLETE — merged to `master` (code verified on `master` in the 2026-11-12 audit). Branch `frontend-groupby` was pushed and merged. Nothing pending here.

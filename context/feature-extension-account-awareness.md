@@ -1,5 +1,7 @@
 # Feature: Extension Account Awareness (Part 3 of 5)
 
+**Status:** Complete — merged to `master`
+
 ## Goal
 Make the Chrome extension account-aware: configurable TradeMinder server, detect which E*TRADE account is on
 screen, link each dropdown entry once (server-side) to a TradeMinder account, scope every overlay call to it (or
@@ -70,6 +72,8 @@ Reconcile, Schwab/market data (Part 4), signal scoring, wheel state machine.
 | Link label rejected if it contains 6+ consecutive digits | Server-side guarantee that no full account number lands in `external_label` |
 
 ## Open Questions
+> Still-open items were carried to `docs/TRADEMINDER_MASTER_CONTEXT.md` §0 Open items in the 2026-11-12 audit.
+
 1. **Merged vs separate rows in the All view** is still unknown. The fresh captures contain no position held in two
    accounts. Chips don't depend on it.
 2. **The live backend still serves Part 2 code.** The live DB is at 017 (2026-11-04, after a backup), but the main
@@ -117,46 +121,7 @@ Reconcile, Schwab/market data (Part 4), signal scoring, wheel state machine.
   intended. Feedback: the toolbar filter left gaps where non-matching rows were hidden, so the filter now dims
   them instead (`applyFilter` toggles `.tm-filtered-out`; `content.css`). The user confirmed it looks good; committed as
   `b26ec00`.
+- 2026-11-12: Context audit: marked Complete; code verified on `master`.
 
-## Current State
-**Part 3 is committed and running live; the user has partly verified it on the real E*TRADE page. Nothing is
-pushed.**
-
-- **Branch:**
-  - `feature/extension-account-awareness`, checked out in the main checkout, is develop (`4872ac1`) plus:
-    - Part 1: `92447f1`, `c7c2893`, `1364bd5`;
-    - Part 2: `b7e094f`;
-    - Part 3: `00eb5cc` (feature) and `b26ec00` (filter dims instead of hiding).
-
-    None of it is pushed or in develop.
-  - Uncommitted: this context update only.
-  - Untracked `.claude/worktrees/` and `docs/learnings/` predate this work; leave them out of commits.
-- **Live environment:**
-  - The user's dev servers (`uvicorn --reload` on 5431, Vite on 5430) serve this branch against the live DB at
-    revision 017.
-  - Backup taken before 017: `backups/trademinder-pre-017-20261104-1233.dump` (restore with `pg_restore --clean`
-    inside `trademinder-db-1`).
-  - The user's Chrome has the extension from this branch loaded, and links are being created on the live DB.
-- **Verified:**
-  - pytest: 400 passed / 6 known failures. `tsc -b`: only the 2 pre-existing errors.
-  - Fixture runs from the June capture and the fresh Nov captures: all checklist items pass.
-  - Real E*TRADE page, by the user: first-time linking through the card, everything resetting correctly on an
-    account switch, and the toolbar category filter (after the dimming fix).
-- **Not yet verified on the real page:**
-  - Reconcile in a single linked account, and that it touches only that account (check `last_etrade_seen` in the
-    DB);
-  - Reconcile disabled in the All view with its hint;
-  - per-account chips in the All view (needs a position tracked in both accounts);
-  - removing and re-adding the extension: the links should survive without the card;
-  - a bad server address in the popup showing "Can't reach TradeMinder".
-- **Open decisions:**
-  - Fingerprint strength (Open Question 3): unsalted SHA-256 of a 9-digit number is brute-forceable from the DB.
-    Optional switch to PBKDF2, which needs a relink or a re-hash on the next resolve.
-  - Whether the All view shows a position held in two accounts as two rows or one merged row (Open Question 1;
-    chips work either way).
-  - Parts 1–3 need to land in develop.
-
-**Single next action:** finish the remaining real-page checks above and record them in the spec's Results table
-(add a "real page" column or note). Then push the branches and open PRs into develop in order: Part 1
-(`feature/multi-account-foundation`), then Part 2 (`feature/account-container-ui`), then Part 3 (this branch),
-each rebased onto develop after the previous one merges.
+## Current State (Resume Here)
+COMPLETE — merged to `master` (`develop` 09d7550 → `master` 8b60b68 (multi-user release, 2026-11-11)). Part 3. Nothing pending here.
