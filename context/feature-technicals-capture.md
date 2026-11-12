@@ -1,5 +1,7 @@
 # Feature: Technicals Capture
 
+**Status:** Complete — merged to `master`
+
 **Branch:** `master`
 **Spec:** `docs/superpowers/specs/2026-05-19-technicals-capture-design.md`
 **Plan:** `docs/superpowers/plans/2026-05-19-technicals-capture.md`
@@ -15,18 +17,10 @@
 | 2026-05-20 | Four more extension bug fixes: (1) panel now opens near badge pill position (pill rect used for horizontal anchor, not row right edge); (2) note textarea/tags extracted to `.tm-cp-form-static` (fixed height) — technicals in separate `.tm-cp-form-tech` (scrollable); (3) entry-time rationale fetched via `GET /api/trades/{id}` and shown as oldest thread item with purple left border; (4) price paid rounded to 2dp before populating the add-trade modal input. Panel widened to 400px, max-height to 600px. |
 
 ---
+- 2026-11-12: Context audit: marked Complete; code verified on `master`.
 
-## Current State
-
-**All feature code is merged to `master`. The feature is fully functional locally but has NOT been deployed to production (QNAP) yet.**
-
-Migration 005 (`005_commentary_rationale_link.py`) adds `commentary_id` FK to the `rationale` table, drops the old unique constraint on `(trade_id)`, and replaces it with a partial unique index `UNIQUE (trade_id) WHERE commentary_id IS NULL`. This migration must be applied before any technicals endpoints will work on the production DB.
-
-The Chrome extension's commentary panel now shows entry-time rationale (📊 chip) as the first thread item when `fetch_status = 'ok'`. Commentary notes can optionally carry their own technicals snapshot. The add-trade modal has a collapsible Technicals section that fires a second `PUT /api/trades/{id}/rationale` call after trade creation.
-
-**Single next action:** On the QNAP, run `git pull && docker compose -f docker-compose.prod.yml build && docker compose -f docker-compose.prod.yml up -d`, then exec into the backend container and run `alembic upgrade head` to apply migration 005. Reload the Chrome extension and verify `📊 Fetch Technicals` returns data for a live ticker.
-
----
+## Current State (Resume Here)
+COMPLETE — merged to `master` (code verified on `master` in the 2026-11-12 audit). Migration 005 long applied; production now runs master. Nothing pending here.
 
 ## Key Files
 

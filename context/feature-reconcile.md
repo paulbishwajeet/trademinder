@@ -1,5 +1,7 @@
 # Feature: E*TRADE Reconcile
 
+**Status:** Complete — merged to `master`
+
 **Branch:** `develop`
 **Spec:** `docs/superpowers/specs/2026-07-16-on-demand-reconcile-button-design.md`, `docs/superpowers/specs/2026-07-17-immediate-stale-on-reconcile-design.md`
 
@@ -12,22 +14,10 @@
 | 2026-07-30 | Debugged and fixed 3 stacked bugs preventing reconcile from ever flagging closed positions (XSP legs never showed "Not in E*TRADE"): (1) 11 direct `fetch()` calls in `content.js` bypassed the `bgFetch` relay and were silently blocked by Chrome's Local Network Access policy — converted all to `bgFetch`. (2) Reconcile only captured whatever ~50 rows E*TRADE happened to render at click time (grid virtualizes against page scroll, no internal scroll container) — added `collectAllPositions()` to scroll the full page and accumulate all rows before snapshotting. (3) Backend's stale-detection guard (`positions.py`) required `last_etrade_seen` to already be non-null, so trades that closed before ever being successfully reconciled (true during the whole time bugs 1–2 were live) could never be backdated — extended eligibility to also trust `etrade_symbol IS NOT NULL` (proof of a real extension-added E*TRADE trade) while still protecting manual entries. All verified working end-to-end by user on live E*TRADE tab. |
 
 ---
+- 2026-11-12: Context audit: marked Complete; code verified on `master`.
 
-## Current State
-
-**All three bugs are fixed in the working tree on `develop` and confirmed working live by the user. Not yet committed.**
-
-`git status` shows the following modified/created files, all uncommitted:
-- `extension/content.js`
-- `backend/app/routers/positions.py`
-- `backend/tests/test_reconcile.py`
-- `backend/uv.lock` (pre-existing unrelated modification from session start, not touched this session)
-
-Backend test suite: `backend/tests/test_reconcile.py` — 12/12 passing. Full backend suite has 6 pre-existing failures in unrelated modules (`test_cc_signal.py`, `test_market_router_p2.py`, `test_schwab_client.py`) — confirmed present before this session's changes, not caused by this work.
-
-**Immediate next step:** Ask the user whether to commit these changes (they haven't asked for a commit yet — do not commit without being asked, per standing repo convention). If committing, split logically: extension fetch/scroll fixes as one commit, backend stale-detection fix + test as another (matches this repo's granular commit style, e.g. `6c2e9c4`, `9138d1d`). No PR was discussed.
-
----
+## Current State (Resume Here)
+COMPLETE — merged to `master` (code verified on `master` in the 2026-11-12 audit). The 'not yet committed' note was stale: d327e57 and 6c05132 are on master. Nothing pending here.
 
 ## Key Files
 
