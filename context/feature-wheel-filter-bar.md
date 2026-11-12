@@ -1,5 +1,7 @@
 # Feature: WHEEL page symbol filter (filter bar v1)
 
+**Status:** Complete — merged to `master`
+
 ## Goal
 Add a sticky filter bar to the account-scoped WHEEL page. v1 has a single filter, Symbol: a combobox whose
 options are the account's wheel tickers. The bar is a generic chip container, so status, DTE window, signal grade
@@ -72,6 +74,8 @@ instead.
 | One commit for the feature, including the context files | Committed on the user's request |
 
 ## Open Questions
+> Still-open items were carried to `docs/TRADEMINDER_MASTER_CONTEXT.md` §0 Open items and §6 in the 2026-11-12 audit.
+
 1. A section's **Fetch** button and its "Fetched …" label still cover the section's full ticker list while a
    filter is on, because the brief said to leave fetching alone. Fetching only the visible tickers would be faster
    when filtered; that's a later choice.
@@ -118,8 +122,7 @@ instead.
   couldn't resolve `cmdk` until it's restarted.
 - 2026-11-12: User tried it on real data. Released together with the NEW — NEEDS SLOT work: merged into `develop`
   and `master` and pushed; the user redeploys the NAS from `master`.
+- 2026-11-12: Context audit: marked Complete; code verified on `master`.
 
-## Current State
-**Released.** On `master` with `feature/wheel-new-wheel-actions`; the NAS gets it when the user runs Pull and
-redeploy on the Portainer stack (frontend image rebuild; no migration). Nothing pending on this feature; the Open
-Questions are later ideas.
+## Current State (Resume Here)
+COMPLETE — merged to `master` (`develop` f4178ec → `master` 19c7008 (2026-11-12)). Released with NEW — NEEDS SLOT actions. Nothing pending here.

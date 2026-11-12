@@ -1,5 +1,7 @@
 # Feature: Schwab Hardening (Part 4 of 5)
 
+**Status:** Complete — merged to `master`
+
 ## Goal
 Turn a lapsed Schwab refresh token into a labelled "market data offline" mode instead of a blackout:
 - an admin expiry banner;
@@ -79,6 +81,8 @@ Turn a lapsed Schwab refresh token into a labelled "market data offline" mode in
 | WHEEL page doesn't cache stale results client-side; the throttle is untouched | Avoids showing stale data for an hour after recovery |
 
 ## Open Questions
+> Still-open items were carried to `docs/TRADEMINDER_MASTER_CONTEXT.md` §0 Open items in the 2026-11-12 audit.
+
 1. **Live token** expires 2026-11-06 16:17 UTC. The live banner will be amber as soon as this ships; re-run
    `scripts/schwab_auth.py` soon.
 2. **Offline request queue on WHEEL.** The page still sends its whole throttled queue while offline. Each request
@@ -101,28 +105,7 @@ Turn a lapsed Schwab refresh token into a labelled "market data offline" mode in
   banner, ~40h left) and approved it; they'll watch the real expiry on Nov 6 to see offline mode.
 - 2026-11-04: Committed Part 4 and merged Parts 1–4 into `develop` (`--no-ff`, one merge commit per part, in
   order). Pushed `develop` (`a99629f..635f31d`) and the four feature branches to origin.
+- 2026-11-12: Context audit: marked Complete; code verified on `master`.
 
-## Current State
-**Parts 1–4 are merged into `develop` and pushed, together with the four feature branches. The main checkout is
-on `develop`.**
-
-- **Branches:**
-  - `develop` = the previous `4872ac1` plus four `--no-ff` merges: `feature/multi-account-foundation`,
-    `feature/account-container-ui`, `feature/extension-account-awareness`, `feature/schwab-hardening`.
-  - `origin/develop` is at `635f31d`. `feature/multi-account-foundation`, `feature/account-container-ui`,
-    `feature/extension-account-awareness` and `feature/schwab-hardening` are on origin.
-  - `master` is untouched.
-- **Live environment:**
-  - The dev servers (5430/5431) serve `develop` (same code as Part 4) against the live DB at revision 017.
-  - Backups: `backups/trademinder-pre-016-*.dump` and `backups/trademinder-pre-017-20261104-1233.dump`.
-- **Verification:** pytest 450 passed / 6 known failures; `tsc -b` only the 2 pre-existing errors; Part 4 manual
-  checklist 5/5 on a DB copy; user-tested live.
-- **Still open:**
-  - The live Schwab refresh token expires 2026-11-06 16:17 UTC. The user plans to let it lapse to watch offline
-    mode on real data, then run `scripts/schwab_auth.py` (recovery within a minute, no restart).
-  - Part 3: the remaining real-page checks (Reconcile scoping, All-view chips, extension reinstall).
-  - Fingerprint strength (Part 3 Open Question 3).
-
-**Single next action:** watch offline mode at the real token expiry (2026-11-06 16:17 UTC), then run
-`scripts/schwab_auth.py`. When the user decides to release, merge `develop` → `master` (branching rule). Part 5
-(login/OAuth + HTTPS + in-app Schwab Reconnect) branches off `develop`.
+## Current State (Resume Here)
+COMPLETE — merged to `master` (`develop` 635f31d → `master` 8b60b68 (multi-user release, 2026-11-11)). Part 4. Nothing pending here.

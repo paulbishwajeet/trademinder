@@ -1,5 +1,5 @@
 # Feature: Screener
-**Status:** Implementation Complete — merged to `develop`, all three phases live
+**Status:** Complete — merged to `master`
 **Branch:** develop (built via short-lived feature branches, each merged and deleted: `feature/screener-page`, `feature/screener-sort-filter`, `feature/screener-fetching-indicator`)
 **Created:** 2026-08-10
 
@@ -75,10 +75,7 @@ A `/screener` page: a persisted watchlist of stock tickers with a compact techni
 - 2026-08-10 — Original Screener page spec approved and full 15-task implementation built via subagent-driven development (backend: models/migration/schemas/fetcher/router with fetch-all job/commentary CRUD; frontend: types/API client/table/add-flows/commentary/page+routing). Merged to `develop` at `5ca01ad`. Mid-build correction: discovered this repo serializes Decimal as JSON strings, not numbers — plan and all downstream frontend code updated before shipping.
 - 2026-08-12 — Added clickable column sorting (all data columns except Commentary/actions, null-values-always-last) and a live case-insensitive symbol filter to the grid, fully client-side. Merged to `develop` at `a6d7e7a`.
 - 2026-08-14 — Added a per-row "Fetching…" (disabled) indicator that shows while Fetch All is processing that row, reverting to "Fetch" automatically once the row's data refreshes — inferred client-side, no backend changes. Merged to `develop` at `845f573`.
+- 2026-11-12: Context audit: marked Complete; code verified on `master`.
 
 ## Current State (Resume Here)
-All three Screener phases are implemented, reviewed, and merged into `develop`. Nothing is in-flight; no open branch, no open worktree, no pending review. `develop` is currently sitting one commit ahead of local with the `context/_active.md` update from this session, plus the routine pre-existing uncommitted `backend/uv.lock` diff (unrelated to this feature, been present across multiple sessions).
-
-**Next action:** None required — the feature is done. If picking this up again, the natural next steps (not yet requested by the user, purely speculative) would be either (a) pushing `develop` to `origin` (it's currently ahead of `origin/develop` from this and prior sessions' local merges — verify with `git status` / `git log origin/develop..develop`), or (b) starting a new Screener enhancement following the same brainstorm → spec → plan → subagent-driven-build → finish-branch cycle used for all three phases so far.
-
-To verify the feature is still working: start both dev servers (`cd backend && venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 5431 --reload` and `cd frontend && npm run dev`) and navigate to `http://localhost:5430/screener` — grid should load, Fetch All should show per-row "Fetching…" progressively, sort/filter should work on the header/input.
+COMPLETE — merged to `master` (code verified on `master` in the 2026-11-12 audit). Nothing pending here.

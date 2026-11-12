@@ -1,5 +1,5 @@
 # Feature: Chain Screener
-**Status:** Shipped — merged to `develop`, plus a first deep-link source wired in from the Wheel dashboard
+**Status:** Complete — merged to `master`
 **Branch:** feature/chain-screener (merged and deleted; work now lives on `develop`)
 **Created:** 2026-09-23
 
@@ -67,6 +67,8 @@ Full API shape, response JSON example, frontend layout details, and error-handli
 | Chain link shown only for SP Timing, not CC Signal/SP Signal/CC Timing | Gated on `isSPTiming` in the shared `renderSignalDetailRow` function | Chain only implements the `sell_put` strategy today; linking from the other signal types would point to an unsupported/misleading screen |
 
 ## Open Questions / Blockers
+> Still-open items were carried to `docs/TRADEMINDER_MASTER_CONTEXT.md` §11 Roadmap (Chain strategies) in the 2026-11-12 audit.
+
 - [ ] Exact pill color thresholds (green ≥70% of max points, amber 40-70%, red <40%) are a first guess in the design doc — untested against real data across multiple tickers/strategies; may need tuning once the page is live and used for a while.
 - [ ] `options_scanner._fetch_earnings_dates` is currently a private (`_`-prefixed) function being imported directly from another service module rather than through a shared/public util — pragmatic reuse, not a formal refactor. Fine for now; worth revisiting if a third consumer ever needs it.
 - [ ] No decision yet on where/how the other 4 strategies' logic will eventually differ structurally (e.g. do "Buy Calls" strategies need a totally different scoring criteria set, given ARR/delta-fit/spread don't obviously transfer to a long-option strategy?) — deferred until one of them is actually built.
@@ -78,8 +80,7 @@ Full API shape, response JSON example, frontend layout details, and error-handli
 - 2026-09-23 — Feature created. Live-verified the underlying idea by hand first: ran NVDA and BE puts through the proposed 1-3 week/delta-0.2/ARR>30% criteria via a throwaway script against the real Schwab chain, which is what surfaced the core design tension (delta-fit and ARR>30% don't overlap for NVDA at current IV, but do for BE) that shaped the scoring approach below. Brainstormed architectural-path design (approaches → clarifying questions → sectioned design → written spec → self-review), spec committed to `docs/superpowers/specs/2026-09-23-chain-screener-design.md`. Not yet planned or implemented.
 - 2026-09-23 — Wrote the 7-task implementation plan via `writing-plans`, self-reviewed. Executed all 7 tasks via `subagent-driven-development` in worktree `feature/chain-screener` (backend service/scoring/endpoint, frontend API client/page shell/results rendering), each individually reviewed and approved. Final whole-branch review (opus) returned "Ready to merge: With fixes" — 2 Important + 1 Minor findings bundled into one fix wave (commit `1d2f083`: SP Timing click-to-expand breakdown, "fewer than N expiries" note + empty state, 502 handler logging/exception-chaining), all verified live in-browser except the zero-expiries empty state (code-inspection only). Scoped re-review of the fix wave: all 3 findings ADDRESSED, one new Minor parked (see Open Questions). Merged to `develop` via fast-forward (`220710a..1d2f083`), worktree and branch cleaned up.
 - 2026-09-24 — Added deep-link source wiring: a "Screen strikes on Chain →" link in the Wheel dashboard's SP Timing breakdown panel (`WheelDashboardPage.tsx`), pointing to `/chain?symbol=&strategy=sell_put`. Bounded-path brainstorm (one clarifying question on placement), implemented, `tsc --noEmit` clean. Not yet committed.
+- 2026-11-12: Context audit: marked Complete; code verified on `master`.
 
 ## Current State (Resume Here)
-Chain Screener itself is fully shipped and live on `develop` (backend endpoint + scoring, frontend page, all merged). The one thing NOT yet done: **the Wheel-dashboard-to-Chain link just added in `frontend/src/pages/WheelDashboardPage.tsx` (the `isSPTiming` block in `renderSignalDetailRow`, ~line 586-591) is uncommitted** — `git status` on `develop` will show it as a modified file. tsc has been verified clean; it has NOT been manually clicked through in a live browser yet.
-
-Single next action: verify the new link live (start dev servers, open the Wheel dashboard, click an SP Timing pill, confirm the link renders and navigates to `/chain?symbol=<ticker>&strategy=sell_put` and the Chain page auto-runs), then commit it — there's no branch/worktree for this small change, it was made directly on `develop`, so a plain `git add frontend/src/pages/WheelDashboardPage.tsx && git commit` is enough (confirm with the user whether they want it as its own commit or squashed into something else first).
+COMPLETE — merged to `master` (code verified on `master` in the 2026-11-12 audit). Sell_put only. Nothing pending here.

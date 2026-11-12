@@ -1,5 +1,7 @@
 # Feature: NEW — NEEDS SLOT section — collapse, delete, edit
 
+**Status:** Complete — merged to `master`
+
 ## Goal
 On the WHEEL page's "NEW — NEEDS SLOT" section (wheels that have no slot yet):
 1. collapse it by default;
@@ -54,6 +56,8 @@ history); migrations (none needed).
 | Delete confirmation via the browser's `confirm()` | Same as the existing slot delete |
 
 ## Open Questions
+> Still-open items were carried to `docs/TRADEMINDER_MASTER_CONTEXT.md` §0 Open items and §6 in the 2026-11-12 audit.
+
 1. Merge order: this branch is stacked on `feature/wheel-filter-bar`. Merging it into `develop` brings the filter
    bar along; merge the filter bar first (or both together) when releasing.
 2. Edit and delete exist only on NEW — NEEDS SLOT rows. Wheels with slots still have no edit (shares / date) in the
@@ -77,9 +81,10 @@ history); migrations (none needed).
 | Escape with the edit dialog open and a filter on | ✅ dialog and filter both stay |
 - 2026-11-12: Committed `ed1a9b8`; merged with the filter bar into `develop` and `master` and pushed (both feature
   branches pushed too).
+- 2026-11-12: Merge commits: `develop` `07a3a99` (filter bar `f4178ec`, then this feature), `master` `19c7008`
+  (merged inside the `trademinder-release` worktree, which is now up to date; extension unchanged, so the Trading
+  Chrome profile needs no reload). The main checkout switched back to `develop`.
+- 2026-11-12: Context audit: marked Complete; code verified on `master`.
 
-## Current State
-**Released on `master`** (with the filter bar). No migration: the backend only gains `DELETE /api/wheel/{id}` and
-the PATCH fields. The NAS gets it after Pull and redeploy of the `trademinder` Portainer stack (rebuilds the backend
-and frontend images). Afterwards, check on https://tm.aipathstudio.com that WHEEL shows the filter bar and that NEW
-— NEEDS SLOT is collapsed with ✎ / × per row.
+## Current State (Resume Here)
+COMPLETE — merged to `master` (`develop` 07a3a99 → `master` 19c7008 (2026-11-12)). Released with the filter bar. Nothing pending here.
