@@ -75,12 +75,11 @@ history); migrations (none needed).
 | Edit | ✅ pre-filled; "BRK B" refused in the dialog (no request); RCAT → RCATZ / 300 / 2026-07-10 saved (PATCH 200), row updated, section stays open |
 | Delete | ✅ confirm text "Delete the AMD wheel? It has no slots, so nothing else is removed."; Cancel keeps the row; OK deletes (DELETE 204) |
 | Escape with the edit dialog open and a filter on | ✅ dialog and filter both stay |
+- 2026-11-12: Committed `ed1a9b8`; merged with the filter bar into `develop` and `master` and pushed (both feature
+  branches pushed too).
 
 ## Current State
-**Implemented and verified on `feature/wheel-new-wheel-actions` (stacked on `feature/wheel-filter-bar` `2281724`) in
-the worktree `.claude/worktrees/new-wheel-actions`; not committed.** The main checkout is still on
-`feature/wheel-filter-bar`, so the user's dev servers don't have this yet. No migration; the backend change needs
-uvicorn to reload (automatic with `--reload` once the main checkout switches).
-
-**Single next action:** the user tries it. Commit and switch the main checkout to the branch (no `npm install`
-needed, since there are no new packages), then reload the WHEEL page.
+**Released on `master`** (with the filter bar). No migration: the backend only gains `DELETE /api/wheel/{id}` and
+the PATCH fields. The NAS gets it after Pull and redeploy of the `trademinder` Portainer stack (rebuilds the backend
+and frontend images). Afterwards, check on https://tm.aipathstudio.com that WHEEL shows the filter bar and that NEW
+— NEEDS SLOT is collapsed with ✎ / × per row.

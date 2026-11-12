@@ -2,13 +2,13 @@
 
 **Feature:** NEW — NEEDS SLOT: collapse, delete, edit
 **Context File:** context/feature-wheel-new-wheel-actions.md
-**Branch:** feature/wheel-new-wheel-actions (stacked on feature/wheel-filter-bar 2281724), in worktree `.claude/worktrees/new-wheel-actions`
+**Branch:** feature/wheel-new-wheel-actions (stacked on feature/wheel-filter-bar), merged into develop and master and pushed
 **Session Started:** 2026-11-11
-**Status:** Implemented and verified (pytest, build, lint, Playwright on a DB copy); not committed.
+**Status:** Released on master (2026-11-12) together with the filter bar. Next: user runs Pull and redeploy on the NAS.
 
 ---
 
-**Previous feature:** WHEEL page symbol filter (filter bar v1) — context/feature-wheel-filter-bar.md — committed (2281724) on feature/wheel-filter-bar; not pushed or merged; user built and tried it.
+**Previous feature:** WHEEL page symbol filter (filter bar v1) — context/feature-wheel-filter-bar.md — released on master with this feature.
 
 
 **Previous feature:** Login and HTTPS (Part 5 of 5) — context/feature-login-and-https.md — complete; released on master (8b60b68) and in production on the QNAP.
