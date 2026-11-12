@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useMarketDataOffline } from '../hooks/useMarketDataOffline'
 import { MARKET_OFFLINE_TOOLTIP, staleTooltip } from '../components/shared/MarketDash'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import type { WheelSessionDetail, WheelSlotDetail, CCSignalResult, OptionPriceResult, TechnicalsData, WheelSignalSnapshot } from '../types'
 import { wheelApi, combinedSignalApi, optionPriceApi, ccTimingSignalApi, spTimingSignalApi } from '../api/wheel'
 import { technicalsApi, type QuoteData } from '../api/technicals'
@@ -13,6 +13,9 @@ import { LinkLegModalV2 } from '../components/Wheel/LinkLegModalV2'
 import { CommentaryPopover } from '../components/Commentary/CommentaryPopover'
 import { useRequiredAccount } from '../context/AccountsContext'
 import { tradePath, scopedResearchPath } from '../lib/paths'
+import { matchSymbols } from '../lib/tickers'
+import { FilterBar } from '../components/shared/FilterBar'
+import { SymbolCombobox } from '../components/shared/SymbolCombobox'
 
 interface FlatSlot {
   slot: WheelSlotDetail
@@ -142,6 +145,26 @@ export function WheelDashboardPage() {
   const [optionPrices, setOptionPrices] = useState<Record<string, OptionPriceResult | 'loading' | 'error'>>(() => seedFromCache(optionPricesCache))
   const [quotes, setQuotes] = useState<Record<string, QuoteData | 'loading' | 'error'>>(() => seedFromCache(quotesCache))
   const [technicals, setTechnicals] = useState<Record<string, TechnicalsData | 'loading' | 'error'>>(() => seedFromCache(technicalsCache))
+
+  // Filter bar. The symbol lives in the URL (?symbol=AAPL): Back exits it, it deep-links, and a later
+  // visit starts unfiltered. It only changes what renders — sessions, signal fetching and caches are untouched.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const symbol = searchParams.get('symbol')?.trim().toUpperCase() || null
+  const symbolSet = symbol ? matchSymbols(symbol) : null
+  const matchesFilter = (ticker: string) => symbolSet == null || symbolSet.has(ticker.toUpperCase())
+  const filterBarRef = useRef<HTMLDivElement>(null)
+  const symbolInputRef = useRef<HTMLInputElement>(null)
+
+  function setSymbol(next: string | null) {
+    const value = next?.trim().toUpperCase() || null
+    if (value === symbol) return
+    setSearchParams(prev => {
+      const params = new URLSearchParams(prev)
+      if (value) params.set('symbol', value)
+      else params.delete('symbol')
+      return params
+    })
+  }
 
   async function load() {
     setLoading(true)
@@ -336,6 +359,33 @@ export function WheelDashboardPage() {
 
   useEffect(() => { loadSignals() }, [sessions])
 
+  // Escape clears the filter and "/" focuses the symbol input — but never while a dialog, the contracts
+  // editor, a Notes panel or the symbol list is open, and Escape not while typing in some other field.
+  // Capture phase: overlays close themselves on the same keypress (and unmount their [data-escape-layer]
+  // marker before a bubbling listener would run), so this must look first.
+  const overlayOpen = showNewModal || addSlotSessionId != null || resolveSlotId != null || linkSlotId != null
+    || editingContractsSlotId != null
+  useEffect(() => {
+    function handleKey(e: KeyboardEvent) {
+      if (overlayOpen || document.querySelector('[data-escape-layer]')) return
+      const el = document.activeElement as HTMLElement | null
+      const typing = el != null && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)
+      const inBar = el != null && (filterBarRef.current?.contains(el) ?? false)
+      if (e.key === 'Escape') {
+        if (!symbol || (typing && !inBar)) return
+        // Typed text in the symbol input: that Escape clears the text, not the filter.
+        if (el === symbolInputRef.current && symbolInputRef.current?.value) return
+        e.preventDefault()
+        setSymbol(null)
+      } else if (e.key === '/' && !typing && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault()
+        symbolInputRef.current?.focus()
+      }
+    }
+    window.addEventListener('keydown', handleKey, true)
+    return () => window.removeEventListener('keydown', handleKey, true)
+  })
+
   const allSlots = flattenSlots(sessions)
   const needsAction = allSlots.filter(f => f.slot.needs_action)
   const awaitingCC = allSlots.filter(f => f.slot.status === 'awaiting_cc' && !f.slot.needs_action)
@@ -357,6 +407,16 @@ export function WheelDashboardPage() {
   const activeCC = active.filter(f => f.slot.status === 'cc_active')
   const activeSP = active.filter(f => f.slot.status === 'sold_put_active')
   const emptyWheels = sessions.filter(s => s.slots.length === 0)
+
+  // Filter options: every ticker with a wheel in this account. Slots hidden by the filter that need action
+  // are counted so a filter never silently hides an action item.
+  const symbolOptions = [...new Set(sessions.map(s => s.ticker))].sort().map(ticker => {
+    const n = allSlots.filter(f => f.ticker === ticker).length
+    return { ticker, hint: n === 0 ? 'no slot' : `${n} slot${n === 1 ? '' : 's'}` }
+  })
+  const symbolHasWheel = symbol == null || sessions.some(s => matchesFilter(s.ticker))
+  const hiddenNeedsAction = symbol ? needsAction.filter(f => !matchesFilter(f.ticker)).length : 0
+  const shownEmptyWheels = emptyWheels.filter(s => matchesFilter(s.ticker))
 
   const resolveSlotTicker = resolveSlotId
     ? allSlots.find(f => f.slot.id === resolveSlotId)?.ticker ?? ''
@@ -659,6 +719,25 @@ export function WheelDashboardPage() {
     )
   }
 
+  function renderTicker(ticker: string) {
+    return (
+      <button onClick={() => setSymbol(ticker)} title={`Show only ${ticker}`}
+        className="font-bold text-gray-900 hover:text-blue-600 hover:underline">
+        {ticker}
+      </button>
+    )
+  }
+
+  // Section count badge: "2 of 14" while a filter is on.
+  function countLabel(shown: number, total: number): string {
+    return symbol ? `${shown} of ${total}` : String(total)
+  }
+
+  // A section the filter emptied keeps its header and collapses to one muted line, so the page doesn't jump.
+  function renderFilteredEmpty(text: string) {
+    return <p className="rounded-lg border border-dashed border-gray-200 px-3 py-2 text-xs text-gray-400">{text}</p>
+  }
+
   function renderSlotRow(f: FlatSlot) {
     const { slot, ticker } = f
     const isExpanded = expandedSlot === slot.id
@@ -666,7 +745,7 @@ export function WheelDashboardPage() {
     return (
       <tr key={slot.id} className="group">
         <td className="py-2 pr-3">
-          <span className="font-bold text-gray-900">{ticker}</span>
+          {renderTicker(ticker)}
           {activeLegSummary(slot) && (
             <div className="text-xs text-gray-400 font-normal leading-tight">{activeLegSummary(slot)}</div>
           )}
@@ -755,7 +834,7 @@ export function WheelDashboardPage() {
     return (
       <tr key={slot.id} className="group">
         <td className="py-2 pr-3">
-          <span className="font-bold text-gray-900">{ticker}</span>
+          {renderTicker(ticker)}
           <span className="text-[10px] text-gray-400 align-sub ml-1">{slot.contracts}x100 R{slot.rotation_number}</span>
           {renderActiveLegSummary(slot)}
         </td>
@@ -804,17 +883,18 @@ export function WheelDashboardPage() {
     )
   }
 
-  function renderActiveSection(title: string, color: string, bgColor: string, borderColor: string, fetchKey: string, slots: FlatSlot[]) {
-    if (slots.length === 0) return null
-    const tickers = [...new Set(slots.map(f => f.ticker))]
+  function renderActiveSection(title: string, color: string, bgColor: string, borderColor: string, fetchKey: string, all: FlatSlot[], emptyText: string) {
+    if (all.length === 0) return null
+    const slots = all.filter(f => matchesFilter(f.ticker))
+    const tickers = [...new Set(all.map(f => f.ticker))]
     return (
       <section className="mb-5">
         <div className="flex items-center gap-2 mb-2">
           <span className={`text-sm font-bold ${color}`}>{title}</span>
-          <span className={`${bgColor} ${color} text-xs px-2 py-0.5 rounded-full font-medium`}>{slots.length}</span>
+          <span className={`${bgColor} ${color} text-xs px-2 py-0.5 rounded-full font-medium`}>{countLabel(slots.length, all.length)}</span>
           {renderSectionFetchControls(fetchKey, tickers, true)}
         </div>
-        <div className={`bg-white border ${borderColor} rounded-lg overflow-x-auto`}>
+        {slots.length === 0 ? renderFilteredEmpty(emptyText) : <div className={`bg-white border ${borderColor} rounded-lg overflow-x-auto`}>
           <table className="min-w-max w-full text-sm whitespace-nowrap">
             <thead>
               <tr className="text-left text-xs text-gray-400 border-b border-gray-100">
@@ -844,7 +924,7 @@ export function WheelDashboardPage() {
               )
             })}
           </table>
-        </div>
+        </div>}
       </section>
     )
   }
@@ -856,7 +936,7 @@ export function WheelDashboardPage() {
     return (
       <tr key={slot.id} className="group">
         <td className="py-2 pr-3">
-          <span className="font-bold text-gray-900">{ticker}</span>
+          {renderTicker(ticker)}
         </td>
         {renderEditableSizeCell(slot)}
         <td className="py-2 pr-3 text-xs text-gray-400">R{slot.rotation_number}</td>
@@ -932,17 +1012,18 @@ export function WheelDashboardPage() {
     )
   }
 
-  function renderAwaitingCCSection(slots: FlatSlot[]) {
-    if (slots.length === 0) return null
-    const tickers = [...new Set(slots.map(f => f.ticker))]
+  function renderAwaitingCCSection(all: FlatSlot[]) {
+    if (all.length === 0) return null
+    const slots = all.filter(f => matchesFilter(f.ticker))
+    const tickers = [...new Set(all.map(f => f.ticker))]
     return (
       <section className="mb-5">
         <div className="flex items-center gap-2 mb-2">
           <span className="text-sm font-bold text-amber-600">AWAITING CC</span>
-          <span className="bg-amber-50 text-amber-600 text-xs px-2 py-0.5 rounded-full font-medium">{slots.length}</span>
+          <span className="bg-amber-50 text-amber-600 text-xs px-2 py-0.5 rounded-full font-medium">{countLabel(slots.length, all.length)}</span>
           {renderSectionFetchControls('awaitingCC', tickers, false)}
         </div>
-        <div className="bg-white border border-amber-200 rounded-lg overflow-x-auto">
+        {slots.length === 0 ? renderFilteredEmpty(`No ${symbol} slots awaiting CC`) : <div className="bg-white border border-amber-200 rounded-lg overflow-x-auto">
           <table className="min-w-max w-full text-sm whitespace-nowrap">
             <thead>
               <tr className="text-left text-xs text-gray-400 border-b border-gray-100">
@@ -972,7 +1053,7 @@ export function WheelDashboardPage() {
               )
             })}
           </table>
-        </div>
+        </div>}
       </section>
     )
   }
@@ -984,7 +1065,7 @@ export function WheelDashboardPage() {
     return (
       <tr key={slot.id} className="group">
         <td className="py-2 pr-3">
-          <span className="font-bold text-gray-900">{ticker}</span>
+          {renderTicker(ticker)}
         </td>
         {renderEditableSizeCell(slot)}
         <td className="py-2 pr-3 text-xs text-gray-400">R{slot.rotation_number}</td>
@@ -1034,17 +1115,18 @@ export function WheelDashboardPage() {
     )
   }
 
-  function renderAwaitingSPSection(slots: FlatSlot[]) {
-    if (slots.length === 0) return null
-    const tickers = [...new Set(slots.map(f => f.ticker))]
+  function renderAwaitingSPSection(all: FlatSlot[]) {
+    if (all.length === 0) return null
+    const slots = all.filter(f => matchesFilter(f.ticker))
+    const tickers = [...new Set(all.map(f => f.ticker))]
     return (
       <section className="mb-5">
         <div className="flex items-center gap-2 mb-2">
           <span className="text-sm font-bold text-orange-600">AWAITING SOLD PUT</span>
-          <span className="bg-orange-50 text-orange-600 text-xs px-2 py-0.5 rounded-full font-medium">{slots.length}</span>
+          <span className="bg-orange-50 text-orange-600 text-xs px-2 py-0.5 rounded-full font-medium">{countLabel(slots.length, all.length)}</span>
           {renderSectionFetchControls('awaitingSP', tickers, false)}
         </div>
-        <div className="bg-white border border-orange-200 rounded-lg overflow-x-auto">
+        {slots.length === 0 ? renderFilteredEmpty(`No ${symbol} slots awaiting a sold put`) : <div className="bg-white border border-orange-200 rounded-lg overflow-x-auto">
           <table className="min-w-max w-full text-sm whitespace-nowrap">
             <thead>
               <tr className="text-left text-xs text-gray-400 border-b border-gray-100">
@@ -1074,7 +1156,7 @@ export function WheelDashboardPage() {
               )
             })}
           </table>
-        </div>
+        </div>}
       </section>
     )
   }
@@ -1105,17 +1187,18 @@ export function WheelDashboardPage() {
     ))
   }
 
-  function renderSection(title: string, color: string, bgColor: string, borderColor: string, slots: FlatSlot[], fetchKey?: string) {
-    if (slots.length === 0) return null
-    const tickers = [...new Set(slots.map(f => f.ticker))]
+  function renderSection(title: string, color: string, bgColor: string, borderColor: string, all: FlatSlot[], emptyText: string, fetchKey?: string) {
+    if (all.length === 0) return null
+    const slots = all.filter(f => matchesFilter(f.ticker))
+    const tickers = [...new Set(all.map(f => f.ticker))]
     return (
       <section className="mb-5">
         <div className="flex items-center gap-2 mb-2">
           <span className={`text-sm font-bold ${color}`}>{title}</span>
-          <span className={`${bgColor} ${color} text-xs px-2 py-0.5 rounded-full font-medium`}>{slots.length}</span>
+          <span className={`${bgColor} ${color} text-xs px-2 py-0.5 rounded-full font-medium`}>{countLabel(slots.length, all.length)}</span>
           {fetchKey && renderSectionFetchControls(fetchKey, tickers, true)}
         </div>
-        <div className={`bg-white border ${borderColor} rounded-lg overflow-x-auto`}>
+        {slots.length === 0 ? renderFilteredEmpty(emptyText) : <div className={`bg-white border ${borderColor} rounded-lg overflow-x-auto`}>
           <table className="min-w-max w-full text-sm whitespace-nowrap">
             <thead>
               <tr className="text-left text-xs text-gray-400 border-b border-gray-100">
@@ -1143,7 +1226,7 @@ export function WheelDashboardPage() {
               )
             })}
           </table>
-        </div>
+        </div>}
       </section>
     )
   }
@@ -1179,14 +1262,45 @@ export function WheelDashboardPage() {
       )}
 
       {!loading && !error && sessions.length > 0 && (
+        <FilterBar
+          barRef={filterBarRef}
+          chips={symbol ? [{ key: 'symbol', label: 'Symbol', value: symbol, onRemove: () => setSymbol(null) }] : []}
+          onClearAll={() => setSymbol(null)}
+          notice={hiddenNeedsAction > 0 && (
+            <span className="inline-flex items-center gap-2 rounded border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs text-amber-800">
+              {hiddenNeedsAction} other slot{hiddenNeedsAction === 1 ? ' needs' : 's need'} action
+              <button onClick={() => setSymbol(null)} className="font-medium underline hover:text-amber-900">Show all</button>
+            </span>
+          )}
+        >
+          <SymbolCombobox
+            inputRef={symbolInputRef}
+            options={symbolOptions}
+            onCommit={setSymbol}
+            noMatchLabel={q => `No wheel for ${q} in this account`}
+            emptyLabel="No wheels in this account"
+          />
+        </FilterBar>
+      )}
+
+      {!loading && !error && sessions.length > 0 && !symbolHasWheel && (
+        <div className="rounded-lg border border-dashed border-gray-300 bg-white py-10 text-center">
+          <p className="mb-3 text-sm text-gray-500">No wheel for {symbol} in this account.</p>
+          <button onClick={() => setSymbol(null)} className="rounded bg-gray-100 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-200">
+            Clear filter
+          </button>
+        </div>
+      )}
+
+      {!loading && !error && sessions.length > 0 && symbolHasWheel && (
         <>
           {emptyWheels.length > 0 && (
             <section className="mb-5">
               <div className="flex items-center gap-2 mb-2">
                 <span className="text-sm font-bold text-purple-600">NEW — NEEDS SLOT</span>
-                <span className="bg-purple-50 text-purple-600 text-xs px-2 py-0.5 rounded-full font-medium">{emptyWheels.length}</span>
+                <span className="bg-purple-50 text-purple-600 text-xs px-2 py-0.5 rounded-full font-medium">{countLabel(shownEmptyWheels.length, emptyWheels.length)}</span>
               </div>
-              <div className="bg-white border border-purple-200 rounded-lg overflow-hidden">
+              {shownEmptyWheels.length === 0 ? renderFilteredEmpty(`No new ${symbol} wheels`) : <div className="bg-white border border-purple-200 rounded-lg overflow-hidden">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="text-left text-xs text-gray-400 border-b border-gray-100">
@@ -1197,9 +1311,9 @@ export function WheelDashboardPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {emptyWheels.map(s => (
+                    {shownEmptyWheels.map(s => (
                       <tr key={s.id} className="border-t border-gray-50">
-                        <td className="py-2 pr-3 pl-3 font-bold text-gray-900">{s.ticker}</td>
+                        <td className="py-2 pr-3 pl-3">{renderTicker(s.ticker)}</td>
                         <td className="py-2 pr-3 text-gray-500 text-xs">{s.total_shares}</td>
                         <td className="py-2 pr-3 text-gray-400 text-xs">{s.opened_at}</td>
                         <td className="py-2 text-right">
@@ -1214,14 +1328,14 @@ export function WheelDashboardPage() {
                     ))}
                   </tbody>
                 </table>
-              </div>
+              </div>}
             </section>
           )}
-          {renderSection('NEEDS ACTION', 'text-amber-600', 'bg-amber-100', 'border-amber-300', needsAction)}
+          {renderSection('NEEDS ACTION', 'text-amber-600', 'bg-amber-100', 'border-amber-300', needsAction, `No ${symbol} slots need action`)}
           {renderAwaitingCCSection(awaitingCC)}
           {renderAwaitingSPSection(awaitingSP)}
-          {renderActiveSection('ACTIVE COVERED CALLS', 'text-blue-600', 'bg-blue-50', 'border-blue-200', 'activeCC', activeCC)}
-          {renderActiveSection('ACTIVE SOLD PUTS', 'text-blue-600', 'bg-blue-50', 'border-blue-200', 'activeSP', activeSP)}
+          {renderActiveSection('ACTIVE COVERED CALLS', 'text-blue-600', 'bg-blue-50', 'border-blue-200', 'activeCC', activeCC, `No active ${symbol} covered calls`)}
+          {renderActiveSection('ACTIVE SOLD PUTS', 'text-blue-600', 'bg-blue-50', 'border-blue-200', 'activeSP', activeSP, `No active ${symbol} sold puts`)}
         </>
       )}
 
