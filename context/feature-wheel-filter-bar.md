@@ -33,6 +33,8 @@ instead.
 - `frontend/src/components/Layout/Sidebar.tsx`: the account switch carries `symbol` on the WHEEL page.
 - `frontend/src/components/Commentary/CommentaryPopover.tsx`: only a `data-escape-layer` marker on the open
   panel, with no change in behaviour.
+- `frontend/package.json` / `package-lock.json`: adds `cmdk@^1.1.1` and `@radix-ui/react-popover@^1.3.1`; the
+  lockfile diff only adds packages.
 
 ## Technical Approach
 - **Filtering happens at render time only.**
@@ -65,6 +67,9 @@ instead.
 | The account switch carries `symbol` only from the WHEEL page | Other pages' `symbol` params (Chain) mean something else |
 | `Command label="Filter by symbol"` rather than `aria-label` on the input | cmdk points the input's `aria-labelledby` at its own label, which overrode `aria-label` (found in testing: the input had no accessible name) |
 | Popover parts wrapped as function components, not `const` re-exports | Satisfies the repo's react-refresh lint rule |
+| `@radix-ui/react-slot` pinned back to 1.2.4 after npm hoisted it to 1.5.0 | Adding two packages shouldn't silently upgrade an existing direct dependency |
+| Built and tested in a worktree against a DB copy (own backend :5441, Vite :5440, a disposable test session) | The user's dev servers run from the main checkout against the live dev DB; the test needed fixture data (a needs-action slot, a second account) that mustn't touch real data |
+| One commit for the feature, including the context files | Committed on the user's request |
 
 ## Open Questions
 1. A section's **Fetch** button and its "Fetched …" label still cover the section's full ticker list while a
@@ -77,6 +82,10 @@ instead.
 4. The WHEEL page's first load fetches signals for every ticker (~65 tickers × 5 endpoints, 4 at a time) and keeps
    the network busy for well over a minute. That's existing behaviour, not something the filter changed, but it's
    worth knowing.
+5. **Not yet tried by the user on real data in their own browser**, which is the remaining manual check.
+6. **Release path once approved:** merge into `develop` → `develop` into `master` → push; the NAS Portainer stack
+   (Git ref `refs/heads/master`) needs **Pull and redeploy** to rebuild the frontend image. The extension doesn't
+   change, so the `trademinder-release` worktree only needs `git pull --ff-only` to stay in step.
 
 ## Progress Log
 - 2026-11-11: Branch and worktree off `develop` `471dd1e`; surveyed the page, sidebar, popover and routing; context
@@ -104,9 +113,13 @@ instead.
 | Account switch with a filter | ✅ AAPL → Test IRA's AAPL row; NVDA → "No wheel for NVDA in this account." + Clear filter; from Trades the symbol isn't carried |
 | No localStorage | ✅ no keys written |
 
-## Current State
-**Implemented and verified on `feature/wheel-filter-bar` in the worktree `.claude/worktrees/wheel-filter-bar`; not
-committed.** The main checkout (the user's dev servers) is still on `develop` and doesn't have this yet.
+- 2026-11-11: Committed as `2281724` on `feature/wheel-filter-bar` (not pushed or merged). Removed the worktree;
+  switched the main checkout to the branch and ran `npm install` in `frontend/`. The user's running Vite (5430)
+  couldn't resolve `cmdk` until it's restarted.
+- 2026-11-12: User tried it on real data. Released together with the NEW — NEEDS SLOT work: merged into `develop`
+  and `master` and pushed; the user redeploys the NAS from `master`.
 
-**Single next action:** the user tries it. Either commit and switch the main checkout to the branch (then run
-`npm install` in `frontend/` for the two new packages), or look at it first in the worktree.
+## Current State
+**Released.** On `master` with `feature/wheel-new-wheel-actions`; the NAS gets it when the user runs Pull and
+redeploy on the Portainer stack (frontend image rebuild; no migration). Nothing pending on this feature; the Open
+Questions are later ideas.

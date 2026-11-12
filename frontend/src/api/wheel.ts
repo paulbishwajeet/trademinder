@@ -13,7 +13,9 @@ export interface WheelSessionCreate {
 }
 
 export interface WheelSessionUpdate {
+  ticker?: string  // only while the wheel has no slots (409 otherwise)
   total_shares?: number
+  opened_at?: string
   status?: string
   closed_at?: string | null
 }
@@ -50,6 +52,10 @@ export const wheelApi = {
 
   update: (id: string, payload: WheelSessionUpdate) =>
     apiFetch<WheelSessionSummary>(`/wheel/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+
+  /** Only a wheel with no slots (409 otherwise). */
+  deleteSession: (id: string) =>
+    apiFetch<void>(`/wheel/${id}`, { method: 'DELETE' }),
 
   addSlot: (sessionId: string, payload: WheelSlotCreate) =>
     apiFetch<WheelSlotDetail>(`/wheel/${sessionId}/slots`, { method: 'POST', body: JSON.stringify(payload) }),
