@@ -2,7 +2,8 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
-from pydantic import BaseModel, ConfigDict
+import re
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.schemas.commentary import CommentaryResponse
 from app.schemas.account import AccountSummary
 
@@ -14,10 +15,25 @@ class WheelSessionCreate(BaseModel):
     opened_at: date
 
 
+_TICKER = re.compile(r"[A-Z0-9.\-/]{1,10}")
+
+
 class WheelSessionUpdate(BaseModel):
-    total_shares: Optional[int] = None
+    ticker: Optional[str] = None  # changeable only while the wheel has no slots (enforced in the router)
+    total_shares: Optional[int] = Field(None, ge=0)
+    opened_at: Optional[date] = None
     status: Optional[str] = None
     closed_at: Optional[date] = None
+
+    @field_validator("ticker")
+    @classmethod
+    def _normalise_ticker(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        value = value.strip().upper()
+        if not _TICKER.fullmatch(value):
+            raise ValueError("Ticker must be 1–10 letters, digits, '.', '-' or '/'")
+        return value
 
 
 class WheelSessionSummary(BaseModel):

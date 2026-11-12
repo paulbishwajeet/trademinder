@@ -1,6 +1,6 @@
 // frontend/src/components/Layout/Sidebar.tsx
 import { useEffect, useState, type DragEvent } from 'react'
-import { Link, NavLink, useMatch, useNavigate } from 'react-router-dom'
+import { Link, NavLink, useLocation, useMatch, useNavigate } from 'react-router-dom'
 import * as Collapsible from '@radix-ui/react-collapsible'
 import { ChevronDown, ChevronRight, GripVertical, LayoutDashboard, LogOut, Plus, Settings, Shield, Telescope } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
@@ -30,6 +30,13 @@ export function Sidebar() {
   const currentAccountId = match?.params.accountId ?? null
   const currentPage = (ACCOUNT_PAGES as readonly string[]).includes(match?.params.page ?? '')
     ? (match!.params.page as AccountPage) : 'wheel'
+
+  // Switching accounts from the WHEEL page keeps its symbol filter (the new account may have no such wheel;
+  // the page then offers a one-click clear).
+  const location = useLocation()
+  const carriedQuery = currentPage === 'wheel'
+    ? { symbol: new URLSearchParams(location.search).get('symbol') ?? undefined }
+    : undefined
 
   const [order, setOrder] = useState<BrokerageAccount[]>(active)
   const [dragId, setDragId] = useState<string | null>(null)
@@ -110,7 +117,7 @@ export function Sidebar() {
                       <GripVertical size={14} />
                     </span>
                     <button
-                      onClick={() => navigate(accountPath(account.id, currentPage))}
+                      onClick={() => navigate(accountPath(account.id, currentPage, carriedQuery))}
                       className="flex min-w-0 flex-1 items-center gap-1 py-1.5 text-left text-sm"
                       aria-expanded={isCurrent}
                     >

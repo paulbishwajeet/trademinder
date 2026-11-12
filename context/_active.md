@@ -1,12 +1,17 @@
 # Active Feature
 
-**Feature:** Login and HTTPS (multi-user Part 5 of 5)
-**Context File:** context/feature-login-and-https.md
-**Branch:** feature/login-and-https, merged into develop (3f045fc) and master (8b60b68), all pushed.
-**Session Started:** 2026-11-05
-**Status:** Complete. Released on master and in production on the QNAP (https://tm.aipathstudio.com, stack at refs/heads/master, only 443 published) as of 2026-11-11. Next: Schwab re-auth before 2026-11-17; optionally invite the pilot user.
+**Feature:** NEW — NEEDS SLOT: collapse, delete, edit
+**Context File:** context/feature-wheel-new-wheel-actions.md
+**Branch:** feature/wheel-new-wheel-actions (stacked on feature/wheel-filter-bar), merged into develop and master and pushed
+**Session Started:** 2026-11-11
+**Status:** Released on master (2026-11-12) together with the filter bar. Next: user runs Pull and redeploy on the NAS.
 
 ---
+
+**Previous feature:** WHEEL page symbol filter (filter bar v1) — context/feature-wheel-filter-bar.md — released on master with this feature.
+
+
+**Previous feature:** Login and HTTPS (Part 5 of 5) — context/feature-login-and-https.md — complete; released on master (8b60b68) and in production on the QNAP.
 
 **Previous feature:** Schwab Hardening (Part 4) — context/feature-schwab-hardening.md — merged into develop and pushed.
 

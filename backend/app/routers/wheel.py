@@ -240,12 +240,25 @@ async def get_wheel_session_detail(
 
 @router.patch("/{session_id}", response_model=WheelSessionSummary)
 async def update_wheel_session(session_id: uuid.UUID, payload: WheelSessionUpdate, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
-    session = await get_wheel_session(db, user, session_id)
+    session = await get_wheel_session(db, user, session_id, options=(selectinload(WheelSession.slots),))
+    # The ticker is fixed once a slot exists: its legs are linked to trades in that ticker.
+    if payload.ticker is not None and payload.ticker != session.ticker and session.slots:
+        raise HTTPException(status_code=409, detail="Can't change the ticker of a wheel that has slots")
     for field, value in payload.model_dump(exclude_none=True).items():
         setattr(session, field, value)
     await db.commit()
     await db.refresh(session)
     return session
+
+
+@router.delete("/{session_id}", status_code=204)
+async def delete_wheel_session(session_id: uuid.UUID, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    # Only a wheel with no slots: it has no legs, premium history or notes to lose. Slots are removed one by one first.
+    session = await get_wheel_session(db, user, session_id, options=(selectinload(WheelSession.slots),))
+    if session.slots:
+        raise HTTPException(status_code=409, detail="Remove this wheel's slots before deleting it")
+    await db.delete(session)
+    await db.commit()
 
 
 @router.post("/{session_id}/slots", response_model=WheelSlotSummary, status_code=201)

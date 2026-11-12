@@ -128,6 +128,8 @@ export function CommentaryPopover({ slotId, ticker, addTarget, snapshot }: Props
         <div
           ref={panelRef}
           style={style}
+          // Marks an open overlay so page-level Escape handlers (the WHEEL filter bar) leave this keypress alone.
+          data-escape-layer=""
           className="z-50 bg-white border border-gray-200 rounded-lg shadow-xl flex flex-col overflow-hidden"
         >
           <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 shrink-0">
