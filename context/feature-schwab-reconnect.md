@@ -1,6 +1,6 @@
 # Feature: In-app Schwab reconnect, phase 1 ("paste the redirect URL")
 
-**Status:** In Progress
+**Status:** Complete — merged to `master`
 **Branch:** feature/schwab-reconnect
 **Created:** 2026-11-12
 
@@ -75,6 +75,7 @@ See the spec. In short:
 | Real-Schwab end-to-end check | In production right after the release, not on the dev copy | It is the real use; a dev-copy authorization might invalidate the NAS's refresh token |
 
 ## Open Questions / Blockers
+> Still-open items moved to `docs/TRADEMINDER_MASTER_CONTEXT.md` §0 open item 1 on 2026-11-12 (merge).
 - [ ] Does Schwab echo `state` back on the callback? The CLI never sent one. Standard OAuth, and schwab-py relies
   on it, so it should; confirmed only by the first real reconnect (checklist 2f).
 - [ ] Checklist 2f (real Schwab login → banner clears, quotes return) runs in production after release.
@@ -90,7 +91,10 @@ See the spec. In short:
   the spec); the copy was dropped. Docs: master context §0/5/8/10/11, README, the NAS doc, the runbook
   `docs/deployment/schwab-reconnect.md`, and `decisions.md`.
 
+- 2026-11-12: The user tested on the main checkout and approved. Committed `0300319`; merged into `develop` and
+  `master` and pushed. Still to do in production: Pull and redeploy on the NAS, then the real-Schwab reconnect
+  (checklist 2f) before 2026-11-17.
+
 ## Current State (Resume Here)
-Implementation, tests, docs and the manual checklist are done (except the real-Schwab step), all uncommitted in
-the worktree. Next: the user reviews and asks to commit. Then merge into `develop` → `master`, Pull and redeploy
-on the NAS, and run checklist 2f there: Reconnect Schwab with the real login, before the 2026-11-17 expiry.
+COMPLETE — merged to `master` (feature `0300319`, 2026-11-12). Follow-up in production: redeploy the NAS and run
+the first real Reconnect Schwab (checklist 2f; tracked in master context §0 open item 1).

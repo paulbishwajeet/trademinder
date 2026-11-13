@@ -49,7 +49,7 @@ Why the project is the way it is. **Newest entries first.**
     - automatic re-auth;
     - per-user connections.
   - The end-to-end check against real Schwab is still to do; see the spec's checklist.
-- **Links:** `feature/schwab-reconnect` · (uncommitted) · `context/feature-schwab-reconnect.md`
+- **Links:** `feature/schwab-reconnect` · 0300319 · `context/feature-schwab-reconnect.md`
 
 ### 2026-11-11 — Wheels without a slot can be deleted and edited
 - **Area:** backend, frontend

@@ -13,7 +13,7 @@ The 5-part multi-user plan was **released on `master` on 2026-11-11**, and two W
 - **WHEEL symbol filter:** a sticky filter bar with a Symbol combobox. The state lives in `?symbol=`, filtering happens at render time only, and an "N other slots need action" notice guards hidden action items. See section 4.1.
 - **NEW — NEEDS SLOT:** the section is collapsed by default, and each row has edit (ticker, shares, start date) and delete. Delete uses the new `DELETE /api/wheel/{id}` and only works for wheels with no slots.
 
-**In progress (2026-11-12, `feature/schwab-reconnect`, not yet merged; no migration): in-app Schwab reconnect, phase 1.**
+**Released 2026-11-12 (`feature/schwab-reconnect`, `0300319`; no migration): in-app Schwab reconnect, phase 1.**
 - The admin clicks **Reconnect Schwab** (on the banner, or in the new admin-only Settings → Market data), logs in at Schwab in a new tab, and pastes the address of the page that fails to load (Schwab's single registered callback, unchanged).
 - The backend checks a signed, single-use, 10-minute state, exchanges the code, and writes the token row under the provider's lock. The provider is online again immediately: no restart, no token copy to the NAS.
 - The CLI remains the fallback and shares the same code (`app/services/schwab_oauth.py`). See section 5 and `docs/deployment/schwab-reconnect.md`.
@@ -39,8 +39,8 @@ The 5-part multi-user plan was **released on `master` on 2026-11-11**, and two W
 
 **Open items:**
 1. Schwab tokens still expire every 7 days (Schwab's rule). Next deadline: **2026-11-17**.
-   - Once `feature/schwab-reconnect` is released, re-auth is **Reconnect Schwab** in the production app (under a minute; runbook `docs/deployment/schwab-reconnect.md`). Until then it's the CLI on the Mac plus copying the token row to the NAS.
-   - Still open: the end-to-end check against real Schwab (the branch's manual checklist), and whether Schwab echoes `state` (assumed; the flow rejects a URL without it).
+   - Re-auth is now **Reconnect Schwab** in the production app (under a minute; runbook `docs/deployment/schwab-reconnect.md`); the CLI is the fallback.
+   - Still open: **Pull and redeploy** the NAS, then do the first real reconnect there (spec checklist 2f), which also confirms Schwab echoes `state` (assumed; the flow rejects a URL without it). If it fails, use the CLI plus a row copy and report the error code.
    - Phase 2 (a backend callback route) would need Schwab's single callback moved.
 2. The pilot user hasn't been invited yet; their Gmail must also be a test user on the Google consent screen (Testing mode).
 3. Extension IDs differ per computer; a fixed `key` in the manifest would give one stable ID for the allow-list.
@@ -330,7 +330,7 @@ Since the multi-user release, the extension also has:
 - Live intraday price appended as last daily bar before computing RSI/MACD/day color — keeps "live price" and "previous close" consistent with indicators
 - **Refresh token expires 7 days after original auth.** Refreshing the access token does NOT extend it. **This is the single most common cause of total app failure.** Since Part 4 a lapse puts the app into a labeled offline mode instead of a blackout (see section 0), and an admin-only banner warns before expiry. The backend logs a warning within 24h.
 - **Re-auth: reconnect in the app; the CLI is the fallback.**
-  - **In the app** (`feature/schwab-reconnect`): the admin clicks **Reconnect Schwab** on the banner or in Settings → Market data, logs in at Schwab, and pastes the dead `https://127.0.0.1:8765/callback?code=…&state=…` address.
+  - **In the app:** the admin clicks **Reconnect Schwab** on the banner or in Settings → Market data, logs in at Schwab, and pastes the dead `https://127.0.0.1:8765/callback?code=…&state=…` address.
     - `app/services/schwab_reconnect.py` checks the state: HMAC-signed with `AUTH_STATE_SECRET`, bound to the admin, 10 minutes, single use, with pending nonces in process memory, so a restart forgets them.
     - It exchanges the code and calls `SchwabClient.install_tokens()`. That writes the row under the provider's lock and reloads it, so the provider is online at once.
     - Only one sanitized log line is written per attempt; codes, tokens and the URL are never logged.
@@ -491,7 +491,7 @@ python scripts/schwab_auth.py     # paste-URL OAuth flow (shares backend/app/ser
 
 11. **AI analyst over the journal.** `signal_snapshot` JSONB anticipates this. "Review my last 30 wheel decisions" agent correlating stated reasoning against outcomes.
 
-12. **Schwab token resilience.** Part 4 made a lapse a labeled offline mode, with an admin expiry banner. Phase 1 of the in-app reconnect (paste the redirect URL; `feature/schwab-reconnect`) removes the Mac, the CLI and the token-row copy. The 7-day login itself is Schwab's rule and stays manual. Possible phase 2: a backend callback route, which needs Schwab's single callback moved to `https://tm.<domain>/…`.
+12. **Schwab token resilience.** Part 4 made a lapse a labeled offline mode, with an admin expiry banner. Phase 1 of the in-app reconnect (paste the redirect URL, 2026-11-12) removes the Mac, the CLI and the token-row copy. The 7-day login itself is Schwab's rule and stays manual. Possible phase 2: a backend callback route, which needs Schwab's single callback moved to `https://tm.<domain>/…`.
 
 13. **Reduce manual-resolve burden.** Reconcile snapshot already knows which positions vanished from E*TRADE — enough to *propose* a resolve (never auto-apply; ITM/OTM/assigned distinction needs a human).
 
