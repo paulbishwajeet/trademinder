@@ -18,6 +18,7 @@ import { ScreenerPage } from './pages/ScreenerPage'
 import { ChainPage } from './pages/ChainPage'
 import { SettingsAccountsPage } from './pages/SettingsAccountsPage'
 import { SettingsExtensionsPage } from './pages/SettingsExtensionsPage'
+import { SettingsMarketDataPage } from './pages/SettingsMarketDataPage'
 import { SettingsLayout } from './components/Layout/SettingsLayout'
 import { AdminPage } from './pages/AdminPage'
 import { SignInPage } from './pages/SignInPage'
@@ -83,6 +84,7 @@ export default function App() {
               <Route index element={<Navigate to="accounts" replace />} />
               <Route path="accounts" element={<SettingsAccountsPage />} />
               <Route path="extensions" element={<SettingsExtensionsPage />} />
+              <Route path="market-data" element={<RequireAdmin><SettingsMarketDataPage /></RequireAdmin>} />
             </Route>
 
             <Route path="admin" element={<RequireAdmin><AdminPage /></RequireAdmin>} />

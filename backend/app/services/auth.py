@@ -52,14 +52,15 @@ def _unb64(data: str) -> bytes:
     return base64.urlsafe_b64decode(data + "=" * (-len(data) % 4))
 
 
-def sign_state(payload: dict) -> str:
-    body = _b64(json.dumps({**payload, "exp": int(time.time()) + LOGIN_STATE_TTL_SECONDS}).encode())
+def sign_state(payload: dict, ttl_seconds: int = LOGIN_STATE_TTL_SECONDS) -> str:
+    body = _b64(json.dumps({**payload, "exp": int(time.time()) + ttl_seconds}).encode())
     mac = hmac.new(settings.auth_state_secret.encode(), body.encode(), hashlib.sha256).digest()
     return f"{body}.{_b64(mac)}"
 
 
-def read_state(value: Optional[str]) -> Optional[dict]:
-    """The payload if the signature is valid and it hasn't expired; otherwise None."""
+def read_state(value: Optional[str], allow_expired: bool = False) -> Optional[dict]:
+    """The payload if the signature is valid and it hasn't expired; otherwise None.
+    allow_expired: also return an expired payload (the caller checks "exp" to tell expired from forged)."""
     if not value or "." not in value:
         return None
     body, mac = value.rsplit(".", 1)
@@ -70,7 +71,9 @@ def read_state(value: Optional[str]) -> Optional[dict]:
         payload = json.loads(_unb64(body))
     except (ValueError, json.JSONDecodeError):
         return None
-    if payload.get("exp", 0) < time.time():
+    if not isinstance(payload, dict):
+        return None
+    if not allow_expired and payload.get("exp", 0) < time.time():
         return None
     return payload
 

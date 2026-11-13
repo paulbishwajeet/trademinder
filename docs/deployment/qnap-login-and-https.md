@@ -20,7 +20,7 @@ the container names and the paths with yours.
 | Cloudflare API token | Permission **Zone → DNS → Edit** on that one domain only. Used by Traefik for the Let's Encrypt DNS-01 challenge (the NAS is never exposed to the internet). |
 | Google OAuth client | Google Cloud → Credentials → **OAuth client, type Web application**. Consent screen **External**, left in **Testing**, with the owner's and the pilot user's Gmail as **test users**. Authorized domain: the bare `<domain>`. Authorized redirect URI: `https://tm.<domain>/api/auth/google/callback`. |
 | QTS HTTPS port | QTS's own HTTPS admin port moved from 443 to **8443**, so 443 is free for Traefik. |
-| Schwab | The callback URL was **not** changed. Schwab re-auth stays on the CLI (`scripts/schwab_auth.py`). |
+| Schwab | The callback URL was **not** changed. Since 2026-11-12, re-auth is **Reconnect Schwab** in the app (`schwab-reconnect.md`); the CLI (`scripts/schwab_auth.py`) is the fallback. |
 
 Optional, for local development on the Mac: also add `http://localhost:5430/api/auth/google/callback` as an
 authorized redirect URI. Google allows http on localhost.
@@ -175,8 +175,9 @@ docker exec trademinder-db-1 pg_dump -U trademinder --data-only --table=schwab_t
 docker exec -i trademinder-db-1 psql -U trademinder -d trademinder < schwab_tokens.sql
 ```
 
-The backend picks it up within a minute, without a restart. Repeat (or re-run the CLI on the Mac and copy again)
-before the 7-day expiry, until the in-app reconnect exists.
+The backend picks it up within a minute, without a restart. Simpler since 2026-11-12: once the NAS runs a build
+with the in-app reconnect, click **Reconnect Schwab** on the banner (admin) instead. No token copy is needed;
+see `schwab-reconnect.md`.
 
 ---
 

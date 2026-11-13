@@ -7,7 +7,8 @@ Offline mode: when the refresh token is past its expiry, the refresh grant is re
 (invalid_grant), there are no tokens, or the app key/secret are missing, the client raises
 MarketDataUnavailable and stops calling Schwab. It re-reads the schwab_tokens row at most once a
 minute (TOKEN_RECHECK_SECONDS) and resumes as soon as the row changes — i.e. someone re-ran
-scripts/schwab_auth.py. Entering and leaving offline are each logged once.
+scripts/schwab_auth.py. The in-app reconnect (app.services.schwab_reconnect) writes through
+install_tokens(), which resumes immediately. Entering and leaving offline are each logged once.
 """
 import asyncio
 import base64
@@ -22,11 +23,12 @@ import httpx
 import pandas as pd
 
 from app.services.market_data_errors import MarketDataUnavailable
+from app.services.schwab_oauth import TokenSet, store_tokens
 
 log = logging.getLogger(__name__)
 
 SCHWAB_API_BASE = "https://api.schwabapi.com"
-SCHWAB_TOKEN_URL = f"{SCHWAB_API_BASE}/v1/oauth/token"
+SCHWAB_TOKEN_URL = f"{SCHWAB_API_BASE}/v1/oauth/token"  # == schwab_oauth.TOKEN_URL
 
 _SCHWAB_ALIASES: dict[str, str] = {
     "SPX":  "$SPX",
@@ -40,7 +42,7 @@ _SCHWAB_ALIASES: dict[str, str] = {
 
 # How often (at most) the token row is re-read to notice a CLI re-auth.
 TOKEN_RECHECK_SECONDS = 60
-REAUTH_HINT = "Run scripts/schwab_auth.py"
+REAUTH_HINT = "Reconnect Schwab in the app (or run scripts/schwab_auth.py)"
 
 
 class SchwabAPIError(Exception):
@@ -181,25 +183,22 @@ class SchwabClient:
         access_expires_at: datetime,
         refresh_expires_at: datetime,
     ) -> None:
-        async def _store():
-            conn = await asyncpg.connect(self._db_url)
-            try:
-                await conn.execute("""
-                    INSERT INTO schwab_tokens (id, access_token, refresh_token, access_expires_at, refresh_expires_at, updated_at)
-                    VALUES (1, $1, $2, $3, $4, NOW())
-                    ON CONFLICT (id) DO UPDATE SET
-                        access_token = EXCLUDED.access_token, refresh_token = EXCLUDED.refresh_token,
-                        access_expires_at = EXCLUDED.access_expires_at, refresh_expires_at = EXCLUDED.refresh_expires_at,
-                        updated_at = NOW()
-                """, access_token, refresh_token, access_expires_at, refresh_expires_at)
-            finally:
-                await conn.close()
-
-        asyncio.run(_store())
+        asyncio.run(store_tokens(self._db_url, TokenSet(access_token, refresh_token, access_expires_at, refresh_expires_at)))
         self._access_token = access_token
         self._refresh_token = refresh_token
         self._access_expires_at = access_expires_at
         self._refresh_expires_at = refresh_expires_at
+
+    def install_tokens(self, tokens: TokenSet) -> None:
+        """A fresh authorization (the in-app reconnect): write the token row under the same lock refreshes
+        use, then reload it so the provider is online again at once — no wait for the one-minute recheck.
+        Sync (DB I/O): run it in an executor from async code."""
+        with self._lock:
+            asyncio.run(store_tokens(self._db_url, tokens))
+            self._load_tokens_from_db()  # also records the row's new (updated_at, refresh_expires_at) marker
+            self._come_online()
+            self._last_error = None
+            self._expiry_warned_for = None
 
     def _ensure_valid_token(self) -> None:
         with self._lock:

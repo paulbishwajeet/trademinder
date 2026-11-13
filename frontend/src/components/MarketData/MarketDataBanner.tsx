@@ -1,7 +1,8 @@
 // frontend/src/components/MarketData/MarketDataBanner.tsx
 import { useState } from 'react'
 import { AlertTriangle, X } from 'lucide-react'
-import { useMarketDataStatus } from '../../context/MarketDataContext'
+import { useMarketData } from '../../context/MarketDataContext'
+import { ReconnectSchwabButton } from './ReconnectSchwabDialog'
 
 const DISMISS_KEY = 'trademinder_market_banner_dismissed'
 const CLI = 'scripts/schwab_auth.py'
@@ -17,9 +18,10 @@ function readDismissed(expiresAt: string | null): boolean {
 /**
  * Schwab refresh-token banner (admins only — the status is only loaded for admins).
  * > 72h: nothing · 72h–24h: amber, dismissible for this session · < 24h: red · expired/failing: red.
+ * Every state offers Reconnect Schwab (the in-app reconnect), with the CLI as a muted fallback.
  */
 export function MarketDataBanner() {
-  const status = useMarketDataStatus()
+  const { status } = useMarketData()
   const [dismissedFor, setDismissedFor] = useState<string | null>(null)
   if (!status || status.state === 'ok') return null
 
@@ -29,14 +31,14 @@ export function MarketDataBanner() {
   if (status.state === 'expiring') {
     const days = Math.max(1, Math.round(hours / 24))
     tone = 'amber'
-    message = `Schwab connection expires in ${days} day${days === 1 ? '' : 's'}. Run ${CLI} to renew.`
+    message = `Schwab connection expires in ${days} day${days === 1 ? '' : 's'}. Reconnect to renew it.`
   } else if (status.state === 'critical') {
     const h = Math.max(1, Math.floor(hours))
     tone = 'red'
-    message = `Schwab connection expires in ${h} hour${h === 1 ? '' : 's'}. Run ${CLI} to renew.`
+    message = `Schwab connection expires in ${h} hour${h === 1 ? '' : 's'}. Reconnect to renew it.`
   } else {
     tone = 'red'
-    message = `Market data offline. Run ${CLI}.`
+    message = 'Market data offline. Reconnect Schwab to restore it.'
   }
 
   const dismissible = tone === 'amber'
@@ -57,10 +59,16 @@ export function MarketDataBanner() {
       }`}
     >
       <AlertTriangle size={16} className="shrink-0" />
-      <span className="flex-1">{message}</span>
+      <span className="flex-1">
+        {message}
+        <span className="ml-2 text-xs opacity-60">or run <span className="font-mono">{CLI}</span></span>
+      </span>
       {status.state === 'offline' && status.last_error && (
         <span className="hidden text-xs opacity-75 md:inline" title={status.last_error}>{status.last_error}</span>
       )}
+      <ReconnectSchwabButton className={`inline-flex shrink-0 items-center gap-1.5 rounded px-2.5 py-1 text-xs font-medium text-white ${
+        tone === 'red' ? 'bg-red-600 hover:bg-red-700' : 'bg-amber-600 hover:bg-amber-700'
+      }`} />
       {dismissible && (
         <button onClick={dismiss} aria-label="Dismiss for this session"
           className="rounded p-1 hover:bg-amber-100">
