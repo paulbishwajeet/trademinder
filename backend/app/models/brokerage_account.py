@@ -7,7 +7,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func, text
 from app.database import Base
-from app.services import account_facts
+from app.services import account_facts, account_goals
 
 if TYPE_CHECKING:
     from app.models.user import User
@@ -50,6 +50,21 @@ class BrokerageAccount(Base):
     values_as_of: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     facts_updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # Goal and preferences (migration 020): weights later guidance reads. Null = not set; for the three
+    # defaulted limits, null = use the house default (never written here). Percent values: 10 = 10%.
+    # Vocabulary, effective limits and rules: app.services.account_goals.
+    objective: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    assignment_stance: Mapped[Optional[str]] = mapped_column(String(12), nullable=True)
+    monthly_premium_target: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 2), nullable=True)
+    annual_yield_target_pct: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 2), nullable=True)
+    max_position_pct: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 2), nullable=True)
+    max_speculative_position_pct: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 2), nullable=True)
+    max_margin_used_pct: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 2), nullable=True)
+    min_cash_reserve_pct: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 2), nullable=True)
+    defensive_at_loss_pct: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 2), nullable=True)
+    # Set by the service when a goal or preference actually changes.
+    goals_updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
     user: Mapped["User"] = relationship(back_populates="accounts")
     category_links: Mapped[list["AccountCategory"]] = relationship(
         back_populates="account", cascade="all, delete-orphan", lazy="selectin"
@@ -75,6 +90,17 @@ class BrokerageAccount(Base):
     def facts_complete(self) -> bool:
         return account_facts.facts_complete({f: getattr(self, f) for f in account_facts.REQUIRED_FACTS})
 
+    @property
+    def goals_complete(self) -> bool:
+        return account_goals.goals_complete({f: getattr(self, f) for f in account_goals.REQUIRED_GOALS})
+
+    @property
+    def limits(self) -> dict:
+        """Stored, effective and source for each defaulted limit (house defaults fill unset ones)."""
+        return account_goals.effective_limits(
+            {f: getattr(self, f) for f in (*account_goals.LIMIT_DEFAULTS, "margin_type")}
+        )
+
     __table_args__ = (
         CheckConstraint("last_four IS NULL OR last_four ~ '^[0-9]{4}$'", name="ck_brokerage_accounts_last_four"),
         CheckConstraint(
@@ -95,6 +121,25 @@ class BrokerageAccount(Base):
         *(
             CheckConstraint(f"{column} IS NULL OR {column} >= 0", name=f"ck_brokerage_accounts_{column}_non_negative")
             for column in account_facts.MONEY_FIELDS
+        ),
+        *(
+            CheckConstraint(
+                f"{column} IS NULL OR {column} IN ({', '.join(repr(v) for v in values)})",
+                name=f"ck_brokerage_accounts_{column}",
+            )
+            for column, values in (
+                ("objective", account_goals.OBJECTIVES),
+                ("assignment_stance", account_goals.ASSIGNMENT_STANCES),
+            )
+        ),
+        CheckConstraint("monthly_premium_target IS NULL OR (monthly_premium_target >= 0)",
+                        name="ck_brokerage_accounts_monthly_premium_target_range"),
+        *(
+            CheckConstraint(
+                f"{column} IS NULL OR ({column} {'>=' if inclusive else '>'} 0 AND {column} <= 100)",
+                name=f"ck_brokerage_accounts_{column}_range",
+            )
+            for column, (_low, inclusive) in account_goals.PCT_RANGES.items()
         ),
         Index("idx_brokerage_accounts_user", "user_id"),
         Index("idx_brokerage_accounts_default_category", "default_category_id"),

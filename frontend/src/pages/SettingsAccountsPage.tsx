@@ -7,13 +7,14 @@ import { useAccounts } from '../context/AccountsContext'
 import { AccountDialog } from '../components/Accounts/AccountDialog'
 import { accountPath } from '../lib/paths'
 import { factsSummary, formatMoney, valuesAreStale } from '../lib/accountFacts'
+import { goalsSummary } from '../lib/accountGoals'
 import type { BrokerageAccount } from '../types'
 
 export function SettingsAccountsPage() {
   const { accounts, categories, refresh } = useAccounts()
   const [editing, setEditing] = useState<BrokerageAccount | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
-  const [dialogSection, setDialogSection] = useState<'facts' | undefined>(undefined)
+  const [dialogSection, setDialogSection] = useState<'facts' | 'goals' | undefined>(undefined)
   const [confirmDelete, setConfirmDelete] = useState<BrokerageAccount | null>(null)
   const [confirmUnlink, setConfirmUnlink] = useState<BrokerageAccount | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
@@ -21,7 +22,7 @@ export function SettingsAccountsPage() {
 
   const categoryName = (id: string | null) => categories.find(c => c.id === id)?.name ?? '—'
 
-  function openEditor(account: BrokerageAccount | null, section?: 'facts') {
+  function openEditor(account: BrokerageAccount | null, section?: 'facts' | 'goals') {
     setEditing(account)
     setDialogSection(section)
     setDialogOpen(true)
@@ -57,7 +58,7 @@ export function SettingsAccountsPage() {
               <th className="px-4 py-2">Last four</th>
               <th className="px-4 py-2">Categories</th>
               <th className="px-4 py-2">Default category</th>
-              <th className="px-4 py-2">Facts</th>
+              <th className="px-4 py-2">Profile</th>
               <th className="px-4 py-2">Value</th>
               <th className="px-4 py-2">E*TRADE link</th>
               <th className="px-4 py-2">Status</th>
@@ -75,15 +76,33 @@ export function SettingsAccountsPage() {
                 <td className="px-4 py-2">{a.category_ids.length}</td>
                 <td className="px-4 py-2">{categoryName(a.default_category_id)}</td>
                 <td className="px-4 py-2">
-                  {a.facts_complete
-                    ? <span className="text-gray-700">{factsSummary(a)}</span>
-                    : (
-                      <button onClick={() => openEditor(a, 'facts')} disabled={busyId === a.id}
-                        title={factsSummary(a) || 'No facts set yet'}
-                        className="whitespace-nowrap rounded bg-amber-100 px-2 py-0.5 text-xs text-amber-800 hover:bg-amber-200 disabled:opacity-50">
-                        Facts incomplete
-                      </button>
-                    )}
+                  {a.facts_complete && a.goals_complete ? (
+                    <div className="text-gray-700">
+                      <div>{factsSummary(a)}</div>
+                      <div className="text-xs text-gray-500">{goalsSummary(a)}</div>
+                    </div>
+                  ) : (
+                    <div className="space-y-1">
+                      {a.facts_complete
+                        ? <div className="text-gray-700">{factsSummary(a)}</div>
+                        : (
+                          <button onClick={() => openEditor(a, 'facts')} disabled={busyId === a.id}
+                            title={factsSummary(a) || 'No facts set yet'}
+                            className="mr-1 whitespace-nowrap rounded bg-amber-100 px-2 py-0.5 text-xs text-amber-800 hover:bg-amber-200 disabled:opacity-50">
+                            Facts incomplete
+                          </button>
+                        )}
+                      {a.goals_complete
+                        ? <div className="text-xs text-gray-500">{goalsSummary(a)}</div>
+                        : (
+                          <button onClick={() => openEditor(a, 'goals')} disabled={busyId === a.id}
+                            title={goalsSummary(a) || 'No goal set yet'}
+                            className="whitespace-nowrap rounded bg-sky-100 px-2 py-0.5 text-xs text-sky-800 hover:bg-sky-200 disabled:opacity-50">
+                            Goal not set
+                          </button>
+                        )}
+                    </div>
+                  )}
                 </td>
                 <td className="whitespace-nowrap px-4 py-2">
                   {a.net_liquidation_value === null && a.cash_balance === null

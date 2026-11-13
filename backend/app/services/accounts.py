@@ -14,7 +14,7 @@ from app.models.trade_session import TradeSession
 from app.models.user import User
 from app.models.wheel_session import WheelSession
 from app.schemas.account import AccountCreate, AccountUpdate
-from app.services import account_facts
+from app.services import account_facts, account_goals
 from app.services.ownership import get_account, get_category
 
 
@@ -62,15 +62,20 @@ def _check_default_category(default_category_id: Optional[uuid.UUID], category_i
         raise HTTPException(status_code=400, detail="Default category must be one of the account's categories")
 
 
-def _apply_facts(account: BrokerageAccount, changes: dict[str, Any]) -> None:
-    """Merge fact/money changes over the stored values, validate the merged result (raises
-    AccountFactsError → 422), assign, and stamp facts_updated_at / values_as_of only on real changes."""
-    fields = account_facts.FACT_FIELDS + account_facts.MONEY_FIELDS
-    stored = {f: getattr(account, f) for f in fields}
-    merged = {**stored, **{f: v for f, v in changes.items() if f in fields}}
-    account_facts.validate(merged)
+_PROFILE_FIELDS = account_facts.FACT_FIELDS + account_facts.MONEY_FIELDS + account_goals.GOAL_FIELDS
 
-    changed = {f for f in fields if merged[f] != stored[f]}
+
+def _apply_profile(account: BrokerageAccount, changes: dict[str, Any]) -> None:
+    """Merge fact, money and goal changes over the stored values and validate the merged result in one
+    pass (the cash-margin rule spans a fact and a goal, so both edit orders fail; raises
+    AccountFactsError → 422). Then assign and stamp facts_updated_at, values_as_of and
+    goals_updated_at, each only when one of its own fields actually changes."""
+    stored = {f: getattr(account, f) for f in _PROFILE_FIELDS}
+    merged = {**stored, **{f: v for f, v in changes.items() if f in _PROFILE_FIELDS}}
+    account_facts.validate(merged)
+    account_goals.validate(merged)
+
+    changed = {f for f in _PROFILE_FIELDS if merged[f] != stored[f]}
     for f in changed:
         setattr(account, f, merged[f])
     now = datetime.now(timezone.utc)
@@ -79,10 +84,12 @@ def _apply_facts(account: BrokerageAccount, changes: dict[str, Any]) -> None:
     if changed & set(account_facts.MONEY_FIELDS):
         has_value = any(merged[f] is not None for f in account_facts.MONEY_FIELDS)
         account.values_as_of = now if has_value else None
+    if changed & set(account_goals.GOAL_FIELDS):
+        account.goals_updated_at = now
 
 
-def _pop_fact_changes(data: dict[str, Any]) -> dict[str, Any]:
-    return {f: data.pop(f) for f in account_facts.FACT_FIELDS + account_facts.MONEY_FIELDS if f in data}
+def _pop_profile_changes(data: dict[str, Any]) -> dict[str, Any]:
+    return {f: data.pop(f) for f in _PROFILE_FIELDS if f in data}
 
 
 async def reload_account(db: AsyncSession, account_id: uuid.UUID) -> BrokerageAccount:
@@ -119,7 +126,7 @@ async def create_account(
         default_category_id=payload.default_category_id,
         is_default=False,
     )
-    _apply_facts(account, _pop_fact_changes(payload.model_dump(exclude_unset=True)))
+    _apply_profile(account, _pop_profile_changes(payload.model_dump(exclude_unset=True)))
     db.add(account)
     await db.flush()
     for cid in category_ids:
@@ -136,7 +143,7 @@ async def create_account(
 async def update_account(db: AsyncSession, user: User, account_id: uuid.UUID, payload: AccountUpdate) -> BrokerageAccount:
     account = await get_account(db, user, account_id)
     data = payload.model_dump(exclude_unset=True)
-    _apply_facts(account, _pop_fact_changes(data))
+    _apply_profile(account, _pop_profile_changes(data))
 
     if "default_category_id" in data and data["default_category_id"] is not None:
         await get_category(db, user, data["default_category_id"])

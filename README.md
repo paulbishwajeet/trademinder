@@ -174,6 +174,16 @@ Ownership is **user → brokerage account → trades / wheels / spreads**.
     show **Facts incomplete**.
   - Impossible combinations are rejected: an IRA with margin, or uncovered options without margin.
   - Nothing else in the app reads them yet.
+- **Goal and preferences (migration 020):** each account can also record its objective (income, growth, mixed),
+  assignment stance (willing, selective, unwilling), optional monthly premium and annual yield targets, and risk
+  limits.
+  - **Limits:** max position, max speculative position and max margin used fall back to house defaults (10%, 3%,
+    30%) until you override them, and **Use default** resets one. Minimum cash reserve and defensive-at-loss have
+    no default.
+  - **Rules:** a cash account can't have a margin limit, and the speculative limit can't exceed the position
+    limit.
+  - **Display:** accounts without an objective and stance show **Goal not set**.
+  - Nothing else in the app reads them yet.
 
 ### Migration 001 — Initial Schema
 

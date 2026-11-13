@@ -42,6 +42,41 @@ def _blank_to_none(value):
 OptionsLevelLabel = Annotated[Optional[Annotated[str, Field(max_length=40)]], BeforeValidator(_blank_to_none)]
 
 
+Objective = Literal["income", "growth", "mixed"]
+AssignmentStance = Literal["willing", "selective", "unwilling"]
+LimitSource = Literal["account", "default", "cash_account", "position_limit"]
+
+
+class LimitInfo(BaseModel):
+    """One defaulted limit. `source` says where `effective` came from: the account's stored value, the
+    house default, a cash account (margin limit 0), or the position limit capping the speculative default."""
+    stored: Optional[Decimal] = None
+    effective: Decimal
+    source: LimitSource
+    default: Decimal
+
+
+class AccountLimits(BaseModel):
+    max_position_pct: LimitInfo
+    max_speculative_position_pct: LimitInfo
+    max_margin_used_pct: LimitInfo
+
+
+class AccountGoalsInput(BaseModel):
+    """Goal and preferences, every one optional. On update, absent = left alone and an explicit null
+    clears it (a limit then falls back to the house default). Ranges and cross-field rules run in the
+    service (422 with a code)."""
+    objective: Optional[Objective] = None
+    assignment_stance: Optional[AssignmentStance] = None
+    monthly_premium_target: Optional[Decimal] = None
+    annual_yield_target_pct: Optional[Decimal] = None
+    max_position_pct: Optional[Decimal] = None
+    max_speculative_position_pct: Optional[Decimal] = None
+    max_margin_used_pct: Optional[Decimal] = None
+    min_cash_reserve_pct: Optional[Decimal] = None
+    defensive_at_loss_pct: Optional[Decimal] = None
+
+
 class AccountFactsInput(BaseModel):
     """Every fact is optional. On update, an absent field is left alone and an explicit null clears it.
     Combination rules and money checks run in the service (422 with a code)."""
@@ -93,9 +128,23 @@ class AccountResponse(AccountSummary):
     # Derived, read-only
     account_tax_status: Optional[AccountTaxStatus] = None
     facts_complete: bool = False
+    # Goal and preferences. Percent and money serialize as JSON strings; 10 means 10%.
+    objective: Optional[Objective] = None
+    assignment_stance: Optional[AssignmentStance] = None
+    monthly_premium_target: Optional[Decimal] = None
+    annual_yield_target_pct: Optional[Decimal] = None
+    max_position_pct: Optional[Decimal] = None
+    max_speculative_position_pct: Optional[Decimal] = None
+    max_margin_used_pct: Optional[Decimal] = None
+    min_cash_reserve_pct: Optional[Decimal] = None
+    defensive_at_loss_pct: Optional[Decimal] = None
+    goals_updated_at: Optional[datetime] = None
+    # Derived, read-only
+    limits: AccountLimits
+    goals_complete: bool = False
 
 
-class AccountCreate(AccountFactsInput):
+class AccountCreate(AccountFactsInput, AccountGoalsInput):
     broker: Annotated[str, Field(min_length=1, max_length=30)]
     nickname: Annotated[str, Field(min_length=1, max_length=50)]
     last_four: Optional[LastFour] = None
@@ -106,7 +155,7 @@ class AccountCreate(AccountFactsInput):
     default_category_id: Optional[uuid.UUID] = None
 
 
-class AccountUpdate(AccountFactsInput):
+class AccountUpdate(AccountFactsInput, AccountGoalsInput):
     broker: Optional[Annotated[str, Field(min_length=1, max_length=30)]] = None
     nickname: Optional[Annotated[str, Field(min_length=1, max_length=50)]] = None
     last_four: Optional[LastFour] = None
