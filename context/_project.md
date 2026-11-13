@@ -68,4 +68,5 @@ stockpile-main/     Older Python workspace (options scanner etc.), partly supers
 - ✅ Margin dashboard (CSV, client-side Black-Scholes)
 - ✅ Chrome extension: badges, hover commentary, alert tinting, wheel pills, Reconcile, account awareness, sign-in
 - ✅ Multi-user: accounts and ownership, account container UI, Schwab hardening, Google sign-in and HTTPS
+- ⏳ In-app Schwab reconnect, phase 1 (`feature/schwab-reconnect`, unmerged)
 - ⏳ Morning briefing: endpoint returns 501 (stub)

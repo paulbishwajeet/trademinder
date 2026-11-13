@@ -326,15 +326,23 @@ no retries and no log spam.
 | Mixed endpoints (trades, trade detail, wheel detail, active slots, positions/status, dashboard summary, screener list) | Return their database data with the `X-Market-Data-Offline: true` header. Market fields are `null` (screener rows are served as stored, with `stale: true`). Object responses also carry `market_data_offline: true`. |
 | Everything else | Keeps working: journal, commentary, wheels, slot resolves, accounts, Reconcile, categories, margin CSV analysis. |
 
-- **Recovery:** re-run `python scripts/schwab_auth.py`. The provider re-reads the token row at most once a
-  minute and resumes on its own, without a restart. Going offline and coming back are each logged once.
+- **Recovery (re-auth):** **Reconnect in the app**: the admin clicks **Reconnect Schwab** (on the banner or in
+  Settings → Market data), logs in at Schwab, and pastes the address of the page that fails to load afterwards.
+  The new tokens take effect immediately, with no restart; runbook: `docs/deployment/schwab-reconnect.md`.
+  - **CLI fallback:** `python scripts/schwab_auth.py` writes the row of whichever database `DATABASE_URL` points
+    to; the provider re-reads the row at most once a minute and resumes on its own.
+  - Going offline and coming back are each logged once.
 - **Expiry banner:** admins see it in the app. Amber from 72h to 24h left (dismissible for the session), red
   under 24h, and red "Market data offline" once expired. It is backed by `GET /api/market-data/status`
   (admin only), and `GET /api/me` tells the SPA whether the user is an admin.
-- **Not yet:** an in-app "Reconnect Schwab" button arrives in Part 5, with HTTPS.
+- **Reconnect endpoints** (admin only): `start` returns Schwab's authorize URL with a signed, single-use,
+  10-minute state. `complete` validates the pasted URL, exchanges the code, and stores the tokens. Errors are
+  `{detail, code}` (400/409/502). The CLI and the app share `app/services/schwab_oauth.py`.
 
 ```
 GET    /api/market-data/status      (admin) provider, state ok|expiring|critical|offline, expiry, last success/error
+POST   /api/market-data/reconnect/start     (admin) → { authorize_url, state_expires_at }
+POST   /api/market-data/reconnect/complete  (admin) { redirect_url } → same shape as /status
 GET    /api/me                      current user (id, email, display_name, role)
 GET    /api/market/quote/{ticker}
 GET    /api/market/options/{ticker}
@@ -560,7 +568,8 @@ TradeMinder is multi-user. Sign-in is with **Google**, which serves only as the 
   last-used time, which the service worker sends as a bearer header on every call. Only extension IDs in
   `EXTENSION_IDS` can receive tokens.
 - **Settings → Connected extensions** lists and revokes them.
-- **Schwab re-auth is still the CLI** (`scripts/schwab_auth.py`); an in-app reconnect is future work.
+- **Schwab re-auth:** the in-app **Reconnect Schwab** (admin only) is the default, and `scripts/schwab_auth.py` is
+  the fallback. See `docs/deployment/schwab-reconnect.md`.
 
 Local dev with real sign-in: set `PUBLIC_BASE_URL=http://localhost:5430` and the Google client id/secret in
 `.env`, and add `http://localhost:5430/api/auth/google/callback` to the OAuth client's redirect URIs.

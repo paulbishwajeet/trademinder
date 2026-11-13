@@ -20,6 +20,37 @@ Why the project is the way it is. **Newest entries first.**
 
 ---
 
+### 2026-11-12 — In-app Schwab reconnect, phase 1: paste the redirect URL
+- **Area:** backend, frontend, infra
+- **Type:** endpoint, convention, deferred
+- **What changed:**
+  - New admin-only `POST /api/market-data/reconnect/start` → `{authorize_url, state_expires_at}`.
+  - New admin-only `POST /api/market-data/reconnect/complete` `{redirect_url}` → the `GET /status` shape.
+    Errors are `{detail, code}` (400/409/502).
+  - **Reconnect Schwab** appears on every banner state, and in a new admin-only Settings → **Market data** tab,
+    a tab rather than a section because Settings is a tabbed layout.
+  - The authorize URL, code exchange and token-row write moved into the standalone
+    `backend/app/services/schwab_oauth.py`, shared by the CLI, the reconnect and the provider's refresh write.
+  - `SchwabClient.install_tokens()` writes under the provider lock and comes online at once.
+- **Why:**
+  - Re-auth meant the Mac, the CLI and copying the token row to the NAS. Schwab accepts exactly one callback
+    URL, so the app can't receive the redirect; the admin pastes it.
+  - Sharing rather than duplicating keeps the CLI and the app identical. The module needs no app settings, so the
+    CLI still runs standalone from `.env`.
+- **Impact:**
+  - **No migration** (head stays 018).
+  - The state is signed with `AUTH_STATE_SECRET`, bound to the admin, lasts 10 minutes, and is single-use in
+    process memory. A backend restart forgets pending states, so the admin starts again.
+  - Schwab's 400/401/403 on the exchange is always reported as `code_expired`.
+  - The success and failure lines log at WARNING. The app has no logging config, so INFO never reaches the
+    container log; the provider's "back online" line already did this.
+  - **Deferred:**
+    - a backend callback route (phase 2, needs Schwab's callback moved);
+    - automatic re-auth;
+    - per-user connections.
+  - The end-to-end check against real Schwab is still to do; see the spec's checklist.
+- **Links:** `feature/schwab-reconnect` · (uncommitted) · `context/feature-schwab-reconnect.md`
+
 ### 2026-11-11 — Wheels without a slot can be deleted and edited
 - **Area:** backend, frontend
 - **Type:** endpoint
