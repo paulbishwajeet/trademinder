@@ -56,7 +56,7 @@ Why the project is the way it is. **Newest entries first.**
   - **Limited margin:** `limited_margin` gets no margin rule; that's an open question.
   - **`default` field:** each limit object carries the house default, so the UI never duplicates the constants.
   - **Unused for now:** nothing reads these fields yet.
-- **Links:** `feature/account-goals` · `context/feature-account-goals.md` ·
+- **Links:** `feature/account-goals` · `1c9ec72` · `context/feature-account-goals.md` ·
   `docs/superpowers/specs/2026-11-13-account-goals-design.md`
 
 ### 2026-11-13 — Account facts, part 1 of the account profile (migration 019)

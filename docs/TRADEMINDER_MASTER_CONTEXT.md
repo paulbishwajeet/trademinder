@@ -30,7 +30,7 @@ The 5-part multi-user plan was **released on `master` on 2026-11-11**, and two W
   `facts_updated_at`.
 - Nothing reads the facts yet. See section 3.6.
 
-**In progress (2026-11-13, `feature/account-goals`, migration 020, not yet merged): account goal and preferences, part 2 of the account profile.**
+**On `develop` (2026-11-13, `1c9ec72`, migration 020; not yet released to `master`): account goal and preferences, part 2 of the account profile.**
 - Each account gets:
   - an editable objective and assignment stance;
   - optional targets: monthly premium and annual yield;
@@ -51,7 +51,7 @@ The 5-part multi-user plan was **released on `master` on 2026-11-11**, and two W
 | 4. Schwab hardening | Market-data provider boundary and offline detection. Offline: market endpoints return 503 `market_data_offline`, mixed endpoints return null fields plus a flag, stale caches used where possible, scheduled market jobs skip (logged once on entering and leaving offline). Amber/red expiry banner, dashes in the UI, notice in the extension, admin-only status endpoint. Non-market features keep working; CLI re-auth recovers without a restart. | none |
 | 5. Login | Google OIDC (PKCE, state, nonce) as identity check only; backend-issued server-side sessions (httpOnly, Secure, Lax cookie holding a hashed token, 30-day sliding; no JWT, no Redis). Sign-in: known Google subject → in; else email match on an invited or owner row binds it; else **pending** until admin approval; invites are pre-approved. Admin page: invite, approve, reject, disable, enable, change role, with self and last-admin guards. Extension: one-button sign-in via `/extension/connect`, revocable hashed bearer token, listed under Settings → Connected extensions, allow-listed extension IDs only. Every API route needs a session or extension token; CORS allows only those extension origins. HTTPS: Traefik on 443, Let's Encrypt via Cloudflare DNS-01 (NAS never exposed to the internet); `/api` → backend, everything else → frontend; only 443 published. | 018 |
 
-**Alembic head is 019 on `develop` (018 on `master` until the next release); `feature/account-goals` adds 020 (next 021 once merged).**
+**Alembic head is 020 on `develop` (018 on `master` until the next release); the next migration is 021.**
 
 **Deployment learnings (do not relearn these; history in `docs/decisions.md`):**
 - The Portainer stack must be a **Git stack** (a "Limited" stack has no environment variables) and must be named **`trademinder`**, because the database volume is `trademinder_pgdata`.
@@ -77,7 +77,8 @@ The 5-part multi-user plan was **released on `master` on 2026-11-11**, and two W
    - The "other slots need action" notice ignores new wheels that have no slot.
    - Wheels that have slots have no edit UI, although `PATCH /api/wheel/{id}` allows changing shares and date.
 8. Account facts: `cash_balance` can't be negative (per the part-1 prompt), but a margin debit is negative cash. Decide whether to allow negative cash on margin types.
-9. Unmerged work predating the release:
+9. Account goals: should `limited_margin` (no borrowing in practice) also force the margin limit to 0, like `cash`? Left unconstrained for now.
+10. Unmerged work predating the release:
    - `fix/day-color-regular-session` (2026-10-29, build the daily bar from the regular session);
    - `fix/earnings-date-cache` (2026-10-29, cache the earnings date and stop swallowing lookup failures);
    - `feature/commentaryfromextension` (2026-05, extension commentary panel; probably superseded).

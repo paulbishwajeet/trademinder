@@ -1,6 +1,6 @@
 # Feature: Account goal and preferences (account profile, part 2)
 
-**Status:** In Progress
+**Status:** Complete
 **Branch:** feature/account-goals
 **Created:** 2026-11-13
 
@@ -54,7 +54,7 @@ fact, `max_margin_used_pct` a goal).
 | Migration number | 020 | `alembic heads` = 019 on 2026-11-13 (account facts) |
 
 ## Open Questions / Blockers
-- [ ] Should `limited_margin` (no borrowing in practice) also force the margin limit to 0 like `cash`? The prompt names only cash; left unconstrained for now.
+- [ ] (Moved to master context §0 open items) Should `limited_margin` (no borrowing in practice) also force the margin limit to 0 like `cash`? The prompt names only cash; left unconstrained for now.
 
 ## Progress Log
 - 2026-11-13: Branch and worktree created off develop `92eafa1` (account facts merged). Head 019 → migration 020.
@@ -65,7 +65,9 @@ fact, `max_margin_used_pct` a goal).
   Manual checklist passed on a dev-DB copy (spec Results); fixed percent formatting in the speculative error.
   Docs: master context §0, §3.6, §8; decisions entry; README.
 
+- 2026-11-13: Committed `1c9ec72` and merged to develop. Feature complete: editable goal and preferences per
+  account, house defaults with stored/effective/source, cash-margin and speculative rules in every edit order,
+  "Goal not set" marker. The `limited_margin` question moved to the master context open items.
+
 ## Current State (Resume Here)
-Worktree `.claude/worktrees/account-goals`. Implementation, tests, manual checklist and docs are done, all uncommitted.
-Next: the user reviews and asks to commit. Then merge to develop and set this file Complete per CLAUDE.md. Migration
-020 reaches the NAS with the next release (Pull and redeploy runs `alembic upgrade head`).
+COMPLETE — merged to develop (2026-11-13). Not yet on `master`; migration 020 reaches the NAS with the next release.
