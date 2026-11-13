@@ -1,5 +1,5 @@
 // frontend/src/context/MarketDataContext.tsx
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { marketDataApi, type MarketDataStatus } from '../api/marketData'
 import { useAuth } from './AuthContext'
 
@@ -8,14 +8,31 @@ const POLL_MS = 15 * 60 * 1000
 interface MarketDataState {
   /** Provider status; null for non-admin users or before the first load. */
   status: MarketDataStatus | null
+  /** Reload the status now (admins only; a no-op otherwise). */
+  refresh: () => Promise<void>
+  /** Use a status the server just returned (e.g. after a Schwab reconnect) without another request. */
+  apply: (status: MarketDataStatus) => void
 }
 
-const MarketDataContext = createContext<MarketDataState>({ status: null })
+const MarketDataContext = createContext<MarketDataState>({
+  status: null,
+  refresh: async () => {},
+  apply: () => {},
+})
 
 /** For admin users only: loads the market data status at app start and every 15 minutes. */
 export function MarketDataProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<MarketDataStatus | null>(null)
   const isAdmin = useAuth().user?.role === 'admin'
+
+  const refresh = useCallback(async () => {
+    if (!isAdmin) return
+    try {
+      setStatus(await marketDataApi.status())
+    } catch {
+      // Status unavailable (backend down): keep the last known value rather than guessing.
+    }
+  }, [isAdmin])
 
   useEffect(() => {
     if (!isAdmin) {
@@ -39,9 +56,11 @@ export function MarketDataProvider({ children }: { children: ReactNode }) {
     }
   }, [isAdmin])
 
-  return <MarketDataContext.Provider value={{ status }}>{children}</MarketDataContext.Provider>
+  const value = useMemo(() => ({ status, refresh, apply: setStatus }), [status, refresh])
+  return <MarketDataContext.Provider value={value}>{children}</MarketDataContext.Provider>
 }
 
-export function useMarketDataStatus(): MarketDataStatus | null {
-  return useContext(MarketDataContext).status
+/** status (null for non-admins) plus refresh / apply (the reconnect dialog, Settings → Market data). */
+export function useMarketData(): MarketDataState {
+  return useContext(MarketDataContext)
 }
