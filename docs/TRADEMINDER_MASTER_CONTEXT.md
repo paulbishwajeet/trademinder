@@ -30,6 +30,19 @@ The 5-part multi-user plan was **released on `master` on 2026-11-11**, and two W
   `facts_updated_at`.
 - Nothing reads the facts yet. See section 3.6.
 
+**In progress (2026-11-13, `feature/account-goals`, migration 020, not yet merged): account goal and preferences, part 2 of the account profile.**
+- Each account gets:
+  - an editable objective and assignment stance;
+  - optional targets: monthly premium and annual yield;
+  - risk limits: max position, max speculative position and max margin used (these three default to house
+    values), plus minimum cash reserve and defensive-at-loss.
+- **Defaults:** an unset limit means the house default (`app/services/house_defaults.py`: 10% / 3% / 30%; to be
+  sourced from the KB later), never "no limit". The API returns stored, effective and source for each.
+- **Rules:** a cash account can't have a margin limit above 0, in either edit order, and a speculative limit can't
+  exceed the effective position limit.
+- **Display:** "Goal not set" appears next to "Facts incomplete".
+- Nothing reads these yet. See section 3.6.
+
 | Part | What shipped | Migration |
 |---|---|---|
 | 1. Accounts and ownership | `users`, `brokerage_accounts`, account categories, screener-account memberships. `user_id` on every user-owned table; `account_id` on trades, wheels, spreads and screener notes. Existing data assigned to the owner (seeded from `OWNER_EMAIL`) and one default "E*TRADE" account. Every query scoped through one seam, `get_current_user`; isolation holds for the admin too. A SPECULATIVE category was added. | 015–016 |
@@ -38,7 +51,7 @@ The 5-part multi-user plan was **released on `master` on 2026-11-11**, and two W
 | 4. Schwab hardening | Market-data provider boundary and offline detection. Offline: market endpoints return 503 `market_data_offline`, mixed endpoints return null fields plus a flag, stale caches used where possible, scheduled market jobs skip (logged once on entering and leaving offline). Amber/red expiry banner, dashes in the UI, notice in the extension, admin-only status endpoint. Non-market features keep working; CLI re-auth recovers without a restart. | none |
 | 5. Login | Google OIDC (PKCE, state, nonce) as identity check only; backend-issued server-side sessions (httpOnly, Secure, Lax cookie holding a hashed token, 30-day sliding; no JWT, no Redis). Sign-in: known Google subject → in; else email match on an invited or owner row binds it; else **pending** until admin approval; invites are pre-approved. Admin page: invite, approve, reject, disable, enable, change role, with self and last-admin guards. Extension: one-button sign-in via `/extension/connect`, revocable hashed bearer token, listed under Settings → Connected extensions, allow-listed extension IDs only. Every API route needs a session or extension token; CORS allows only those extension origins. HTTPS: Traefik on 443, Let's Encrypt via Cloudflare DNS-01 (NAS never exposed to the internet); `/api` → backend, everything else → frontend; only 443 published. | 018 |
 
-**Alembic head is 019 on `develop` (018 on `master` until the next release); the next migration is 020.**
+**Alembic head is 019 on `develop` (018 on `master` until the next release); `feature/account-goals` adds 020 (next 021 once merged).**
 
 **Deployment learnings (do not relearn these; history in `docs/decisions.md`):**
 - The Portainer stack must be a **Git stack** (a "Limited" stack has no environment variables) and must be named **`trademinder`**, because the database volume is `trademinder_pgdata`.
@@ -185,7 +198,7 @@ awaiting_sold_put ──sell put──► sold_put_active ──expire OTM──
 
 **`schwab_tokens`** — single row (`id=1`) with Schwab OAuth access + refresh tokens and expiries. Refresh token has a **fixed 7-day life from original auth** — refreshing the access token does NOT extend it, so `refresh_expires_at` is preserved on every refresh.
 
-### 3.6 Accounts and ownership (migrations 015–017, 019)
+### 3.6 Accounts and ownership (migrations 015–017, 019, 020)
 
 User → brokerage accounts → trades, wheels, spreads. **`brokerage_accounts`** per user (several per broker allowed). Categories are a per-user library; each account picks the categories it uses and a default one. Screener: one symbol row per user, linked to accounts via memberships; screener notes are per account. One wheel per ticker **per account**. E*TRADE dropdown entries link to accounts by SHA-256 fingerprint.
 
@@ -211,7 +224,38 @@ later guidance. They're stored per account because an IRA and a taxable account 
   - `uncovered` needs `margin`/`portfolio_margin` (`uncovered_requires_margin`);
   - money can't be negative (`negative_value`) or out of range (`invalid_value`).
 
-  Merely unusual combinations are allowed. Goals and preferences come in a later part.
+  Merely unusual combinations are allowed.
+
+**Goal and preferences (migration 020).** These are per-account weights (what's best among the allowed moves) for
+later guidance. The assignment stance, for example, drives "roll versus take assignment".
+- **Nullable:** every column is nullable, and null means "not set". The migration set nothing.
+- **Enumerations:**
+  - `objective`: `income`, `growth`, `mixed`;
+  - `assignment_stance`: `willing` (happy to own at the strike), `selective` (depends on the ticker), `unwilling`
+    (avoid assignment).
+- **Targets:** `monthly_premium_target` (`numeric(12,2)`, ≥ 0) and `annual_yield_target_pct` (0–100).
+- **Limits,** all `numeric(5,2)` percent values (10 = 10%), range-checked in the DB:
+  - `max_position_pct` (> 0, ≤ 100);
+  - `max_speculative_position_pct` (> 0, ≤ 100; tickers in the SPECULATIVE category);
+  - `max_margin_used_pct` (0–100);
+  - `min_cash_reserve_pct` (0–100);
+  - `defensive_at_loss_pct` (> 0, ≤ 100; the unrealized loss on one position at which guidance turns defensive).
+- **Stored versus effective:** an unset position, speculative or margin limit means the **house default**
+  (`app/services/house_defaults.py`: 10 / 3 / 30; a later feature sources them from the KB), never "no limit".
+  Defaults are never written into the row, so changing one reaches every account that didn't override it.
+  - The API's `limits.<field>` = `{stored, effective, source, default}`.
+  - `source` is `account`, `default`, `cash_account` (the margin limit on a cash account: 0), or `position_limit`
+    (the speculative default capped at a tighter position limit).
+- **Rules (service; facts and goals merged and validated together, so every edit order holds):**
+  - `cash_account_margin`: `margin_type = cash` with a stored margin limit > 0. Setting the limit, or switching
+    the margin type, both fail.
+  - `speculative_above_position`: a stored speculative limit above the effective position limit. Raising one, or
+    lowering or clearing the other, both fail.
+  - `out_of_range`, `negative_value`, `invalid_value`.
+  - Merely unusual combinations pass.
+- **`goals_updated_at`:** moves only when a goal or preference actually changes. It's independent of
+  `facts_updated_at`, in both directions.
+- **`goals_complete`:** `objective` and `assignment_stance` are both set.
 
 ---
 
@@ -437,7 +481,7 @@ All routes under `/api`. Everything except `auth` and `me` is mounted behind the
 | me | `GET /me` (allowed while pending; returns status) |
 | admin | `/admin/users`: list, invite, approve, reject, disable, enable, change role (admin only) |
 | extension | `/extension/connect` (cookie session only; mints a token for an allow-listed extension), `/extension/tokens`, `/extension/tokens/current`, `/extension/tokens/{id}` |
-| accounts | list, create, reorder, patch, categories, archive, restore, delete; E*TRADE links (`/links/resolve`, `/links`, `/{id}/link`). Create, patch and list carry the account facts (section 3.6): every fact is optional on create and patch, and an explicit `null` on patch clears it. Responses add `account_tax_status`, `facts_complete`, `facts_updated_at` and `values_as_of`; money is JSON strings. Rule violations: 422 `{detail, code, fields}` |
+| accounts | list, create, reorder, patch, categories, archive, restore, delete; E*TRADE links (`/links/resolve`, `/links`, `/{id}/link`). Create, patch and list carry the account facts (section 3.6): every fact is optional on create and patch, and an explicit `null` on patch clears it. Responses add `account_tax_status`, `facts_complete`, `facts_updated_at` and `values_as_of`; money is JSON strings. The same endpoints carry the goal and preferences (migration 020). Responses add `limits` (`{stored, effective, source, default}` per defaulted limit), `goals_complete` and `goals_updated_at`; an explicit `null` on patch returns a limit to the house default. Rule violations: 422 `{detail, code, fields}` |
 | dashboard | `GET /dashboard/summary` (per-account cards) |
 | market-data | `GET /market-data/status` (admin only; Schwab token status). `POST /market-data/reconnect/start` → `{authorize_url, state_expires_at}` and `POST /market-data/reconnect/complete` `{redirect_url}` → the status shape (admin only; errors `{detail, code}`: 400 `bad_url`/`authorization_denied`/`missing_code`/`missing_state`/`code_expired`, 409 `state_invalid`/`state_expired`/`not_configured`, 502 `schwab_unreachable`) |
 | trades | CRUD, close, category assign, rationale, wheel-by-id |

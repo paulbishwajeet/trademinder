@@ -10,11 +10,19 @@ import {
   valuesAreStale, type FactChoice,
 } from '../../lib/accountFacts'
 import {
-  KNOWN_BROKERS, type AccountFacts, type AccountPurpose, type BrokerageAccount, type MarginType, type OptionsTier,
+  ASSIGNMENT_STANCES, LIMIT_LABELS, OBJECTIVES, SOURCE_LABELS, isPctInput,
+} from '../../lib/accountGoals'
+import {
+  KNOWN_BROKERS, type AccountFacts, type AccountGoals, type AccountPurpose, type AssignmentStance,
+  type BrokerageAccount, type LimitField, type MarginType, type Objective, type OptionsTier,
   type TaxTreatment,
 } from '../../types'
 
-type FactField = keyof AccountFacts
+type ProfileField = keyof AccountFacts | keyof AccountGoals
+const GOAL_FIELDS: ProfileField[] = [
+  'objective', 'assignment_stance', 'monthly_premium_target', 'annual_yield_target_pct', 'max_position_pct',
+  'max_speculative_position_pct', 'max_margin_used_pct', 'min_cash_reserve_pct', 'defensive_at_loss_pct',
+]
 
 interface Props {
   open: boolean
@@ -22,14 +30,14 @@ interface Props {
   /** Edit this account; omit to create a new one. */
   account?: BrokerageAccount | null
   onSaved?: (account: BrokerageAccount) => void
-  /** 'facts' scrolls to the Account facts section on open (from the "Facts incomplete" marker). */
-  initialSection?: 'facts'
+  /** Scrolls to that section on open (from the "Facts incomplete" / "Goal not set" markers). */
+  initialSection?: 'facts' | 'goals'
 }
 
 /** Shared by "+ Add account" and the gear icon: broker, nickname, last four, categories, default category,
- *  and the account facts. */
+ *  the account facts, and the goal and preferences. */
 export function AccountDialog({ open, onOpenChange, account, onSaved, initialSection }: Props) {
-  const { categories, refresh } = useAccounts()
+  const { accounts, categories, refresh } = useAccounts()
   const [broker, setBroker] = useState<string>(KNOWN_BROKERS[0])
   const [nickname, setNickname] = useState('')
   const [lastFour, setLastFour] = useState('')
@@ -42,10 +50,20 @@ export function AccountDialog({ open, onOpenChange, account, onSaved, initialSec
   const [levelLabel, setLevelLabel] = useState('')
   const [netLiq, setNetLiq] = useState('')
   const [cash, setCash] = useState('')
-  const [fieldErrors, setFieldErrors] = useState<Partial<Record<FactField, string>>>({})
+  const [objective, setObjective] = useState<Objective | null>(null)
+  const [stance, setStance] = useState<AssignmentStance | null>(null)
+  const [monthlyTarget, setMonthlyTarget] = useState('')
+  const [yieldTarget, setYieldTarget] = useState('')
+  const [maxPosition, setMaxPosition] = useState('')
+  const [maxSpeculative, setMaxSpeculative] = useState('')
+  const [maxMargin, setMaxMargin] = useState('')
+  const [cashReserve, setCashReserve] = useState('')
+  const [defensiveLoss, setDefensiveLoss] = useState('')
+  const [fieldErrors, setFieldErrors] = useState<Partial<Record<ProfileField, string>>>({})
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const factsRef = useRef<HTMLFieldSetElement>(null)
+  const goalsRef = useRef<HTMLFieldSetElement>(null)
 
   useEffect(() => {
     if (!open) return
@@ -56,6 +74,15 @@ export function AccountDialog({ open, onOpenChange, account, onSaved, initialSec
     setLevelLabel(account?.options_level_label ?? '')
     setNetLiq(moneyToInput(account?.net_liquidation_value ?? null))
     setCash(moneyToInput(account?.cash_balance ?? null))
+    setObjective(account?.objective ?? null)
+    setStance(account?.assignment_stance ?? null)
+    setMonthlyTarget(moneyToInput(account?.monthly_premium_target ?? null))
+    setYieldTarget(moneyToInput(account?.annual_yield_target_pct ?? null))
+    setMaxPosition(moneyToInput(account?.max_position_pct ?? null))
+    setMaxSpeculative(moneyToInput(account?.max_speculative_position_pct ?? null))
+    setMaxMargin(moneyToInput(account?.max_margin_used_pct ?? null))
+    setCashReserve(moneyToInput(account?.min_cash_reserve_pct ?? null))
+    setDefensiveLoss(moneyToInput(account?.defensive_at_loss_pct ?? null))
     setFieldErrors({})
     setBroker(account?.broker ?? KNOWN_BROKERS[0])
     setNickname(account?.nickname ?? '')
@@ -66,11 +93,12 @@ export function AccountDialog({ open, onOpenChange, account, onSaved, initialSec
   }, [open, account, categories])
 
   useEffect(() => {
-    if (!open || initialSection !== 'facts') return
+    if (!open || !initialSection) return
     // After the dialog content mounts.
     const id = requestAnimationFrame(() => {
-      factsRef.current?.scrollIntoView({ block: 'start' })
-      factsRef.current?.querySelector<HTMLSelectElement>('select')?.focus()
+      const section = initialSection === 'facts' ? factsRef.current : goalsRef.current
+      section?.scrollIntoView({ block: 'start' })
+      section?.querySelector<HTMLElement>('select, button[role="radio"]')?.focus()
     })
     return () => cancelAnimationFrame(id)
   }, [open, initialSection])
@@ -79,8 +107,9 @@ export function AccountDialog({ open, onOpenChange, account, onSaved, initialSec
   if (account && !brokerOptions.includes(account.broker)) brokerOptions.unshift(account.broker)
 
   const lastFourValid = lastFour === '' || /^\d{4}$/.test(lastFour)
-  const moneyValid = isMoneyInput(netLiq) && isMoneyInput(cash)
-  const canSave = nickname.trim().length > 0 && lastFourValid && moneyValid && !saving
+  const moneyValid = isMoneyInput(netLiq) && isMoneyInput(cash) && isMoneyInput(monthlyTarget)
+  const pctValid = [yieldTarget, maxPosition, maxSpeculative, maxMargin, cashReserve, defensiveLoss].every(isPctInput)
+  const canSave = nickname.trim().length > 0 && lastFourValid && moneyValid && pctValid && !saving
   const selectedCategories = categories.filter(c => categoryIds.includes(c.id))
 
   function toggleCategory(id: string) {
@@ -96,6 +125,22 @@ export function AccountDialog({ open, onOpenChange, account, onSaved, initialSec
       set(value)
       // A rule names two fields; editing any fact clears the message.
       setFieldErrors(prev => (Object.keys(prev).length > 0 ? {} : prev))
+    }
+  }
+
+  const orNull = (v: string) => (v === '' ? null : v)
+
+  function goalsPayload(): AccountGoals {
+    return {
+      objective,
+      assignment_stance: stance,
+      monthly_premium_target: orNull(monthlyTarget),
+      annual_yield_target_pct: orNull(yieldTarget),
+      max_position_pct: orNull(maxPosition),
+      max_speculative_position_pct: orNull(maxSpeculative),
+      max_margin_used_pct: orNull(maxMargin),
+      min_cash_reserve_pct: orNull(cashReserve),
+      defensive_at_loss_pct: orNull(defensiveLoss),
     }
   }
 
@@ -126,12 +171,14 @@ export function AccountDialog({ open, onOpenChange, account, onSaved, initialSec
           broker, nickname: nickname.trim(), last_four: lastFour || null,
           default_category_id: defaultCategoryId || null,
           ...factsPayload(),
+          ...goalsPayload(),
         })
       } else {
         saved = await accountsApi.create({
           broker, nickname: nickname.trim(), last_four: lastFour || null,
           category_ids: categoryIds, default_category_id: defaultCategoryId || null,
           ...factsPayload(),
+          ...goalsPayload(),
         })
       }
       await refresh()
@@ -140,10 +187,11 @@ export function AccountDialog({ open, onOpenChange, account, onSaved, initialSec
     } catch (e) {
       if (e instanceof ApiError && e.fields.length > 0) {
         // Highlight every named field; show the message once, under the last one.
-        const errs: Partial<Record<FactField, string>> = {}
-        e.fields.forEach((f, i) => { errs[f as FactField] = i === e.fields.length - 1 ? e.message : '' })
+        const errs: Partial<Record<ProfileField, string>> = {}
+        e.fields.forEach((f, i) => { errs[f as ProfileField] = i === e.fields.length - 1 ? e.message : '' })
         setFieldErrors(errs)
-        factsRef.current?.scrollIntoView({ block: 'nearest' })
+        const inGoals = GOAL_FIELDS.includes(e.fields[e.fields.length - 1] as ProfileField)
+        ;(inGoals ? goalsRef : factsRef).current?.scrollIntoView({ block: 'nearest' })
       } else {
         setError(e instanceof Error ? e.message : 'Save failed')
       }
@@ -154,6 +202,18 @@ export function AccountDialog({ open, onOpenChange, account, onSaved, initialSec
 
   const valuesAsOf = account?.values_as_of ?? null
   const valuesStale = valuesAreStale(valuesAsOf)
+
+  // House default numbers come from the API (any account carries them), never from the frontend.
+  const limitsSource = account?.limits ?? accounts[0]?.limits
+  const defaultOf = (f: LimitField) => (limitsSource ? parseFloat(limitsSource[f].default) : null)
+  // What an empty input resolves to, mirroring the server: speculative is capped at the position
+  // limit; margin is 0 on a cash account.
+  const positionEffective = maxPosition !== '' ? parseFloat(maxPosition) : defaultOf('max_position_pct')
+  const specDefault = defaultOf('max_speculative_position_pct')
+  const specCapped = specDefault !== null && positionEffective !== null && specDefault > positionEffective
+  const isCash = marginType === 'cash'
+  const marginValue = maxMargin === '' ? 0 : parseFloat(maxMargin)
+  const hideMarginLimit = isCash && marginValue === 0 && fieldErrors.max_margin_used_pct === undefined
 
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
@@ -265,6 +325,64 @@ export function AccountDialog({ open, onOpenChange, account, onSaved, initialSec
                 </div>
               </div>
             </fieldset>
+
+            <fieldset ref={goalsRef} aria-labelledby="account-goals-heading"
+              className="scroll-mt-4 border-t border-gray-200 pt-4 text-sm">
+              <h3 id="account-goals-heading" className="font-semibold text-gray-900">Goal and preferences</h3>
+              <p className="mt-0.5 text-xs text-gray-500">
+                What matters most among the trades this account allows. All optional.
+              </p>
+
+              <div className="mt-3 space-y-4">
+                <Segmented label="Objective" choices={OBJECTIVES} value={objective}
+                  onChange={changeFact(setObjective)} error={fieldErrors.objective} />
+                <Segmented label="Assignment stance" choices={ASSIGNMENT_STANCES} value={stance}
+                  onChange={changeFact(setStance)} error={fieldErrors.assignment_stance} />
+
+                <div className="grid grid-cols-2 gap-3">
+                  <MoneyInput label="Monthly premium target" value={monthlyTarget}
+                    onChange={changeFact(setMonthlyTarget)} error={fieldErrors.monthly_premium_target} />
+                  <PctInput label="Annual yield target" value={yieldTarget}
+                    onChange={changeFact(setYieldTarget)} error={fieldErrors.annual_yield_target_pct} />
+                </div>
+
+                <div>
+                  <div className="font-medium text-gray-700">Limits</div>
+                  <p className="text-xs text-gray-500">Leave blank to use the house default.</p>
+                  <div className="mt-2 space-y-3">
+                    <LimitInput field="max_position_pct" value={maxPosition} onChange={changeFact(setMaxPosition)} houseDefault={defaultOf('max_position_pct')}
+                      emptyLabel="default" emptyValue={defaultOf('max_position_pct')}
+                      error={fieldErrors.max_position_pct} />
+                    <LimitInput field="max_speculative_position_pct" value={maxSpeculative}
+                      onChange={changeFact(setMaxSpeculative)}
+                      houseDefault={specDefault}
+                      emptyLabel={specCapped ? SOURCE_LABELS.position_limit : 'default'}
+                      emptyValue={specCapped ? positionEffective : specDefault}
+                      error={fieldErrors.max_speculative_position_pct} />
+                    {hideMarginLimit ? (
+                      <div>
+                        <div className="font-medium text-gray-700">{LIMIT_LABELS.max_margin_used_pct.label}</div>
+                        <p className="text-xs text-gray-500">Cash accounts can’t borrow, so margin use is 0.</p>
+                      </div>
+                    ) : (
+                      <LimitInput field="max_margin_used_pct" value={maxMargin} onChange={changeFact(setMaxMargin)} houseDefault={defaultOf('max_margin_used_pct')}
+                        emptyLabel={isCash ? SOURCE_LABELS.cash_account : 'default'}
+                        emptyValue={isCash ? 0 : defaultOf('max_margin_used_pct')}
+                        warning={isCash && marginValue > 0 ? 'A cash account can’t use margin: clear this limit.' : undefined}
+                        error={fieldErrors.max_margin_used_pct} />
+                    )}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <PctInput label="Minimum cash reserve" value={cashReserve} onChange={changeFact(setCashReserve)}
+                    hint="Of the account, kept in cash." error={fieldErrors.min_cash_reserve_pct} />
+                  <PctInput label="Defensive at loss" value={defensiveLoss} onChange={changeFact(setDefensiveLoss)}
+                    hint="Unrealized loss on one position that should turn guidance defensive."
+                    error={fieldErrors.defensive_at_loss_pct} />
+                </div>
+              </div>
+            </fieldset>
           </div>
 
           {error && <p className="mt-4 rounded bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
@@ -335,5 +453,125 @@ function MoneyInput({ label, value, onChange, error }: {
       {!isMoneyInput(value) && <span className="mt-1 block text-xs text-red-600">Dollars, up to 2 decimals.</span>}
       {error && <span className="mt-1 block text-xs text-red-600">{error}</span>}
     </label>
+  )
+}
+
+function Segmented<T extends string>({ label, choices, value, onChange, error }: {
+  label: string
+  choices: FactChoice<T>[]
+  value: T | null
+  onChange: (value: T | null) => void
+  error?: string
+}) {
+  const id = useId()
+  const hint = choiceFor(choices, value)?.hint
+  return (
+    <div>
+      <div className="flex items-baseline justify-between">
+        <span id={id} className="font-medium text-gray-700">{label}</span>
+        {value !== null && (
+          <button type="button" onClick={() => onChange(null)} className="text-xs text-gray-500 hover:text-gray-700 hover:underline">
+            Clear
+          </button>
+        )}
+      </div>
+      <div role="radiogroup" aria-labelledby={id} aria-invalid={error !== undefined}
+        className={`mt-1 inline-flex w-full overflow-hidden rounded border ${error !== undefined ? 'border-red-400' : 'border-gray-300'}`}>
+        {choices.map((c, i) => {
+          const selected = c.value === value
+          return (
+            <button key={c.value} type="button" role="radio" aria-checked={selected}
+              onClick={() => onChange(c.value)}
+              className={`flex-1 px-2 py-1.5 text-sm ${i > 0 ? 'border-l border-gray-300' : ''} ${selected ? 'bg-blue-600 font-medium text-white' : 'bg-white text-gray-700 hover:bg-gray-50'}`}>
+              {c.label}
+            </button>
+          )
+        })}
+      </div>
+      <p className="mt-1 text-xs text-gray-500">{hint ?? 'Not set yet.'}</p>
+      {error && <p className="mt-1 text-xs text-red-600">{error}</p>}
+    </div>
+  )
+}
+
+function PctField({ id, value, onChange, placeholder, invalid }: {
+  id: string
+  value: string
+  onChange: (value: string) => void
+  placeholder?: string
+  invalid: boolean
+}) {
+  return (
+    <div className="relative">
+      <input id={id} value={value} onChange={e => onChange(e.target.value.replace(/[%\s]/g, ''))}
+        inputMode="decimal" placeholder={placeholder ?? '—'} aria-invalid={invalid}
+        className={`block w-full rounded border py-1.5 pl-2 pr-6 text-sm ${invalid ? 'border-red-400' : 'border-gray-300'}`} />
+      <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-gray-400">%</span>
+    </div>
+  )
+}
+
+function PctInput({ label, value, onChange, hint, error }: {
+  label: string
+  value: string
+  onChange: (value: string) => void
+  hint?: string
+  error?: string
+}) {
+  const id = useId()
+  const badFormat = !isPctInput(value)
+  return (
+    <div>
+      <label htmlFor={id} className="block font-medium text-gray-700">{label}</label>
+      <div className="mt-1"><PctField id={id} value={value} onChange={onChange} invalid={badFormat || error !== undefined} /></div>
+      {hint && <p className="mt-1 text-xs text-gray-500">{hint}</p>}
+      {badFormat && <p className="mt-1 text-xs text-red-600">A percent, up to 2 decimals.</p>}
+      {error && <p className="mt-1 text-xs text-red-600">{error}</p>}
+    </div>
+  )
+}
+
+/** A defaulted limit: blank shows what it resolves to; typing overrides; "Use default" clears it. */
+function LimitInput({ field, value, onChange, houseDefault, emptyLabel, emptyValue, warning, error }: {
+  field: LimitField
+  value: string
+  onChange: (value: string) => void
+  houseDefault: number | null
+  /** What a blank input resolves to, and why. */
+  emptyLabel: string
+  emptyValue: number | null
+  warning?: string
+  error?: string
+}) {
+  const id = useId()
+  const { label, hint } = LIMIT_LABELS[field]
+  const badFormat = !isPctInput(value)
+  const overridden = value !== ''
+  return (
+    <div>
+      <div className="flex items-baseline justify-between gap-2">
+        <label htmlFor={id} className="font-medium text-gray-700">{label}</label>
+        <span className="text-xs text-gray-500">
+          {overridden
+            ? <>Your value{houseDefault !== null && <> · default {houseDefault}%</>}</>
+            : <>{emptyValue !== null ? `${emptyValue}%` : '—'} <span className="rounded bg-gray-100 px-1.5 py-0.5 text-gray-600">{emptyLabel}</span></>}
+        </span>
+      </div>
+      <div className="mt-1 flex items-center gap-2">
+        <div className="w-28">
+          <PctField id={id} value={value} onChange={onChange}
+            placeholder={emptyValue !== null ? String(emptyValue) : undefined}
+            invalid={badFormat || error !== undefined} />
+        </div>
+        {overridden && (
+          <button type="button" onClick={() => onChange('')}
+            className="text-xs text-blue-600 hover:underline">Use default</button>
+        )}
+      </div>
+      <p className="mt-1 text-xs text-gray-500">{hint}</p>
+      {warning && <p className="mt-1 text-xs text-amber-700">{warning}</p>}
+      {badFormat && <p className="mt-1 text-xs text-red-600">A percent, up to 2 decimals.</p>}
+      {error && <p className="mt-1 text-xs text-red-600">{error}</p>}
+    </div>
   )
 }

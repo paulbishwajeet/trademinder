@@ -20,6 +20,45 @@ Why the project is the way it is. **Newest entries first.**
 
 ---
 
+### 2026-11-13 — Account goal and preferences, part 2 of the account profile (migration 020)
+- **Area:** backend, frontend, data
+- **Type:** schema, endpoint, convention, deviation
+- **What changed:**
+  - **Migration 020:** nullable columns on `brokerage_accounts`:
+    - `objective`, `assignment_stance`;
+    - `monthly_premium_target`, `annual_yield_target_pct`;
+    - `max_position_pct`, `max_speculative_position_pct`, `max_margin_used_pct`;
+    - `min_cash_reserve_pct`, `defensive_at_loss_pct`;
+    - `goals_updated_at`.
+
+    There are enum and range `CHECK`s, existing accounts stay unset, and the downgrade is clean.
+  - **House defaults:** `app/services/house_defaults.py` holds the KB's house rules: max position 10%, max
+    speculative position 3% (the top of 1–3%), max margin used 30%. They're planned to move to the imported KB.
+  - **Stored versus effective:** an unset limit means the house default, never "no limit", and defaults are never
+    written to the row. The accounts responses carry `limits.<field> = {stored, effective, source, default}`,
+    plus `goals_complete` and `goals_updated_at`; an explicit `null` reverts a limit to the default. There are no
+    new endpoints.
+  - **Rules:** `cash_account_margin` and `speculative_above_position` are 422 `{detail, code, fields}`. Facts and
+    goals are now validated in one pass, so both edit orders fail.
+  - **UI:** Settings → Accounts gets a "Goal and preferences" dialog section with segmented choices, optional
+    targets, and limit inputs labelled `default` with **Use default**. The margin limit is hidden on cash
+    accounts. A "Goal not set" marker sits next to "Facts incomplete" in a renamed "Profile" column.
+- **Why:**
+  - Guidance will weigh moves by goal and preferences, after gating them by facts.
+  - Keeping defaults out of the row lets a later KB import change them for every account that didn't override
+    them.
+- **Deviation:** the prompt named `source` as `account` or `default`. Two more values say why when neither
+  applies:
+  - `cash_account`: the margin limit on a cash account is 0;
+  - `position_limit`: the speculative default is capped at a tighter position limit, so tightening one limit
+    doesn't force setting a second.
+- **Impact:**
+  - **Limited margin:** `limited_margin` gets no margin rule; that's an open question.
+  - **`default` field:** each limit object carries the house default, so the UI never duplicates the constants.
+  - **Unused for now:** nothing reads these fields yet.
+- **Links:** `feature/account-goals` · `context/feature-account-goals.md` ·
+  `docs/superpowers/specs/2026-11-13-account-goals-design.md`
+
 ### 2026-11-13 — Account facts, part 1 of the account profile (migration 019)
 - **Area:** backend, frontend, data
 - **Type:** schema, endpoint, convention
