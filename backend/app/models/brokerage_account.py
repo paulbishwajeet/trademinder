@@ -1,11 +1,13 @@
 import uuid
 from datetime import datetime
+from decimal import Decimal
 from typing import Optional, TYPE_CHECKING
-from sqlalchemy import String, Boolean, Integer, DateTime, ForeignKey, Index, UniqueConstraint, CheckConstraint
+from sqlalchemy import String, Boolean, Integer, DateTime, Numeric, ForeignKey, Index, UniqueConstraint, CheckConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func, text
 from app.database import Base
+from app.services import account_facts
 
 if TYPE_CHECKING:
     from app.models.user import User
@@ -35,6 +37,19 @@ class BrokerageAccount(Base):
     is_archived: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
+    # Account facts (migration 019): gates later guidance reads. Every fact is optional; null = not set.
+    # Vocabulary and combination rules: app.services.account_facts.
+    tax_treatment: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    account_purpose: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    margin_type: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    options_tier: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    options_level_label: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    net_liquidation_value: Mapped[Optional[Decimal]] = mapped_column(Numeric(14, 2), nullable=True)
+    cash_balance: Mapped[Optional[Decimal]] = mapped_column(Numeric(14, 2), nullable=True)
+    # Set by the service: values_as_of when a money value changes, facts_updated_at when a fact does.
+    values_as_of: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    facts_updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
     user: Mapped["User"] = relationship(back_populates="accounts")
     category_links: Mapped[list["AccountCategory"]] = relationship(
         back_populates="account", cascade="all, delete-orphan", lazy="selectin"
@@ -51,10 +66,35 @@ class BrokerageAccount(Base):
             return None
         return {"label": self.external_label, "last_seen_at": self.external_seen_at}
 
+    @property
+    def account_tax_status(self) -> Optional[str]:
+        """The KB's key: taxable | tax_advantaged | None when tax_treatment is unset."""
+        return account_facts.tax_status(self.tax_treatment)
+
+    @property
+    def facts_complete(self) -> bool:
+        return account_facts.facts_complete({f: getattr(self, f) for f in account_facts.REQUIRED_FACTS})
+
     __table_args__ = (
         CheckConstraint("last_four IS NULL OR last_four ~ '^[0-9]{4}$'", name="ck_brokerage_accounts_last_four"),
         CheckConstraint(
             "external_ref IS NULL OR external_ref ~ '^[0-9a-f]{64}$'", name="ck_brokerage_accounts_external_ref",
+        ),
+        *(
+            CheckConstraint(
+                f"{column} IS NULL OR {column} IN ({', '.join(repr(v) for v in values)})",
+                name=f"ck_brokerage_accounts_{column}",
+            )
+            for column, values in (
+                ("tax_treatment", account_facts.TAX_TREATMENTS),
+                ("account_purpose", account_facts.ACCOUNT_PURPOSES),
+                ("margin_type", account_facts.MARGIN_TYPES),
+                ("options_tier", account_facts.OPTIONS_TIERS),
+            )
+        ),
+        *(
+            CheckConstraint(f"{column} IS NULL OR {column} >= 0", name=f"ck_brokerage_accounts_{column}_non_negative")
+            for column in account_facts.MONEY_FIELDS
         ),
         Index("idx_brokerage_accounts_user", "user_id"),
         Index("idx_brokerage_accounts_default_category", "default_category_id"),

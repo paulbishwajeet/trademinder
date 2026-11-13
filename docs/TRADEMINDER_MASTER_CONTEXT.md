@@ -5,7 +5,7 @@
 
 ---
 
-## 0. Current State (2026-11-12)
+## 0. Current State (2026-11-13)
 
 The 5-part multi-user plan was **released on `master` on 2026-11-11**, and two WHEEL improvements followed on 2026-11-12. Production runs `master` on the QNAP at **https://tm.aipathstudio.com**: LAN only, HTTPS via Traefik, Google sign-in required. **The QNAP holds the real data; the Mac is development only.**
 
@@ -18,6 +18,18 @@ The 5-part multi-user plan was **released on `master` on 2026-11-11**, and two W
 - The backend checks a signed, single-use, 10-minute state, exchanges the code, and writes the token row under the provider's lock. The provider is online again immediately: no restart, no token copy to the NAS.
 - The CLI remains the fallback and shares the same code (`app/services/schwab_oauth.py`). See section 5 and `docs/deployment/schwab-reconnect.md`.
 
+**On `develop` (2026-11-13, `11e5039`, migration 019; not yet released to `master`): account facts, part 1 of the account profile.**
+- Each brokerage account gets editable facts in Settings → Accounts:
+  - tax treatment and purpose;
+  - margin type;
+  - a broker-neutral options tier plus the broker's own label for it;
+  - optional net liquidation value and cash, with an as-of date.
+- Existing accounts start unset and show **Facts incomplete**.
+- Impossible combinations are rejected with 422 `{detail, code, fields}`.
+- The API exposes `account_tax_status` and `account_purpose` with the KB's spellings, plus `facts_complete` and
+  `facts_updated_at`.
+- Nothing reads the facts yet. See section 3.6.
+
 | Part | What shipped | Migration |
 |---|---|---|
 | 1. Accounts and ownership | `users`, `brokerage_accounts`, account categories, screener-account memberships. `user_id` on every user-owned table; `account_id` on trades, wheels, spreads and screener notes. Existing data assigned to the owner (seeded from `OWNER_EMAIL`) and one default "E*TRADE" account. Every query scoped through one seam, `get_current_user`; isolation holds for the admin too. A SPECULATIVE category was added. | 015–016 |
@@ -26,7 +38,7 @@ The 5-part multi-user plan was **released on `master` on 2026-11-11**, and two W
 | 4. Schwab hardening | Market-data provider boundary and offline detection. Offline: market endpoints return 503 `market_data_offline`, mixed endpoints return null fields plus a flag, stale caches used where possible, scheduled market jobs skip (logged once on entering and leaving offline). Amber/red expiry banner, dashes in the UI, notice in the extension, admin-only status endpoint. Non-market features keep working; CLI re-auth recovers without a restart. | none |
 | 5. Login | Google OIDC (PKCE, state, nonce) as identity check only; backend-issued server-side sessions (httpOnly, Secure, Lax cookie holding a hashed token, 30-day sliding; no JWT, no Redis). Sign-in: known Google subject → in; else email match on an invited or owner row binds it; else **pending** until admin approval; invites are pre-approved. Admin page: invite, approve, reject, disable, enable, change role, with self and last-admin guards. Extension: one-button sign-in via `/extension/connect`, revocable hashed bearer token, listed under Settings → Connected extensions, allow-listed extension IDs only. Every API route needs a session or extension token; CORS allows only those extension origins. HTTPS: Traefik on 443, Let's Encrypt via Cloudflare DNS-01 (NAS never exposed to the internet); `/api` → backend, everything else → frontend; only 443 published. | 018 |
 
-**Alembic head is 018; the next migration is 019.**
+**Alembic head is 019 on `develop` (018 on `master` until the next release); the next migration is 020.**
 
 **Deployment learnings (do not relearn these; history in `docs/decisions.md`):**
 - The Portainer stack must be a **Git stack** (a "Limited" stack has no environment variables) and must be named **`trademinder`**, because the database volume is `trademinder_pgdata`.
@@ -51,7 +63,8 @@ The 5-part multi-user plan was **released on `master` on 2026-11-11**, and two W
    - With a symbol filter on, a section's Fetch button still fetches the whole section.
    - The "other slots need action" notice ignores new wheels that have no slot.
    - Wheels that have slots have no edit UI, although `PATCH /api/wheel/{id}` allows changing shares and date.
-8. Unmerged work predating the release:
+8. Account facts: `cash_balance` can't be negative (per the part-1 prompt), but a margin debit is negative cash. Decide whether to allow negative cash on margin types.
+9. Unmerged work predating the release:
    - `fix/day-color-regular-session` (2026-10-29, build the daily bar from the regular session);
    - `fix/earnings-date-cache` (2026-10-29, cache the earnings date and stop swallowing lookup failures);
    - `feature/commentaryfromextension` (2026-05, extension commentary panel; probably superseded).
@@ -172,9 +185,33 @@ awaiting_sold_put ──sell put──► sold_put_active ──expire OTM──
 
 **`schwab_tokens`** — single row (`id=1`) with Schwab OAuth access + refresh tokens and expiries. Refresh token has a **fixed 7-day life from original auth** — refreshing the access token does NOT extend it, so `refresh_expires_at` is preserved on every refresh.
 
-### 3.6 Accounts and ownership (migrations 015–017)
+### 3.6 Accounts and ownership (migrations 015–017, 019)
 
 User → brokerage accounts → trades, wheels, spreads. **`brokerage_accounts`** per user (several per broker allowed). Categories are a per-user library; each account picks the categories it uses and a default one. Screener: one symbol row per user, linked to accounts via memberships; screener notes are per account. One wheel per ticker **per account**. E*TRADE dropdown entries link to accounts by SHA-256 fingerprint.
+
+**Account facts (migration 019).** These are per-account gates, meaning what the account is allowed to do, for
+later guidance. They're stored per account because an IRA and a taxable account at the same broker differ.
+- **Nullable:** every column is nullable, and null means "not set". The migration set nothing on existing accounts.
+- **Enumerations:** strings with named `CHECK` constraints:
+  - `tax_treatment`: `taxable`, `traditional_ira`, `roth_ira`, `other_tax_advantaged`;
+  - `account_purpose`: `trading`, `long_term` (the KB's spelling);
+  - `margin_type`: `cash`, `limited_margin` (restricted IRA margin), `margin`, `portfolio_margin`;
+  - `options_tier`: broker-neutral and cumulative: `none`, `covered` (covered calls), `cash_secured_and_long`
+    (adds CSPs and long options), `spreads` (adds defined-risk spreads), `uncovered` (adds naked/undefined-risk).
+    The broker's own name for the level goes in `options_level_label` (free text, ≤ 40).
+- **Balances:** `net_liquidation_value` and `cash_balance` are `numeric(14,2)`, ≥ 0, and entered by hand; no other
+  source stores balances. `values_as_of` is set by the service when either value changes.
+- **`facts_updated_at`:** set by the service only when one of the five fact fields actually changes. Edits to the
+  nickname, sort order or money values don't move it. There's no audit table.
+- **Derived in the API:**
+  - `account_tax_status`: `taxable` / `tax_advantaged` / null, the KB key;
+  - `facts_complete`: tax treatment, purpose, margin type and options tier all set.
+- **Rules (service, on the merged stored + request values):**
+  - a tax-advantaged account can't have `margin`/`portfolio_margin` (`tax_advantaged_margin`);
+  - `uncovered` needs `margin`/`portfolio_margin` (`uncovered_requires_margin`);
+  - money can't be negative (`negative_value`) or out of range (`invalid_value`).
+
+  Merely unusual combinations are allowed. Goals and preferences come in a later part.
 
 ---
 
@@ -380,6 +417,10 @@ Read this before proposing any work. The README oversells current state.
 - **Docs sync:** before committing a behaviour change, update `docs/decisions.md` (deviations, schema, endpoints, conventions, deferrals, ops lessons) and this file (edited in place). Rules in `CLAUDE.md`.
 - **Commits:** granular and conventional (`feat(wheel):`, `fix(technicals):`, `refactor(wheel):`). **Never commit unless explicitly asked.**
 - **Backend:** routers thin, services hold logic, Pydantic schemas are the contract. pytest. uv for deps.
+- **Structured errors:** a machine-readable failure is `{detail, code}`, plus `fields` when it is about specific
+  inputs. For example: 503 `market_data_offline`, the reconnect codes, and 422 account-fact rules with `fields`.
+  The SPA's `ApiError` exposes `.code` and `.fields`.
+- **Money:** `Numeric` in the database, JSON strings in the API, `string | null` in TS with an explicit `parseFloat`.
 - **Frontend:** TypeScript strict, functional components, Tailwind utilities only (no custom CSS), typed fetch wrappers in `src/api/`. Shared primitives in `src/components/ui/` (shadcn-style, hand-written). Page filter state lives in URL search params, not localStorage. Page-level keyboard shortcuts listen in the capture phase and stand down while an element with `data-escape-layer` (open popover, Notes panel) exists. Run `npm run build` before pushing anything the NAS deploys.
 - **Ticker aliases:** the GOOG↔GOOGL map exists in three places — `backend/app/routers/wheel.py`, `extension/content.js`, `frontend/src/lib/tickers.ts` — keep them in step.
 - **Extension:** vanilla JS, no build step, all network calls via `bgFetch` through the service worker.
@@ -396,7 +437,7 @@ All routes under `/api`. Everything except `auth` and `me` is mounted behind the
 | me | `GET /me` (allowed while pending; returns status) |
 | admin | `/admin/users`: list, invite, approve, reject, disable, enable, change role (admin only) |
 | extension | `/extension/connect` (cookie session only; mints a token for an allow-listed extension), `/extension/tokens`, `/extension/tokens/current`, `/extension/tokens/{id}` |
-| accounts | list, create, reorder, patch, categories, archive, restore, delete; E*TRADE links (`/links/resolve`, `/links`, `/{id}/link`) |
+| accounts | list, create, reorder, patch, categories, archive, restore, delete; E*TRADE links (`/links/resolve`, `/links`, `/{id}/link`). Create, patch and list carry the account facts (section 3.6): every fact is optional on create and patch, and an explicit `null` on patch clears it. Responses add `account_tax_status`, `facts_complete`, `facts_updated_at` and `values_as_of`; money is JSON strings. Rule violations: 422 `{detail, code, fields}` |
 | dashboard | `GET /dashboard/summary` (per-account cards) |
 | market-data | `GET /market-data/status` (admin only; Schwab token status). `POST /market-data/reconnect/start` → `{authorize_url, state_expires_at}` and `POST /market-data/reconnect/complete` `{redirect_url}` → the status shape (admin only; errors `{detail, code}`: 400 `bad_url`/`authorization_denied`/`missing_code`/`missing_state`/`code_expired`, 409 `state_invalid`/`state_expired`/`not_configured`, 502 `schwab_unreachable`) |
 | trades | CRUD, close, category assign, rationale, wheel-by-id |

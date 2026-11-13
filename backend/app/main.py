@@ -6,6 +6,7 @@ from fastapi.responses import JSONResponse
 from app.config import settings
 from app.deps import get_current_user
 from app.routers import accounts, admin, auth, extension, me, dashboard, trades, commentary, alerts, market, market_data, briefing, categories, positions, signals, sessions, wheel, screener, chain
+from app.services.account_facts import AccountFactsError
 from app.services.market_data import prime_market_data
 from app.services.market_data_errors import MarketDataUnavailable
 from app.scheduler import scheduler, start_scheduler
@@ -38,6 +39,12 @@ app.add_middleware(
     # The extension's service worker reads the market data offline flag from this header.
     expose_headers=["X-Market-Data-Offline"],
 )
+
+
+@app.exception_handler(AccountFactsError)
+async def account_facts_error_handler(request: Request, exc: AccountFactsError):
+    """Impossible account-fact combinations: 422 with a code and the fields to highlight."""
+    return JSONResponse(status_code=422, content={"detail": exc.detail, "code": exc.code, "fields": exc.fields})
 
 
 @app.exception_handler(MarketDataUnavailable)
