@@ -5,10 +5,13 @@ export class ApiError extends Error {
   status: number
   /** Structured error code from the backend, e.g. 'market_data_offline' (HTTP 503). */
   code: string | null
-  constructor(status: number, message: string, code: string | null = null) {
+  /** Request fields the error is about, when the backend names them (e.g. account-fact rules). */
+  fields: string[]
+  constructor(status: number, message: string, code: string | null = null, fields: string[] = []) {
     super(message)
     this.status = status
     this.code = code
+    this.fields = fields
   }
 }
 
@@ -66,9 +69,10 @@ export async function apiFetch<T>(path: string, options?: RequestInit): Promise<
     const body = await response.json().catch(() => ({ detail: 'Unknown error' }))
     const detail = typeof body.detail === 'string' ? body.detail : 'Request failed'
     const code = typeof body.code === 'string' ? body.code : null
+    const fields = Array.isArray(body.fields) ? body.fields.filter((f: unknown): f is string => typeof f === 'string') : []
     if (code === MARKET_DATA_OFFLINE) setMarketDataOffline(true)
     if (response.status === 401) onUnauthorized?.()
-    throw new ApiError(response.status, detail, code)
+    throw new ApiError(response.status, detail, code, fields)
   }
   if (response.status === 204) return undefined as T
   return response.json()

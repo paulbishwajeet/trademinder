@@ -20,6 +20,46 @@ Why the project is the way it is. **Newest entries first.**
 
 ---
 
+### 2026-11-13 — Account facts, part 1 of the account profile (migration 019)
+- **Area:** backend, frontend, data
+- **Type:** schema, endpoint, convention
+- **What changed:**
+  - **Migration 019:** nullable columns on `brokerage_accounts`:
+    - `tax_treatment`, `account_purpose`, `margin_type`, `options_tier`, `options_level_label`;
+    - `net_liquidation_value`, `cash_balance`, `values_as_of`;
+    - `facts_updated_at`.
+
+    The enumerations are strings with named `CHECK`s, and money also has `≥ 0` checks. Existing accounts are left
+    unset, and the downgrade drops everything.
+  - **Options tier vocabulary:** broker-neutral and cumulative: `none` → `covered` → `cash_secured_and_long` →
+    `spreads` → `uncovered`. The broker's own name for the level goes in `options_level_label`.
+  - **KB-aligned spellings:** `account_purpose` (`trading` / `long_term`) is stored. `account_tax_status`
+    (`taxable` / `tax_advantaged`) is derived from `tax_treatment`.
+  - **Endpoint shape (no new endpoints):**
+    - The accounts create, patch and list (and create-and-link) carry the facts.
+    - Responses add `account_tax_status`, `facts_complete`, `facts_updated_at` and `values_as_of`.
+    - Rule violations return 422 `{detail, code, fields}` (`tax_advantaged_margin`, `uncovered_requires_margin`,
+      `negative_value`, `invalid_value`), checked on the merged stored + request values.
+  - **UI:** Settings → Accounts gets an "Account facts" dialog section, a Facts column with a **Facts
+    incomplete** marker that opens the dialog on that section, and a Value column that is muted when older than 7
+    days.
+  - **Convention:** `fields` joins the structured-error body; `ApiError.fields` in the SPA.
+- **Why:**
+  - Later KB-powered guidance needs account-level gates.
+  - Facts are per account, because an IRA and a taxable account at the same broker differ.
+  - Brokers number option levels differently, hence a neutral tier.
+  - No balance source existed: the Margin page parses an upload in the browser and stores nothing, and the
+    extension's status/reconcile payloads carry positions only. So the balances are entered by hand.
+- **Impact:**
+  - **Timestamps:** `facts_updated_at` moves only when one of the five facts actually changes. Money edits move
+    `values_as_of` instead, so daily balance updates don't make guidance stale. This is a choice the prompt left
+    open.
+  - **Negative cash:** `cash_balance` can't be negative, although a margin debit is negative cash in reality. This
+    is an open question for later.
+  - **Unused for now:** nothing reads the facts yet.
+- **Links:** `feature/account-facts` · `context/feature-account-facts.md` ·
+  `docs/superpowers/specs/2026-11-13-account-facts-design.md`
+
 ### 2026-11-12 — In-app Schwab reconnect, phase 1: paste the redirect URL
 - **Area:** backend, frontend, infra
 - **Type:** endpoint, convention, deferred

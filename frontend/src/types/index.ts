@@ -72,7 +72,24 @@ export interface AccountLink {
   last_seen_at: string | null
 }
 
-export interface BrokerageAccount extends AccountSummary {
+// Account facts (gates later guidance reads). null = not set. Vocabulary and labels: src/lib/accountFacts.ts.
+export type TaxTreatment = 'taxable' | 'traditional_ira' | 'roth_ira' | 'other_tax_advantaged'
+export type AccountPurpose = 'trading' | 'long_term'
+export type MarginType = 'cash' | 'limited_margin' | 'margin' | 'portfolio_margin'
+export type OptionsTier = 'none' | 'covered' | 'cash_secured_and_long' | 'spreads' | 'uncovered'
+export type AccountTaxStatus = 'taxable' | 'tax_advantaged'
+
+export interface AccountFacts {
+  tax_treatment: TaxTreatment | null
+  account_purpose: AccountPurpose | null
+  margin_type: MarginType | null
+  options_tier: OptionsTier | null
+  options_level_label: string | null
+  net_liquidation_value: string | null  // Decimal as string; parseFloat to display
+  cash_balance: string | null
+}
+
+export interface BrokerageAccount extends AccountSummary, AccountFacts {
   link: AccountLink | null
   default_category_id: string | null
   is_default: boolean
@@ -81,6 +98,10 @@ export interface BrokerageAccount extends AccountSummary {
   created_at: string
   category_ids: string[]
   can_delete: boolean  // empty account — may be hard-deleted; otherwise archive it
+  values_as_of: string | null      // when a money value last changed
+  facts_updated_at: string | null  // when a fact last changed (money excluded)
+  account_tax_status: AccountTaxStatus | null  // derived, KB spelling
+  facts_complete: boolean          // tax treatment, purpose, margin type and options tier all set
 }
 
 export interface Category {
@@ -136,7 +157,7 @@ export interface DashboardSummary {
   market_data_offline?: boolean
 }
 
-export interface BrokerageAccountCreate {
+export interface BrokerageAccountCreate extends Partial<AccountFacts> {
   broker: string
   nickname: string
   last_four?: string | null
@@ -146,7 +167,8 @@ export interface BrokerageAccountCreate {
   default_category_id?: string | null
 }
 
-export interface BrokerageAccountUpdate {
+// Facts: omit to leave alone, null to clear.
+export interface BrokerageAccountUpdate extends Partial<AccountFacts> {
   broker?: string
   nickname?: string
   last_four?: string | null

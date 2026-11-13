@@ -166,6 +166,14 @@ Ownership is **user → brokerage account → trades / wheels / spreads**.
 - **`screener_account_memberships`** — one screener row per user per symbol (market data fetched once); each symbol belongs to one or more accounts. Screener notes carry an `account_id` because a note reflects one account's situation.
 - Every user-owned table carries `user_id`. `trades`, `wheel_sessions`, `trade_sessions` (spreads) and `screener_commentary` also carry `account_id`; slots, legs, premium logs, rationale, commentary, alerts and signals inherit their account through their parent. Market data (`schwab_tokens`, quotes, technicals, signal caches) is app-level and shared.
 - Migration 016 backfilled all existing data to the owner and a default account nicknamed "E\*TRADE".
+- **Account facts (migration 019):** each account can record its tax treatment (taxable, traditional IRA, Roth IRA,
+  other tax-advantaged), purpose (trading, long term), margin type (cash, limited margin, margin, portfolio margin),
+  a broker-neutral options tier (none, covered, cash-secured and long, spreads, uncovered) with the broker's own
+  label for it, and optional net liquidation value and cash with an as-of date.
+  - All of them are optional and editable in Settings → Accounts, and accounts missing any of the four main facts
+    show **Facts incomplete**.
+  - Impossible combinations are rejected: an IRA with margin, or uncovered options without margin.
+  - Nothing else in the app reads them yet.
 
 ### Migration 001 — Initial Schema
 
