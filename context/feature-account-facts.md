@@ -1,6 +1,6 @@
 # Feature: Account facts (account profile, part 1)
 
-**Status:** In Progress
+**Status:** Complete
 **Branch:** feature/account-facts
 **Created:** 2026-11-13
 
@@ -61,7 +61,7 @@ schema. Errors use the `{detail, code}` body already used by the market-data end
 | KB spellings | `account_tax_status` (`taxable`/`tax_advantaged`) derived; `account_purpose` stored with `trading`/`long_term` | The KB's situation pages match on exactly these keys |
 
 ## Open Questions / Blockers
-- [ ] `cash_balance` can't be negative (per the prompt), but a margin account with a debit has negative cash. Confirm whether a margin debit should be representable later (e.g. allow negative cash only on margin types).
+- [ ] (Moved to master context §0 open items) `cash_balance` can't be negative (per the prompt), but a margin account with a debit has negative cash. Confirm whether a margin debit should be representable later (e.g. allow negative cash only on margin types).
 
 ## Progress Log
 - 2026-11-13: Branch and worktree created off develop `65f1530`. READ FIRST done: head 018 → migration 019; no
@@ -72,8 +72,10 @@ schema. Errors use the `{detail, code}` body already used by the market-data end
   Facts/Value columns; build passes, changed files lint-clean. Manual checklist passed on a dev-DB copy (spec
   Results). Docs: master context §0, §3.6, §7, §8; decisions entry; README.
 
+- 2026-11-13: Committed `11e5039` and merged to develop. Feature complete: account facts are editable per account,
+  existing accounts show "Facts incomplete", impossible combinations return 422 with fields. Negative-cash
+  question moved to the master context open items.
+
 ## Current State (Resume Here)
-Implementation, tests, manual checklist and docs are done, all uncommitted on `feature/account-facts`
-(now in the main checkout; the worktree was removed and the dev DB upgraded to 019 on 2026-11-13). Next: the user reviews and, if happy, asks to commit. Then merge to develop
-(and master) and set this file Complete per CLAUDE.md. On the NAS, migration 019 runs automatically on the next
-Pull and redeploy (`alembic upgrade head` in the backend command).
+COMPLETE — merged to develop (2026-11-13). Not yet on `master`; migration 019 reaches the NAS with the next release
+(Pull and redeploy runs `alembic upgrade head`).

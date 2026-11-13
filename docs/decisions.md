@@ -57,7 +57,7 @@ Why the project is the way it is. **Newest entries first.**
   - **Negative cash:** `cash_balance` can't be negative, although a margin debit is negative cash in reality. This
     is an open question for later.
   - **Unused for now:** nothing reads the facts yet.
-- **Links:** `feature/account-facts` · `context/feature-account-facts.md` ·
+- **Links:** `feature/account-facts` · `11e5039` · `context/feature-account-facts.md` ·
   `docs/superpowers/specs/2026-11-13-account-facts-design.md`
 
 ### 2026-11-12 — In-app Schwab reconnect, phase 1: paste the redirect URL
