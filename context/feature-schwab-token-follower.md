@@ -1,6 +1,6 @@
 # Feature: Schwab token follower (dev follows production's tokens)
 
-**Status:** In Progress
+**Status:** Complete
 **Branch:** feature/schwab-token-follower
 **Created:** 2026-11-13
 
@@ -83,7 +83,7 @@ notifications.
 | Migration | None | The pair goes into the existing `schwab_tokens` row; follower state is in memory |
 
 ## Open Questions / Blockers
-- [ ] NAS checklist (spec steps 1–7): needs the release, the Portainer secret and a redeploy. Tracked in master
+- [ ] (Moved to master context §0 open item 1) NAS checklist (spec steps 1–7): needs the release, the Portainer secret and a redeploy. Tracked in master
   context open item 1.
 
 ## Progress Log
@@ -97,8 +97,11 @@ notifications.
   Results); `docker-compose.prod.yml` now passes `SCHWAB_TOKEN_SYNC_SECRET`. Docs: master context §0, §5, §8, §9,
   §10; README; runbook (weekly routine + one-time setup); decisions entry.
 
+- 2026-11-13: Committed `2e08f53`; merged to develop and released to master together with account facts and
+  goals. The user set `SCHWAB_TOKEN_SYNC_SECRET` in Portainer and dev's `.env`; the NAS redeploy and checklist
+  remain.
+
 ## Current State (Resume Here)
-Worktree `.claude/worktrees/schwab-token-follower`. Implementation, tests, the local check and docs are done, all
-uncommitted. Next: the user reviews and asks to commit/merge. Then release to master, set
-`SCHWAB_TOKEN_SYNC_SECRET` on the NAS stack and redeploy, configure dev's `.env`, and run the NAS checklist (spec
-steps 1–7).
+COMPLETE — merged to develop and master (2026-11-13). Remaining ops (master context open item 1): Pull and redeploy
+the NAS (the secret is already in Portainer), restart dev with `SCHWAB_TOKEN_SYNC_URL=https://tm.<domain>`, run the
+spec's NAS checklist.

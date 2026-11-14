@@ -55,7 +55,7 @@ Why the project is the way it is. **Newest entries first.**
   - **No migration**; the head stays 020.
   - **Weekly routine:** reconnect in production only (runbook "Weekly routine").
   - **NAS:** the stack needs `SCHWAB_TOKEN_SYNC_SECRET` and a redeploy before dev can follow.
-- **Links:** `feature/schwab-token-follower` · `context/feature-schwab-token-follower.md` ·
+- **Links:** `feature/schwab-token-follower` · `2e08f53` · `context/feature-schwab-token-follower.md` ·
   `docs/superpowers/specs/2026-11-13-schwab-token-follower-design.md`
 
 ### 2026-11-13 — Account goal and preferences, part 2 of the account profile (migration 020)
