@@ -9,6 +9,15 @@ MarketDataUnavailable and stops calling Schwab. It re-reads the schwab_tokens ro
 minute (TOKEN_RECHECK_SECONDS) and resumes as soon as the row changes — i.e. someone re-ran
 scripts/schwab_auth.py. The in-app reconnect (app.services.schwab_reconnect) writes through
 install_tokens(), which resumes immediately. Entering and leaving offline are each logged once.
+
+Token follower mode (dev; SCHWAB_TOKEN_SYNC_URL set): one Schwab grant, owned by production. This client never
+calls Schwab's token endpoint. Wherever it would refresh (access token near expiry, a 401 on a data call, no
+token row, a past refresh expiry, or offline), it pulls the pair from production instead
+(app.services.schwab_token_sync) under the same lock — single-flight, at most one attempt a minute — writes it to
+its own schwab_tokens row, and retries the original call once. Pull failures use the same offline mode; a later
+successful pull recovers. Production serves the pair through export_tokens(), which keeps it the only refresher.
+
+In both modes a 401 on a data call renews the token once (refresh, or pull) and retries the call once.
 """
 import asyncio
 import base64
@@ -22,6 +31,7 @@ import asyncpg
 import httpx
 import pandas as pd
 
+from app.services import schwab_token_sync
 from app.services.market_data_errors import MarketDataUnavailable
 from app.services.schwab_oauth import TokenSet, store_tokens
 
@@ -43,6 +53,13 @@ _SCHWAB_ALIASES: dict[str, str] = {
 # How often (at most) the token row is re-read to notice a CLI re-auth.
 TOKEN_RECHECK_SECONDS = 60
 REAUTH_HINT = "Reconnect Schwab in the app (or run scripts/schwab_auth.py)"
+FOLLOWER_HINT = "Dev follows production's tokens: reconnect in production; the pull is retried at most once a minute"
+# Renew the access token when less than this is left.
+REFRESH_MARGIN = timedelta(minutes=5)
+# Production's export guarantees the follower at least this much access-token life.
+EXPORT_MIN_ACCESS_LEFT = timedelta(minutes=10)
+# Follower: at most one pull attempt (success or failure) per this many seconds.
+PULL_MIN_INTERVAL_SECONDS = 60
 
 
 class SchwabAPIError(Exception):
@@ -51,12 +68,23 @@ class SchwabAPIError(Exception):
     pass
 
 
+class PullRateLimited(Exception):
+    """"Pull now" inside the one-minute window."""
+
+    def __init__(self, retry_after_seconds: int):
+        super().__init__(retry_after_seconds)
+        self.retry_after_seconds = retry_after_seconds
+
+
 class SchwabClient:
     name = "schwab"
 
-    def __init__(self, app_key: str, app_secret: str, database_url: str):
+    def __init__(self, app_key: str, app_secret: str, database_url: str, sync_url: str = "", sync_secret: str = ""):
         self._app_key = app_key
         self._app_secret = app_secret
+        # Token follower mode when sync_url is set (never logged: the secret)
+        self._sync_url = sync_url
+        self._sync_secret = sync_secret
         self._lock = threading.Lock()
         self._db_url = database_url.replace("postgresql+asyncpg://", "postgresql://")
 
@@ -73,20 +101,30 @@ class SchwabClient:
         self._last_error: Optional[str] = None
         self._expiry_warned_for: Optional[datetime] = None
 
+        # Follower bookkeeping (guarded by self._lock)
+        self._last_pull_attempt: Optional[float] = None  # time.monotonic()
+        self._last_pull_at: Optional[datetime] = None
+        self._last_pull_outcome: Optional[str] = None
+
+    @property
+    def follower(self) -> bool:
+        """Token follower mode: pull from production instead of calling Schwab's token endpoint."""
+        return bool(self._sync_url)
+
     # ── offline state ──────────────────────────────────────────────────────
 
     def _go_offline(self, reason: str) -> None:
         """Enter offline mode (logged once per offline period) and raise."""
         if self._offline_reason is None:
-            log.warning("Market data offline (Schwab): %s. %s.", reason, REAUTH_HINT)
+            log.warning("Market data offline (Schwab): %s. %s.", reason, FOLLOWER_HINT if self.follower else REAUTH_HINT)
         self._offline_reason = reason
         self._last_error = reason
         self._last_token_check = time.monotonic()
         raise MarketDataUnavailable(reason)
 
-    def _come_online(self) -> None:
+    def _come_online(self, why: str = "token row changed") -> None:
         if self._offline_reason is not None:
-            log.warning("Market data back online (Schwab): token row changed")
+            log.warning("Market data back online (Schwab): %s", why)
         self._offline_reason = None
 
     def is_offline(self) -> bool:
@@ -100,7 +138,9 @@ class SchwabClient:
         """Bring the offline state up to date without calling Schwab: load the token row the first
         time, then re-read it (≤ once a minute) to notice a CLI re-auth or a changed expiry."""
         try:
-            if not self._app_key or not self._app_secret:
+            if self.follower:
+                self._refresh_follower_state_locked()
+            elif not self._app_key or not self._app_secret:
                 self._offline_reason = self._offline_reason or "SCHWAB_APP_KEY and SCHWAB_APP_SECRET are not set"
                 self._last_error = self._offline_reason
             elif self._refresh_expires_at is None and self._offline_reason is None:
@@ -114,6 +154,17 @@ class SchwabClient:
             pass
         except Exception as exc:  # DB hiccup: keep the current state
             log.debug("Schwab token row unreadable: %s", exc)
+
+    def _refresh_follower_state_locked(self) -> None:
+        """Follower: load the local row the first time; when offline (or no row, or the refresh expiry is past),
+        try a pull — rate-limited to one a minute — so dev recovers without waiting for a market call."""
+        if self._access_token is None and self._offline_reason is None:
+            try:
+                self._load_tokens_from_db()
+            except SchwabAPIError:
+                pass  # no row: offline now; the pull below fills it
+        if self.is_offline():
+            self._pull_locked()
 
     def refresh_offline_state(self) -> bool:
         """Sync (may read the token row): run it in an executor from async code."""
@@ -200,70 +251,171 @@ class SchwabClient:
             self._last_error = None
             self._expiry_warned_for = None
 
-    def _ensure_valid_token(self) -> None:
+    def _ensure_valid_token(self, min_access_left: timedelta = REFRESH_MARGIN) -> None:
         with self._lock:
-            if not self._app_key or not self._app_secret:
+            if not self.follower and (not self._app_key or not self._app_secret):
                 self._go_offline("SCHWAB_APP_KEY and SCHWAB_APP_SECRET are not set")
 
             if self._offline_reason is not None:
-                # Offline: never call Schwab. Only re-read the token row (≤ once a minute).
-                self._recheck_token_row()
-                if self._offline_reason is not None:
-                    raise MarketDataUnavailable(self._offline_reason)
+                if self.follower:
+                    # Offline: never call Schwab; try production again (≤ once a minute).
+                    self._pull_locked()
+                else:
+                    # Offline: never call Schwab. Only re-read the token row (≤ once a minute).
+                    self._recheck_token_row()
+                    if self._offline_reason is not None:
+                        raise MarketDataUnavailable(self._offline_reason)
             elif self._access_token is not None:
                 self._recheck_token_row()
 
             if self._access_token is None:
-                self._load_tokens_from_db()
+                if self.follower:
+                    try:
+                        self._load_tokens_from_db()
+                    except SchwabAPIError:
+                        self._pull_locked()  # no row yet: production has it
+                else:
+                    self._load_tokens_from_db()
 
             now = datetime.now(timezone.utc)
 
             if self._refresh_expires_at and self._refresh_expires_at <= now:
-                self._go_offline(f"Schwab refresh token expired at {self._refresh_expires_at:%Y-%m-%d %H:%M} UTC")
+                if self.follower:
+                    self._pull_locked()  # production may have reconnected since
+                if self._refresh_expires_at and self._refresh_expires_at <= now:
+                    self._go_offline(f"Schwab refresh token expired at {self._refresh_expires_at:%Y-%m-%d %H:%M} UTC")
 
             if self._refresh_expires_at and (self._refresh_expires_at - now) < timedelta(hours=24) \
                     and self._expiry_warned_for != self._refresh_expires_at:
                 self._expiry_warned_for = self._refresh_expires_at  # once per token, not per request
                 log.warning(
-                    "Schwab refresh token expires at %s — re-run scripts/schwab_auth.py soon",
+                    "Schwab refresh token expires at %s — %s",
                     self._refresh_expires_at,
+                    "reconnect in production soon" if self.follower else "re-run scripts/schwab_auth.py soon",
                 )
 
-            if self._access_expires_at and (self._access_expires_at - now) > timedelta(minutes=5):
+            if self._access_expires_at and (self._access_expires_at - now) > min_access_left:
                 return
 
-            log.info("Refreshing Schwab access token")
-            creds = base64.b64encode(f"{self._app_key}:{self._app_secret}".encode()).decode()
-            resp = httpx.post(
-                SCHWAB_TOKEN_URL,
-                headers={
-                    "Authorization": f"Basic {creds}",
-                    "Content-Type": "application/x-www-form-urlencoded",
-                },
-                data={"grant_type": "refresh_token", "refresh_token": self._refresh_token},
-                timeout=15,
-            )
-            if resp.status_code != 200:
-                if _is_invalid_grant(resp):
-                    self._go_offline(f"Schwab rejected the refresh token ({resp.status_code} invalid_grant)")
-                self._last_error = f"Token refresh failed: HTTP {resp.status_code}"
-                raise SchwabAPIError(f"Token refresh failed: {resp.status_code} {resp.text}")
+            self._renew_locked()
 
-            data = resp.json()
-            new_access = data["access_token"]
-            new_refresh = data.get("refresh_token", self._refresh_token)
-            new_access_exp = now + timedelta(seconds=data["expires_in"])
-            new_refresh_exp = self._refresh_expires_at
-            self._save_tokens_to_db(new_access, new_refresh, new_access_exp, new_refresh_exp)
+    # ── renewal: refresh (normal) or pull (follower) ───────────────────────
+
+    def _renew_locked(self) -> None:
+        if self.follower:
+            self._pull_locked()
+        else:
+            self._refresh_from_schwab_locked()
+
+    def _refresh_from_schwab_locked(self) -> None:
+        """Normal mode only: the refresh grant at Schwab's token endpoint."""
+        assert not self.follower, "a token follower never calls Schwab's token endpoint"
+        now = datetime.now(timezone.utc)
+        log.info("Refreshing Schwab access token")
+        creds = base64.b64encode(f"{self._app_key}:{self._app_secret}".encode()).decode()
+        resp = httpx.post(
+            SCHWAB_TOKEN_URL,
+            headers={
+                "Authorization": f"Basic {creds}",
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+            data={"grant_type": "refresh_token", "refresh_token": self._refresh_token},
+            timeout=15,
+        )
+        if resp.status_code != 200:
+            if _is_invalid_grant(resp):
+                self._go_offline(f"Schwab rejected the refresh token ({resp.status_code} invalid_grant)")
+            self._last_error = f"Token refresh failed: HTTP {resp.status_code}"
+            raise SchwabAPIError(f"Token refresh failed: {resp.status_code} {resp.text}")
+
+        data = resp.json()
+        new_access = data["access_token"]
+        new_refresh = data.get("refresh_token", self._refresh_token)
+        new_access_exp = now + timedelta(seconds=data["expires_in"])
+        new_refresh_exp = self._refresh_expires_at
+        self._save_tokens_to_db(new_access, new_refresh, new_access_exp, new_refresh_exp)
+
+    def _pull_wait_seconds(self) -> int:
+        if self._last_pull_attempt is None:
+            return 0
+        left = PULL_MIN_INTERVAL_SECONDS - (time.monotonic() - self._last_pull_attempt)
+        return max(0, int(left + 0.999))
+
+    def _pull_locked(self) -> None:
+        """Follower only: pull the pair from production (caller holds self._lock, so concurrent callers wait for
+        this one pull). At most one attempt a minute; inside that window a still-valid token is used as is.
+        Success writes the row and comes online; failure enters offline mode (raises MarketDataUnavailable)."""
+        assert self.follower
+        if self._pull_wait_seconds() > 0:
+            if self._offline_reason is not None:
+                raise MarketDataUnavailable(self._offline_reason)
+            if self._access_token and self._access_expires_at and self._access_expires_at > datetime.now(timezone.utc):
+                return
+            raise SchwabAPIError("Schwab token pull from production is rate-limited (at most once a minute)")
+
+        self._last_pull_attempt = time.monotonic()
+        result = schwab_token_sync.pull(self._sync_url, self._sync_secret)
+        self._last_pull_at = datetime.now(timezone.utc)
+        self._last_pull_outcome = result.outcome
+        if result.outcome != schwab_token_sync.OK or result.tokens is None:
+            log.warning("Schwab token pull from production: %s", result.outcome)
+            self._go_offline(schwab_token_sync.OUTCOME_REASONS.get(result.outcome, "Token pull from production failed"))
+
+        tokens = result.tokens
+        asyncio.run(store_tokens(self._db_url, tokens))
+        self._load_tokens_from_db()  # also records the row's new marker
+        self._come_online("tokens pulled from production")
+        self._last_error = None
+        log.warning(
+            "Schwab token pull from production: ok; access token expires %s",
+            tokens.access_expires_at.isoformat(timespec="seconds"),
+        )
+
+    def _renew_after_401(self, used_token: Optional[str]) -> None:
+        """A data call got 401 with `used_token`: renew once, unless another caller already did."""
+        with self._lock:
+            if self._access_token != used_token:
+                return
+            self._renew_locked()
+
+    # ── production export / follower "pull now" ────────────────────────────
+
+    def export_tokens(self) -> TokenSet:
+        """Production: the current pair with at least EXPORT_MIN_ACCESS_LEFT of access-token life, refreshing
+        through the normal path (same lock) if needed. Raises MarketDataUnavailable when offline. Sync (I/O)."""
+        self._ensure_valid_token(min_access_left=EXPORT_MIN_ACCESS_LEFT)
+        with self._lock:
+            if self._offline_reason is not None or not self._access_token or not self._refresh_token:
+                raise MarketDataUnavailable(self._offline_reason or "No Schwab tokens")
+            return TokenSet(self._access_token, self._refresh_token, self._access_expires_at, self._refresh_expires_at)
+
+    def pull_now(self) -> None:
+        """Follower: an admin's "Pull now". Raises PullRateLimited inside the one-minute window; a failed pull
+        is reported through status (last_pull_outcome), not raised. Sync (I/O)."""
+        with self._lock:
+            wait = self._pull_wait_seconds()
+            if wait > 0:
+                raise PullRateLimited(wait)
+            try:
+                self._pull_locked()
+            except MarketDataUnavailable:
+                pass
 
     def _get(self, path: str, params: dict) -> dict:
         self._ensure_valid_token()
-        resp = httpx.get(
-            f"{SCHWAB_API_BASE}{path}",
-            headers={"Authorization": f"Bearer {self._access_token}"},
-            params=params,
-            timeout=30,
-        )
+        for attempt in (1, 2):
+            token = self._access_token
+            resp = httpx.get(
+                f"{SCHWAB_API_BASE}{path}",
+                headers={"Authorization": f"Bearer {token}"},
+                params=params,
+                timeout=30,
+            )
+            if resp.status_code == 401 and attempt == 1:
+                # Renew once (refresh, or pull in follower mode) and retry once.
+                self._renew_after_401(token)
+                continue
+            break
         if resp.status_code != 200:
             self._last_error = f"Schwab API HTTP {resp.status_code} on {path}"
             raise SchwabAPIError(f"Schwab API {resp.status_code}: {resp.text[:200]}")
@@ -283,6 +435,9 @@ class SchwabClient:
                 refresh_expires_at=self._refresh_expires_at,
                 last_success_at=self._last_success_at,
                 last_error=self._last_error,
+                token_source="production" if self.follower else "self",
+                last_pull_at=self._last_pull_at,
+                last_pull_outcome=self._last_pull_outcome,
             )
 
     def get_quotes(self, tickers: list[str]) -> dict[str, dict]:

@@ -40,7 +40,22 @@ APP_SECRET = os.environ["SCHWAB_APP_SECRET"]
 DATABASE_URL = os.environ["DATABASE_URL"]
 
 
+def confirm_not_follower() -> bool:
+    """A token follower (dev) must not reconnect: a new Schwab grant invalidates production's refresh token."""
+    if not os.environ.get("SCHWAB_TOKEN_SYNC_URL", "").strip():
+        return True
+    print("\nWARNING: SCHWAB_TOKEN_SYNC_URL is set — this environment follows production's Schwab tokens.")
+    print("Reconnecting here creates a new Schwab grant and INVALIDATES production's connection.")
+    print("Reconnect in production instead (Settings → Market data → Reconnect Schwab).")
+    answer = input("Type 'yes' to reconnect here anyway: ").strip().lower()
+    return answer == "yes"
+
+
 def main():
+    if not confirm_not_follower():
+        print("Cancelled.")
+        sys.exit(1)
+
     url = authorize_url(APP_KEY)
 
     print("\nOpening browser to authorize TradeMinder...")

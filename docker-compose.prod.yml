@@ -68,6 +68,9 @@ services:
       SCHWAB_APP_KEY: ${SCHWAB_APP_KEY:-}
       SCHWAB_APP_SECRET: ${SCHWAB_APP_SECRET:-}
       MARKET_DATA_PROVIDER: ${MARKET_DATA_PROVIDER:-schwab}
+      # Token export for a dev "token follower" (one Schwab grant, owned by production). Unset = export disabled (404).
+      # Never set SCHWAB_TOKEN_SYNC_URL here: production refreshes its own tokens.
+      SCHWAB_TOKEN_SYNC_SECRET: ${SCHWAB_TOKEN_SYNC_SECRET:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       ALERT_ENGINE_INTERVAL_MINUTES: ${ALERT_ENGINE_INTERVAL_MINUTES:-15}
       MARKET_HOURS_START: ${MARKET_HOURS_START:-09:30}

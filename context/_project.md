@@ -69,6 +69,7 @@ stockpile-main/     Older Python workspace (options scanner etc.), partly supers
 - ✅ Chrome extension: badges, hover commentary, alert tinting, wheel pills, Reconcile, account awareness, sign-in
 - ✅ Multi-user: accounts and ownership, account container UI, Schwab hardening, Google sign-in and HTTPS
 - ✅ In-app Schwab reconnect, phase 1 (Settings → Market data; CLI as fallback)
-- 🟡 Account facts, account profile part 1 (migration 019; Settings → Accounts) — on `develop`, not yet on `master`
-- 🟡 Account goal and preferences, account profile part 2 (migration 020; Settings → Accounts) — on `develop`, not yet on `master`
+- ✅ Account facts, account profile part 1 (migration 019; Settings → Accounts)
+- ✅ Account goal and preferences, account profile part 2 (migration 020; Settings → Accounts)
+- ✅ Schwab token follower: one grant owned by production; dev pulls its tokens (`SCHWAB_TOKEN_SYNC_*`)
 - ⏳ Morning briefing: endpoint returns 501 (stub)

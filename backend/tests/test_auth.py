@@ -285,7 +285,10 @@ async def test_non_admin_gets_403_on_admin_routes(client, act_as):
 # ── the boundary ────────────────────────────────────────────────────────────
 
 EXEMPT = {"/health", "/api/auth/google/login", "/api/auth/google/callback", "/api/auth/logout",
-          "/docs", "/docs/oauth2-redirect", "/redoc", "/openapi.json"}
+          "/docs", "/docs/oauth2-redirect", "/redoc", "/openapi.json",
+          # Server to server: authenticated by the token sync secret header instead (404 when disabled, 401
+          # without the secret) — covered in test_schwab_token_follower.py.
+          "/api/market-data/sync/tokens"}
 
 
 def test_every_route_requires_credentials():

@@ -20,14 +20,17 @@ from __future__ import annotations
 import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Optional, Protocol
+from typing import TYPE_CHECKING, Optional, Protocol
 
 import pandas as pd
 
 from app.config import settings
 from app.services.market_data_errors import MarketDataUnavailable
 # Re-exported so callers catch per-ticker failures without importing the Schwab module.
-from app.services.schwab_client import SchwabAPIError
+from app.services.schwab_client import PullRateLimited, SchwabAPIError
+
+if TYPE_CHECKING:
+    from app.services.schwab_oauth import TokenSet
 
 
 # Banner thresholds on the refresh token's remaining life (hours).
@@ -64,6 +67,10 @@ class ProviderStatus:
     refresh_expires_at: Optional[datetime]
     last_success_at: Optional[datetime]
     last_error: Optional[str]
+    # "self" (this environment refreshes) or "production" (token follower; pulls from production)
+    token_source: str = "self"
+    last_pull_at: Optional[datetime] = None
+    last_pull_outcome: Optional[str] = None
 
 
 class MarketDataProvider(Protocol):
@@ -99,6 +106,15 @@ class MarketDataProvider(Protocol):
 
     def status(self) -> ProviderStatus: ...
 
+    def export_tokens(self) -> "TokenSet":
+        """Production: the current token pair with ≥ 10 minutes of access-token life (refreshing under the
+        provider's own lock if needed), for a token follower. Raises MarketDataUnavailable when offline."""
+        ...
+
+    def pull_now(self) -> None:
+        """Token follower: pull from production now. Raises PullRateLimited inside the one-minute window."""
+        ...
+
 
 SUPPORTED_PROVIDERS = ("schwab",)
 
@@ -115,7 +131,10 @@ def get_market_data() -> MarketDataProvider:
                 name = settings.market_data_provider
                 if name == "schwab":
                     from app.services.schwab_client import SchwabClient
-                    _provider = SchwabClient(settings.schwab_app_key, settings.schwab_app_secret, settings.database_url)
+                    _provider = SchwabClient(
+                        settings.schwab_app_key, settings.schwab_app_secret, settings.database_url,
+                        sync_url=settings.schwab_token_sync_url, sync_secret=settings.schwab_token_sync_secret,
+                    )
                 else:  # settings validation rejects unknown names at startup
                     raise ValueError(f"Unknown market data provider: {name}")
     return _provider
@@ -150,7 +169,7 @@ async def prime_market_data() -> None:
         logging.getLogger(__name__).warning("Market data provider not primed: %s", exc)
 
 __all__ = [
-    "MarketDataProvider", "MarketDataUnavailable", "SchwabAPIError", "ProviderStatus",
+    "MarketDataProvider", "MarketDataUnavailable", "SchwabAPIError", "PullRateLimited", "ProviderStatus",
     "get_market_data", "market_data_offline", "market_data_offline_now", "compute_state",
     "STATE_OK", "STATE_EXPIRING", "STATE_CRITICAL", "STATE_OFFLINE", "SUPPORTED_PROVIDERS",
 ]

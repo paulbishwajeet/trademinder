@@ -42,6 +42,8 @@ class ReconnectError(Exception):
 
 _MESSAGES: dict[str, tuple[int, str]] = {
     "not_configured": (409, "Schwab app key and secret aren't configured on the server."),
+    "token_follower": (409, "This environment follows production's Schwab tokens. Reconnect in production: a "
+                            "reconnect here would invalidate production's connection."),
     "bad_url": (400, "That isn't the Schwab redirect address. After the Schwab login, copy the whole address of the "
                      "page that failed to load (it starts with https://127.0.0.1:8765/callback) and paste it here."),
     "authorization_denied": (400, "Schwab didn't authorize the connection. Start again and approve access at Schwab."),
@@ -82,6 +84,8 @@ def _consume(nonce: str) -> bool:
 
 
 def _check_configured() -> None:
+    if settings.token_follower:
+        raise _error("token_follower")
     if not settings.schwab_app_key or not settings.schwab_app_secret:
         raise _error("not_configured")
 
