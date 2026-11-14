@@ -20,6 +20,44 @@ Why the project is the way it is. **Newest entries first.**
 
 ---
 
+### 2026-11-13 — Schwab token follower: one grant, owned by production; dev pulls its tokens
+- **Area:** backend, frontend, infra
+- **Type:** endpoint, convention, ops learning, deviation
+- **What changed:**
+  - **Settings:** new `SCHWAB_TOKEN_SYNC_URL` (dev only: production's origin) and `SCHWAB_TOKEN_SYNC_SECRET`
+    (both sides, ≥ 32 chars). The app refuses to start with a half or weak configuration. With the URL unset, the
+    app behaves as before. `docker-compose.prod.yml` passes the secret through.
+  - **Production export:** `POST /api/market-data/sync/tokens`.
+    - It's outside the session seam and authenticated only by the `X-Token-Sync-Secret` header, compared in
+      constant time.
+    - Responses: 404 unless enabled; 401 `sync_unauthorized`; 503 `upstream_offline`; 502 `upstream_error`.
+    - It ensures ≥ 10 minutes of access-token life under the provider's refresh lock.
+  - **Dev (follower):** the provider never calls Schwab's token endpoint.
+    - Every refresh path pulls from production instead: single-flight under the provider lock, at most one
+      attempt a minute, one retry of the original call.
+    - Failures use the existing offline mode, and a later pull recovers it.
+  - **401s:** in both modes, a 401 on a data call now renews once and retries once. Before, there was no retry.
+  - **Status and pull now:** `GET /market-data/status` adds `token_source`, `last_pull_at` and
+    `last_pull_outcome`. The new admin `POST /market-data/sync/pull` returns 409 `not_follower` and 429
+    `pull_rate_limited`.
+  - **Reconnect on a follower:** the endpoints return 409 `token_follower`, the UI hides Reconnect (Pull now
+    instead), and the CLI asks for confirmation.
+- **Why (ops learning):** reconnecting in dev and then in production created two Schwab grants. A new grant
+  invalidates the previous refresh token, so one environment failed at its next refresh. That reverses the
+  2026-11-12 observation that two logins could coexist. There can be one grant only.
+- **Deviations:** the prompt doesn't cover these:
+  - the export is also 404 on a server that is itself a follower, so there are no chained followers;
+  - a transient refresh failure on production is 502 `upstream_error`, not `upstream_offline` (the follower
+    treats it as `unreachable` and retries after a minute);
+  - "Pull now" obeys the same one-minute limit (429);
+  - the export route is listed in `tests/test_auth.py` EXEMPT, because it has its own secret auth.
+- **Impact:**
+  - **No migration**; the head stays 020.
+  - **Weekly routine:** reconnect in production only (runbook "Weekly routine").
+  - **NAS:** the stack needs `SCHWAB_TOKEN_SYNC_SECRET` and a redeploy before dev can follow.
+- **Links:** `feature/schwab-token-follower` · `context/feature-schwab-token-follower.md` ·
+  `docs/superpowers/specs/2026-11-13-schwab-token-follower-design.md`
+
 ### 2026-11-13 — Account goal and preferences, part 2 of the account profile (migration 020)
 - **Area:** backend, frontend, data
 - **Type:** schema, endpoint, convention, deviation

@@ -30,6 +30,19 @@ The 5-part multi-user plan was **released on `master` on 2026-11-11**, and two W
   `facts_updated_at`.
 - Nothing reads the facts yet. See section 3.6.
 
+**In progress (2026-11-13, `feature/schwab-token-follower`, no migration, not yet merged): dev follows production's Schwab tokens.**
+- **The problem:** a reconnect in dev, then one in production, created two Schwab grants. A new grant invalidates
+  the previous refresh token.
+- **The fix:**
+  - Production (`SCHWAB_TOKEN_SYNC_SECRET` set) is the only environment that reconnects and refreshes. It serves
+    the pair at a secret-only, server-to-server `POST /api/market-data/sync/tokens`.
+  - Dev (`SCHWAB_TOKEN_SYNC_URL` set as well) is a **token follower**. It never calls Schwab's token endpoint; it
+    pulls from production instead (single-flight, at most once a minute, retrying the original call once).
+  - On dev, Reconnect is disabled (409, hidden). Status shows the token source and the last pull, with **Pull
+    now**.
+- **Both modes:** a 401 on a data call now renews once and retries once.
+- See section 5.
+
 **On `develop` (2026-11-13, `1c9ec72`, migration 020; not yet released to `master`): account goal and preferences, part 2 of the account profile.**
 - Each account gets:
   - an editable objective and assignment stance;
@@ -67,6 +80,12 @@ The 5-part multi-user plan was **released on `master` on 2026-11-11**, and two W
    - Re-auth is now **Reconnect Schwab** in the production app (under a minute; runbook `docs/deployment/schwab-reconnect.md`); the CLI is the fallback.
    - Still open: **Pull and redeploy** the NAS, then do the first real reconnect there (spec checklist 2f), which also confirms Schwab echoes `state` (assumed; the flow rejects a URL without it). If it fails, use the CLI plus a row copy and report the error code.
    - Phase 2 (a backend callback route) would need Schwab's single callback moved.
+   - **One grant only:** never reconnect in dev; that invalidates production's refresh token. Dev runs as a
+     token follower (`feature/schwab-token-follower`).
+     - To enable it, set `SCHWAB_TOKEN_SYNC_SECRET` on the NAS stack (Portainer) and redeploy, then set
+       `SCHWAB_TOKEN_SYNC_URL=https://tm.<domain>` and the same secret in dev's `.env`.
+     - The NAS-side manual checklist (spec `2026-11-13-schwab-token-follower-design.md`, steps 1–7) runs after the
+       release.
 2. The pilot user hasn't been invited yet; their Gmail must also be a test user on the Google consent screen (Testing mode).
 3. Extension IDs differ per computer; a fixed `key` in the manifest would give one stable ID for the allow-list.
 4. NAS backups are manual; a scheduled `pg_dump` would help.
@@ -411,7 +430,33 @@ Since the multi-user release, the extension also has:
 - Non-optionable tickers → `SchwabAPIError` → signal column shows `—`
 - Live intraday price appended as last daily bar before computing RSI/MACD/day color — keeps "live price" and "previous close" consistent with indicators
 - **Refresh token expires 7 days after original auth.** Refreshing the access token does NOT extend it. **This is the single most common cause of total app failure.** Since Part 4 a lapse puts the app into a labeled offline mode instead of a blackout (see section 0), and an admin-only banner warns before expiry. The backend logs a warning within 24h.
-- **Re-auth: reconnect in the app; the CLI is the fallback.**
+- **One grant, owned by production.** A new Schwab login invalidates the previous grant's refresh token, so
+  exactly one environment may reconnect and refresh: production.
+  - **Dev, as a "token follower":** dev runs with `SCHWAB_TOKEN_SYNC_URL` (production's origin) and
+    `SCHWAB_TOKEN_SYNC_SECRET`, and pulls the pair instead of refreshing.
+    - **When it pulls:** wherever `SchwabClient` would call Schwab's token endpoint (access token ≤ 5 min left,
+      a 401 on a data call, no row, a past refresh expiry, or offline), it calls `_pull_locked()`. That's an HTTPS
+      `POST {SYNC_URL}/api/market-data/sync/tokens` with the `X-Token-Sync-Secret` header, with verification on
+      and no redirects; plain http is allowed only for localhost.
+    - **How it pulls:**
+      - each pull runs under the provider lock (single-flight);
+      - it makes at most one attempt per 60 s;
+      - it writes the pair with `store_tokens()` and retries the original call once.
+    - **Failures:** each one (`unreachable`, `upstream_offline`, `unauthorized`, `disabled`, `invalid_response`)
+      enters the existing offline mode, logged once each way. A later pull recovers, including one triggered by a
+      status check.
+  - **Production's export:** it's mounted outside the session seam, and the secret is compared in constant time.
+    - **Responses:** 404 unless the secret is set (and the server isn't itself a follower); 401
+      `sync_unauthorized`; 503 `upstream_offline` instead of stale tokens; 502 `upstream_error` on a transient
+      refresh failure.
+    - **Freshness:** before answering, it makes sure ≥ 10 min of access-token life remain, refreshing under its
+      own lock, so production stays the only refresher.
+  - **Logging:** one line per pull or export (outcome and new access expiry); never tokens, the secret or bodies.
+  - **Reconnect on a follower:** both reconnect endpoints return 409 `token_follower`, the UI hides Reconnect, and
+    `scripts/schwab_auth.py` asks for `yes` when `SCHWAB_TOKEN_SYNC_URL` is set.
+- **401s (both modes):** a 401 on a data call renews once (a refresh, or a pull) and retries once. A second 401
+  is a `SchwabAPIError`.
+- **Re-auth: reconnect in the production app; the CLI is the fallback.**
   - **In the app:** the admin clicks **Reconnect Schwab** on the banner or in Settings → Market data, logs in at Schwab, and pastes the dead `https://127.0.0.1:8765/callback?code=…&state=…` address.
     - `app/services/schwab_reconnect.py` checks the state: HMAC-signed with `AUTH_STATE_SECRET`, bound to the admin, 10 minutes, single use, with pending nonces in process memory, so a restart forgets them.
     - It exchanges the code and calls `SchwabClient.install_tokens()`. That writes the row under the provider's lock and reloads it, so the provider is online at once.
@@ -484,7 +529,7 @@ All routes under `/api`. Everything except `auth` and `me` is mounted behind the
 | extension | `/extension/connect` (cookie session only; mints a token for an allow-listed extension), `/extension/tokens`, `/extension/tokens/current`, `/extension/tokens/{id}` |
 | accounts | list, create, reorder, patch, categories, archive, restore, delete; E*TRADE links (`/links/resolve`, `/links`, `/{id}/link`). Create, patch and list carry the account facts (section 3.6): every fact is optional on create and patch, and an explicit `null` on patch clears it. Responses add `account_tax_status`, `facts_complete`, `facts_updated_at` and `values_as_of`; money is JSON strings. The same endpoints carry the goal and preferences (migration 020). Responses add `limits` (`{stored, effective, source, default}` per defaulted limit), `goals_complete` and `goals_updated_at`; an explicit `null` on patch returns a limit to the house default. Rule violations: 422 `{detail, code, fields}` |
 | dashboard | `GET /dashboard/summary` (per-account cards) |
-| market-data | `GET /market-data/status` (admin only; Schwab token status). `POST /market-data/reconnect/start` → `{authorize_url, state_expires_at}` and `POST /market-data/reconnect/complete` `{redirect_url}` → the status shape (admin only; errors `{detail, code}`: 400 `bad_url`/`authorization_denied`/`missing_code`/`missing_state`/`code_expired`, 409 `state_invalid`/`state_expired`/`not_configured`, 502 `schwab_unreachable`) |
+| market-data | `GET /market-data/status` (admin only; Schwab token status, plus `token_source` `self`/`production` and, on a follower, `last_pull_at` / `last_pull_outcome`). `POST /market-data/sync/pull` (admin; follower only: pull from production now → the status shape; 409 `not_follower`, 429 `pull_rate_limited`). `POST /market-data/sync/tokens`: **server to server, outside the session seam**, `X-Token-Sync-Secret` header only, production → follower `{access_token, refresh_token, access_expires_at, refresh_expires_at}`; 404 when disabled, 401 `sync_unauthorized`, 503 `upstream_offline`, 502 `upstream_error`; never called by the SPA. On a follower the reconnect endpoints return 409 `token_follower`. `POST /market-data/reconnect/start` → `{authorize_url, state_expires_at}` and `POST /market-data/reconnect/complete` `{redirect_url}` → the status shape (admin only; errors `{detail, code}`: 400 `bad_url`/`authorization_denied`/`missing_code`/`missing_state`/`code_expired`, 409 `state_invalid`/`state_expired`/`not_configured`, 502 `schwab_unreachable`) |
 | trades | CRUD, close, category assign, rationale, wheel-by-id |
 | commentary | CRUD per trade, AI summary (Claude Haiku 4.5, 1h cache) |
 | alerts | read, dismiss, snooze |
@@ -510,11 +555,15 @@ Names only — values live in the git-ignored repo-root `.env` (dev) or the Port
 | App | `SECRET_KEY`, `OWNER_EMAIL` (seeds the owner/admin, migration 015), `OWNER_DISPLAY_NAME` |
 | Login (Part 5) | `PUBLIC_BASE_URL` (dev; prod derives it from `TM_HOSTNAME`), `TM_HOSTNAME`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `AUTH_STATE_SECRET` (≥32 chars), `SESSION_DAYS`, `EXTENSION_IDS` (comma-separated allow-list) |
 | HTTPS (prod only) | `ACME_EMAIL`, `CF_DNS_API_TOKEN` |
-| Market data | `SCHWAB_APP_KEY`, `SCHWAB_APP_SECRET`, `MARKET_DATA_PROVIDER` (only `schwab`) |
+| Market data | `SCHWAB_APP_KEY`, `SCHWAB_APP_SECRET` (not needed on a token follower), `MARKET_DATA_PROVIDER` (only `schwab`) |
+| Schwab token sync | `SCHWAB_TOKEN_SYNC_SECRET` (production and dev; ≥ 32 chars; on production it enables the export), `SCHWAB_TOKEN_SYNC_URL` (dev only: production's https origin; set = token follower mode) |
 | LLMs (optional) | `ANTHROPIC_API_KEY` (commentary summaries), `GEMINI_API_KEY` (signal commentary; read via `os.environ`, not pydantic Settings) |
 | Scheduler | `ALERT_ENGINE_INTERVAL_MINUTES`, `PRICE_REFRESH_INTERVAL_MINUTES`, `MARKET_HOURS_START`, `MARKET_HOURS_END`, `BRIEFING_GENERATE_TIME` |
 
-With `PUBLIC_BASE_URL` on https, the backend refuses to start unless the Google client id/secret and a 32+ character `AUTH_STATE_SECRET` are set.
+With `PUBLIC_BASE_URL` on https, the backend refuses to start unless the Google client id/secret and a 32+ character `AUTH_STATE_SECRET` are set. It also refuses to start when the token sync configuration is incomplete:
+- a sync secret shorter than 32 characters;
+- a sync URL without a secret;
+- a sync URL that isn't an https origin (http is allowed only for localhost).
 
 ---
 
@@ -540,8 +589,11 @@ cd frontend && npm run build
 # Tests
 cd backend && pytest tests/ -q    # 6 known pre-existing failures (section 6)
 
-# Schwab re-auth (every 7 days): Reconnect Schwab in the app (admin): banner or Settings → Market data
-# Fallback, for the DB in .env's DATABASE_URL:
+# Schwab re-auth (every 7 days): Reconnect Schwab in the PRODUCTION app only (admin): banner or Settings → Market data.
+# Dev follows production's tokens: in the repo-root .env set
+#   SCHWAB_TOKEN_SYNC_URL=https://tm.<domain>   SCHWAB_TOKEN_SYNC_SECRET=<same as the NAS stack>
+# Dev then pulls tokens from production (Settings → Market data → Pull now) and never reconnects.
+# Fallback, for the DB in .env's DATABASE_URL (asks for confirmation on a follower):
 python scripts/schwab_auth.py     # paste-URL OAuth flow (shares backend/app/services/schwab_oauth.py)
 ```
 

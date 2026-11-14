@@ -65,6 +65,8 @@ async def health():
 # behind it here, so a route can't be left unauthenticated by forgetting a dependency.
 app.include_router(auth.router)
 app.include_router(me.router)
+# Server-to-server Schwab token export: authenticated only by the sync secret header (404 when disabled).
+app.include_router(market_data.sync_router)
 _signed_in = [Depends(get_current_user)]
 for _module in (admin, extension, accounts, dashboard, trades, commentary, alerts, market, market_data, briefing, categories, positions, signals, sessions, wheel, screener, chain):
     app.include_router(_module.router, dependencies=_signed_in)

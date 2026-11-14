@@ -10,7 +10,15 @@ export interface MarketDataStatus {
   hours_remaining: number | null
   last_success_at: string | null
   last_error: string | null
+  /** 'self': this server refreshes its own Schwab tokens. 'production': token follower (dev) — it pulls the
+   *  token pair from production and must not reconnect. Tokens themselves never reach the browser. */
+  token_source: 'self' | 'production'
+  /** Follower only. */
+  last_pull_at: string | null
+  last_pull_outcome: PullOutcome | null
 }
+
+export type PullOutcome = 'ok' | 'unreachable' | 'upstream_offline' | 'unauthorized' | 'disabled' | 'invalid_response'
 
 export interface ReconnectStart {
   authorize_url: string
@@ -21,7 +29,10 @@ export interface ReconnectStart {
 /** Structured error codes from the reconnect endpoints (ApiError.code); ApiError.message is ready to show. */
 export type ReconnectErrorCode =
   | 'not_configured' | 'bad_url' | 'authorization_denied' | 'missing_code' | 'missing_state'
-  | 'state_invalid' | 'state_expired' | 'code_expired' | 'schwab_unreachable'
+  | 'state_invalid' | 'state_expired' | 'code_expired' | 'schwab_unreachable' | 'token_follower'
+
+/** Error codes from pullNow(): not_follower (409), pull_rate_limited (429, at most one pull a minute). */
+export type PullErrorCode = 'not_follower' | 'pull_rate_limited'
 
 export const marketDataApi = {
   // All admin only (403 otherwise).
@@ -33,4 +44,6 @@ export const marketDataApi = {
       method: 'POST',
       body: JSON.stringify({ redirect_url: redirectUrl }),
     }),
+  /** Token follower only: pull Schwab tokens from production now. Returns the new status. */
+  pullNow: () => apiFetch<MarketDataStatus>('/market-data/sync/pull', { method: 'POST' }),
 }

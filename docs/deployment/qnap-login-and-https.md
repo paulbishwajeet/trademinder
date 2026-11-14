@@ -113,6 +113,7 @@ Portainer → Stacks → the TradeMinder stack → **Environment variables**. Ke
 | `CF_DNS_API_TOKEN` | The Cloudflare token (secret) |
 | `SCHWAB_APP_KEY`, `SCHWAB_APP_SECRET` | Same as on the Mac (secrets) |
 | `MARKET_DATA_PROVIDER` | `schwab` |
+| `SCHWAB_TOKEN_SYNC_SECRET` | 32+ random characters (`openssl rand -hex 32`, secret); the same value goes in the Mac's `.env`. It enables the token export the Mac pulls from, so dev follows production's single Schwab grant. Never set `SCHWAB_TOKEN_SYNC_URL` here. See `schwab-reconnect.md`, "One-time setup" |
 | `GEMINI_API_KEY` | Optional, signal commentary |
 
 The backend **refuses to start** if `PUBLIC_BASE_URL` is https and the Google client id, the client secret or a

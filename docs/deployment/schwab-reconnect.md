@@ -3,6 +3,37 @@
 Schwab ends TradeMinder's market data connection **7 days after each login**. Refreshing the access token doesn't
 extend it. Renew it once a week from the production app; it takes under a minute.
 
+**Reconnect only in production; dev follows.** Each Schwab login creates a new grant and invalidates the previous
+grant's refresh token, so two environments can't each hold their own. Production owns the one grant, and the Mac
+(dev) pulls production's current tokens instead of refreshing or reconnecting.
+
+## Weekly routine
+
+1. **In production only:** Reconnect Schwab (steps below), before the amber banner turns red.
+2. **Dev needs nothing.** It pulls the new tokens from production on its next market call, or immediately with
+   Settings → Market data → **Pull now**. Never click Reconnect, or run `scripts/schwab_auth.py`, on dev; both are
+   disabled or ask for confirmation there.
+
+## One-time setup: dev follows production
+
+1. Generate a secret: `openssl rand -hex 32`.
+2. **NAS:** Portainer → the `trademinder` stack → Environment variables → add `SCHWAB_TOKEN_SYNC_SECRET` with that
+   value. Leave `SCHWAB_TOKEN_SYNC_URL` unset there. **Pull and redeploy.** The export answers 404 until the secret
+   is set.
+3. **Mac:** in the repo-root `.env`, set `SCHWAB_TOKEN_SYNC_URL=https://tm.<domain>` and the same
+   `SCHWAB_TOKEN_SYNC_SECRET`. Restart the backend.
+4. Check dev's Settings → Market data: **Token source: Production**, **Last pull outcome: OK**.
+
+The secret goes only into Portainer and the git-ignored `.env`, never into git. Dev must reach the NAS: on the home
+network, the same as the browser.
+
+If dev shows "Market data offline" with a last pull outcome of:
+- **production unreachable:** the NAS backend is down, or you're off the home network. It recovers by itself
+  within a minute of the NAS coming back.
+- **production is offline:** production's own connection lapsed. Reconnect in production.
+- **secret rejected:** the two secrets differ.
+- **token sync not enabled on production:** the NAS stack has no secret, or wasn't redeployed.
+
 ## When
 
 - **Amber banner** ("expires in N days"): reconnect when convenient.
@@ -23,7 +54,8 @@ Only admins see the banner, the tab and the button.
    **Connect**. Do it promptly: Schwab's code lasts only a short time.
 6. The dialog shows the new expiry and the banner disappears. Close the failed tab.
 
-The new connection is live immediately: no restart, and no token copy to the NAS.
+The new connection is live immediately: no restart, and no token copy to the NAS. Dev picks it up on its next
+pull.
 
 ## If it fails
 
