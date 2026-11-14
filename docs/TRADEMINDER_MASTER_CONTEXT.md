@@ -5,7 +5,7 @@
 
 ---
 
-## 0. Current State (2026-11-12)
+## 0. Current State (2026-11-13)
 
 The 5-part multi-user plan was **released on `master` on 2026-11-11**, and two WHEEL improvements followed on 2026-11-12. Production runs `master` on the QNAP at **https://tm.aipathstudio.com**: LAN only, HTTPS via Traefik, Google sign-in required. **The QNAP holds the real data; the Mac is development only.**
 
@@ -18,6 +18,44 @@ The 5-part multi-user plan was **released on `master` on 2026-11-11**, and two W
 - The backend checks a signed, single-use, 10-minute state, exchanges the code, and writes the token row under the provider's lock. The provider is online again immediately: no restart, no token copy to the NAS.
 - The CLI remains the fallback and shares the same code (`app/services/schwab_oauth.py`). See section 5 and `docs/deployment/schwab-reconnect.md`.
 
+**Released 2026-11-13 (`11e5039`, migration 019): account facts, part 1 of the account profile.**
+- Each brokerage account gets editable facts in Settings → Accounts:
+  - tax treatment and purpose;
+  - margin type;
+  - a broker-neutral options tier plus the broker's own label for it;
+  - optional net liquidation value and cash, with an as-of date.
+- Existing accounts start unset and show **Facts incomplete**.
+- Impossible combinations are rejected with 422 `{detail, code, fields}`.
+- The API exposes `account_tax_status` and `account_purpose` with the KB's spellings, plus `facts_complete` and
+  `facts_updated_at`.
+- Nothing reads the facts yet. See section 3.6.
+
+**Released 2026-11-13 (`2e08f53`, no migration): dev follows production's Schwab tokens.**
+- **The problem:** a reconnect in dev, then one in production, created two Schwab grants. A new grant invalidates
+  the previous refresh token.
+- **The fix:**
+  - Production (`SCHWAB_TOKEN_SYNC_SECRET` set) is the only environment that reconnects and refreshes. It serves
+    the pair at a secret-only, server-to-server `POST /api/market-data/sync/tokens`.
+  - Dev (`SCHWAB_TOKEN_SYNC_URL` set as well) is a **token follower**. It never calls Schwab's token endpoint; it
+    pulls from production instead (single-flight, at most once a minute, retrying the original call once).
+  - On dev, Reconnect is disabled (409, hidden). Status shows the token source and the last pull, with **Pull
+    now**.
+- **Both modes:** a 401 on a data call now renews once and retries once.
+- See section 5.
+
+**Released 2026-11-13 (`1c9ec72`, migration 020): account goal and preferences, part 2 of the account profile.**
+- Each account gets:
+  - an editable objective and assignment stance;
+  - optional targets: monthly premium and annual yield;
+  - risk limits: max position, max speculative position and max margin used (these three default to house
+    values), plus minimum cash reserve and defensive-at-loss.
+- **Defaults:** an unset limit means the house default (`app/services/house_defaults.py`: 10% / 3% / 30%; to be
+  sourced from the KB later), never "no limit". The API returns stored, effective and source for each.
+- **Rules:** a cash account can't have a margin limit above 0, in either edit order, and a speculative limit can't
+  exceed the effective position limit.
+- **Display:** "Goal not set" appears next to "Facts incomplete".
+- Nothing reads these yet. See section 3.6.
+
 | Part | What shipped | Migration |
 |---|---|---|
 | 1. Accounts and ownership | `users`, `brokerage_accounts`, account categories, screener-account memberships. `user_id` on every user-owned table; `account_id` on trades, wheels, spreads and screener notes. Existing data assigned to the owner (seeded from `OWNER_EMAIL`) and one default "E*TRADE" account. Every query scoped through one seam, `get_current_user`; isolation holds for the admin too. A SPECULATIVE category was added. | 015–016 |
@@ -26,7 +64,7 @@ The 5-part multi-user plan was **released on `master` on 2026-11-11**, and two W
 | 4. Schwab hardening | Market-data provider boundary and offline detection. Offline: market endpoints return 503 `market_data_offline`, mixed endpoints return null fields plus a flag, stale caches used where possible, scheduled market jobs skip (logged once on entering and leaving offline). Amber/red expiry banner, dashes in the UI, notice in the extension, admin-only status endpoint. Non-market features keep working; CLI re-auth recovers without a restart. | none |
 | 5. Login | Google OIDC (PKCE, state, nonce) as identity check only; backend-issued server-side sessions (httpOnly, Secure, Lax cookie holding a hashed token, 30-day sliding; no JWT, no Redis). Sign-in: known Google subject → in; else email match on an invited or owner row binds it; else **pending** until admin approval; invites are pre-approved. Admin page: invite, approve, reject, disable, enable, change role, with self and last-admin guards. Extension: one-button sign-in via `/extension/connect`, revocable hashed bearer token, listed under Settings → Connected extensions, allow-listed extension IDs only. Every API route needs a session or extension token; CORS allows only those extension origins. HTTPS: Traefik on 443, Let's Encrypt via Cloudflare DNS-01 (NAS never exposed to the internet); `/api` → backend, everything else → frontend; only 443 published. | 018 |
 
-**Alembic head is 018; the next migration is 019.**
+**Alembic head is 020; the next migration is 021.** The NAS reaches 020 on its next Pull and redeploy (`alembic upgrade head` runs at backend start).
 
 **Deployment learnings (do not relearn these; history in `docs/decisions.md`):**
 - The Portainer stack must be a **Git stack** (a "Limited" stack has no environment variables) and must be named **`trademinder`**, because the database volume is `trademinder_pgdata`.
@@ -42,6 +80,12 @@ The 5-part multi-user plan was **released on `master` on 2026-11-11**, and two W
    - Re-auth is now **Reconnect Schwab** in the production app (under a minute; runbook `docs/deployment/schwab-reconnect.md`); the CLI is the fallback.
    - Still open: **Pull and redeploy** the NAS, then do the first real reconnect there (spec checklist 2f), which also confirms Schwab echoes `state` (assumed; the flow rejects a URL without it). If it fails, use the CLI plus a row copy and report the error code.
    - Phase 2 (a backend callback route) would need Schwab's single callback moved.
+   - **One grant only:** never reconnect in dev; that invalidates production's refresh token. Dev runs as a
+     token follower (released 2026-11-13).
+     - `SCHWAB_TOKEN_SYNC_SECRET` is already set in Portainer and in dev's `.env`.
+     - **Still open:** Pull and redeploy the NAS (which also runs migrations 019 and 020). Then set
+       `SCHWAB_TOKEN_SYNC_URL=https://tm.<domain>` in dev's `.env`, restart the dev backend, and run the NAS
+       checklist (spec `2026-11-13-schwab-token-follower-design.md`, steps 1–7).
 2. The pilot user hasn't been invited yet; their Gmail must also be a test user on the Google consent screen (Testing mode).
 3. Extension IDs differ per computer; a fixed `key` in the manifest would give one stable ID for the allow-list.
 4. NAS backups are manual; a scheduled `pg_dump` would help.
@@ -51,7 +95,9 @@ The 5-part multi-user plan was **released on `master` on 2026-11-11**, and two W
    - With a symbol filter on, a section's Fetch button still fetches the whole section.
    - The "other slots need action" notice ignores new wheels that have no slot.
    - Wheels that have slots have no edit UI, although `PATCH /api/wheel/{id}` allows changing shares and date.
-8. Unmerged work predating the release:
+8. Account facts: `cash_balance` can't be negative (per the part-1 prompt), but a margin debit is negative cash. Decide whether to allow negative cash on margin types.
+9. Account goals: should `limited_margin` (no borrowing in practice) also force the margin limit to 0, like `cash`? Left unconstrained for now.
+10. Unmerged work predating the release:
    - `fix/day-color-regular-session` (2026-10-29, build the daily bar from the regular session);
    - `fix/earnings-date-cache` (2026-10-29, cache the earnings date and stop swallowing lookup failures);
    - `feature/commentaryfromextension` (2026-05, extension commentary panel; probably superseded).
@@ -172,9 +218,64 @@ awaiting_sold_put ──sell put──► sold_put_active ──expire OTM──
 
 **`schwab_tokens`** — single row (`id=1`) with Schwab OAuth access + refresh tokens and expiries. Refresh token has a **fixed 7-day life from original auth** — refreshing the access token does NOT extend it, so `refresh_expires_at` is preserved on every refresh.
 
-### 3.6 Accounts and ownership (migrations 015–017)
+### 3.6 Accounts and ownership (migrations 015–017, 019, 020)
 
 User → brokerage accounts → trades, wheels, spreads. **`brokerage_accounts`** per user (several per broker allowed). Categories are a per-user library; each account picks the categories it uses and a default one. Screener: one symbol row per user, linked to accounts via memberships; screener notes are per account. One wheel per ticker **per account**. E*TRADE dropdown entries link to accounts by SHA-256 fingerprint.
+
+**Account facts (migration 019).** These are per-account gates, meaning what the account is allowed to do, for
+later guidance. They're stored per account because an IRA and a taxable account at the same broker differ.
+- **Nullable:** every column is nullable, and null means "not set". The migration set nothing on existing accounts.
+- **Enumerations:** strings with named `CHECK` constraints:
+  - `tax_treatment`: `taxable`, `traditional_ira`, `roth_ira`, `other_tax_advantaged`;
+  - `account_purpose`: `trading`, `long_term` (the KB's spelling);
+  - `margin_type`: `cash`, `limited_margin` (restricted IRA margin), `margin`, `portfolio_margin`;
+  - `options_tier`: broker-neutral and cumulative: `none`, `covered` (covered calls), `cash_secured_and_long`
+    (adds CSPs and long options), `spreads` (adds defined-risk spreads), `uncovered` (adds naked/undefined-risk).
+    The broker's own name for the level goes in `options_level_label` (free text, ≤ 40).
+- **Balances:** `net_liquidation_value` and `cash_balance` are `numeric(14,2)`, ≥ 0, and entered by hand; no other
+  source stores balances. `values_as_of` is set by the service when either value changes.
+- **`facts_updated_at`:** set by the service only when one of the five fact fields actually changes. Edits to the
+  nickname, sort order or money values don't move it. There's no audit table.
+- **Derived in the API:**
+  - `account_tax_status`: `taxable` / `tax_advantaged` / null, the KB key;
+  - `facts_complete`: tax treatment, purpose, margin type and options tier all set.
+- **Rules (service, on the merged stored + request values):**
+  - a tax-advantaged account can't have `margin`/`portfolio_margin` (`tax_advantaged_margin`);
+  - `uncovered` needs `margin`/`portfolio_margin` (`uncovered_requires_margin`);
+  - money can't be negative (`negative_value`) or out of range (`invalid_value`).
+
+  Merely unusual combinations are allowed.
+
+**Goal and preferences (migration 020).** These are per-account weights (what's best among the allowed moves) for
+later guidance. The assignment stance, for example, drives "roll versus take assignment".
+- **Nullable:** every column is nullable, and null means "not set". The migration set nothing.
+- **Enumerations:**
+  - `objective`: `income`, `growth`, `mixed`;
+  - `assignment_stance`: `willing` (happy to own at the strike), `selective` (depends on the ticker), `unwilling`
+    (avoid assignment).
+- **Targets:** `monthly_premium_target` (`numeric(12,2)`, ≥ 0) and `annual_yield_target_pct` (0–100).
+- **Limits,** all `numeric(5,2)` percent values (10 = 10%), range-checked in the DB:
+  - `max_position_pct` (> 0, ≤ 100);
+  - `max_speculative_position_pct` (> 0, ≤ 100; tickers in the SPECULATIVE category);
+  - `max_margin_used_pct` (0–100);
+  - `min_cash_reserve_pct` (0–100);
+  - `defensive_at_loss_pct` (> 0, ≤ 100; the unrealized loss on one position at which guidance turns defensive).
+- **Stored versus effective:** an unset position, speculative or margin limit means the **house default**
+  (`app/services/house_defaults.py`: 10 / 3 / 30; a later feature sources them from the KB), never "no limit".
+  Defaults are never written into the row, so changing one reaches every account that didn't override it.
+  - The API's `limits.<field>` = `{stored, effective, source, default}`.
+  - `source` is `account`, `default`, `cash_account` (the margin limit on a cash account: 0), or `position_limit`
+    (the speculative default capped at a tighter position limit).
+- **Rules (service; facts and goals merged and validated together, so every edit order holds):**
+  - `cash_account_margin`: `margin_type = cash` with a stored margin limit > 0. Setting the limit, or switching
+    the margin type, both fail.
+  - `speculative_above_position`: a stored speculative limit above the effective position limit. Raising one, or
+    lowering or clearing the other, both fail.
+  - `out_of_range`, `negative_value`, `invalid_value`.
+  - Merely unusual combinations pass.
+- **`goals_updated_at`:** moves only when a goal or preference actually changes. It's independent of
+  `facts_updated_at`, in both directions.
+- **`goals_complete`:** `objective` and `assignment_stance` are both set.
 
 ---
 
@@ -329,7 +430,33 @@ Since the multi-user release, the extension also has:
 - Non-optionable tickers → `SchwabAPIError` → signal column shows `—`
 - Live intraday price appended as last daily bar before computing RSI/MACD/day color — keeps "live price" and "previous close" consistent with indicators
 - **Refresh token expires 7 days after original auth.** Refreshing the access token does NOT extend it. **This is the single most common cause of total app failure.** Since Part 4 a lapse puts the app into a labeled offline mode instead of a blackout (see section 0), and an admin-only banner warns before expiry. The backend logs a warning within 24h.
-- **Re-auth: reconnect in the app; the CLI is the fallback.**
+- **One grant, owned by production.** A new Schwab login invalidates the previous grant's refresh token, so
+  exactly one environment may reconnect and refresh: production.
+  - **Dev, as a "token follower":** dev runs with `SCHWAB_TOKEN_SYNC_URL` (production's origin) and
+    `SCHWAB_TOKEN_SYNC_SECRET`, and pulls the pair instead of refreshing.
+    - **When it pulls:** wherever `SchwabClient` would call Schwab's token endpoint (access token ≤ 5 min left,
+      a 401 on a data call, no row, a past refresh expiry, or offline), it calls `_pull_locked()`. That's an HTTPS
+      `POST {SYNC_URL}/api/market-data/sync/tokens` with the `X-Token-Sync-Secret` header, with verification on
+      and no redirects; plain http is allowed only for localhost.
+    - **How it pulls:**
+      - each pull runs under the provider lock (single-flight);
+      - it makes at most one attempt per 60 s;
+      - it writes the pair with `store_tokens()` and retries the original call once.
+    - **Failures:** each one (`unreachable`, `upstream_offline`, `unauthorized`, `disabled`, `invalid_response`)
+      enters the existing offline mode, logged once each way. A later pull recovers, including one triggered by a
+      status check.
+  - **Production's export:** it's mounted outside the session seam, and the secret is compared in constant time.
+    - **Responses:** 404 unless the secret is set (and the server isn't itself a follower); 401
+      `sync_unauthorized`; 503 `upstream_offline` instead of stale tokens; 502 `upstream_error` on a transient
+      refresh failure.
+    - **Freshness:** before answering, it makes sure ≥ 10 min of access-token life remain, refreshing under its
+      own lock, so production stays the only refresher.
+  - **Logging:** one line per pull or export (outcome and new access expiry); never tokens, the secret or bodies.
+  - **Reconnect on a follower:** both reconnect endpoints return 409 `token_follower`, the UI hides Reconnect, and
+    `scripts/schwab_auth.py` asks for `yes` when `SCHWAB_TOKEN_SYNC_URL` is set.
+- **401s (both modes):** a 401 on a data call renews once (a refresh, or a pull) and retries once. A second 401
+  is a `SchwabAPIError`.
+- **Re-auth: reconnect in the production app; the CLI is the fallback.**
   - **In the app:** the admin clicks **Reconnect Schwab** on the banner or in Settings → Market data, logs in at Schwab, and pastes the dead `https://127.0.0.1:8765/callback?code=…&state=…` address.
     - `app/services/schwab_reconnect.py` checks the state: HMAC-signed with `AUTH_STATE_SECRET`, bound to the admin, 10 minutes, single use, with pending nonces in process memory, so a restart forgets them.
     - It exchanges the code and calls `SchwabClient.install_tokens()`. That writes the row under the provider's lock and reloads it, so the provider is online at once.
@@ -380,6 +507,10 @@ Read this before proposing any work. The README oversells current state.
 - **Docs sync:** before committing a behaviour change, update `docs/decisions.md` (deviations, schema, endpoints, conventions, deferrals, ops lessons) and this file (edited in place). Rules in `CLAUDE.md`.
 - **Commits:** granular and conventional (`feat(wheel):`, `fix(technicals):`, `refactor(wheel):`). **Never commit unless explicitly asked.**
 - **Backend:** routers thin, services hold logic, Pydantic schemas are the contract. pytest. uv for deps.
+- **Structured errors:** a machine-readable failure is `{detail, code}`, plus `fields` when it is about specific
+  inputs. For example: 503 `market_data_offline`, the reconnect codes, and 422 account-fact rules with `fields`.
+  The SPA's `ApiError` exposes `.code` and `.fields`.
+- **Money:** `Numeric` in the database, JSON strings in the API, `string | null` in TS with an explicit `parseFloat`.
 - **Frontend:** TypeScript strict, functional components, Tailwind utilities only (no custom CSS), typed fetch wrappers in `src/api/`. Shared primitives in `src/components/ui/` (shadcn-style, hand-written). Page filter state lives in URL search params, not localStorage. Page-level keyboard shortcuts listen in the capture phase and stand down while an element with `data-escape-layer` (open popover, Notes panel) exists. Run `npm run build` before pushing anything the NAS deploys.
 - **Ticker aliases:** the GOOG↔GOOGL map exists in three places — `backend/app/routers/wheel.py`, `extension/content.js`, `frontend/src/lib/tickers.ts` — keep them in step.
 - **Extension:** vanilla JS, no build step, all network calls via `bgFetch` through the service worker.
@@ -396,9 +527,9 @@ All routes under `/api`. Everything except `auth` and `me` is mounted behind the
 | me | `GET /me` (allowed while pending; returns status) |
 | admin | `/admin/users`: list, invite, approve, reject, disable, enable, change role (admin only) |
 | extension | `/extension/connect` (cookie session only; mints a token for an allow-listed extension), `/extension/tokens`, `/extension/tokens/current`, `/extension/tokens/{id}` |
-| accounts | list, create, reorder, patch, categories, archive, restore, delete; E*TRADE links (`/links/resolve`, `/links`, `/{id}/link`) |
+| accounts | list, create, reorder, patch, categories, archive, restore, delete; E*TRADE links (`/links/resolve`, `/links`, `/{id}/link`). Create, patch and list carry the account facts (section 3.6): every fact is optional on create and patch, and an explicit `null` on patch clears it. Responses add `account_tax_status`, `facts_complete`, `facts_updated_at` and `values_as_of`; money is JSON strings. The same endpoints carry the goal and preferences (migration 020). Responses add `limits` (`{stored, effective, source, default}` per defaulted limit), `goals_complete` and `goals_updated_at`; an explicit `null` on patch returns a limit to the house default. Rule violations: 422 `{detail, code, fields}` |
 | dashboard | `GET /dashboard/summary` (per-account cards) |
-| market-data | `GET /market-data/status` (admin only; Schwab token status). `POST /market-data/reconnect/start` → `{authorize_url, state_expires_at}` and `POST /market-data/reconnect/complete` `{redirect_url}` → the status shape (admin only; errors `{detail, code}`: 400 `bad_url`/`authorization_denied`/`missing_code`/`missing_state`/`code_expired`, 409 `state_invalid`/`state_expired`/`not_configured`, 502 `schwab_unreachable`) |
+| market-data | `GET /market-data/status` (admin only; Schwab token status, plus `token_source` `self`/`production` and, on a follower, `last_pull_at` / `last_pull_outcome`). `POST /market-data/sync/pull` (admin; follower only: pull from production now → the status shape; 409 `not_follower`, 429 `pull_rate_limited`). `POST /market-data/sync/tokens`: **server to server, outside the session seam**, `X-Token-Sync-Secret` header only, production → follower `{access_token, refresh_token, access_expires_at, refresh_expires_at}`; 404 when disabled, 401 `sync_unauthorized`, 503 `upstream_offline`, 502 `upstream_error`; never called by the SPA. On a follower the reconnect endpoints return 409 `token_follower`. `POST /market-data/reconnect/start` → `{authorize_url, state_expires_at}` and `POST /market-data/reconnect/complete` `{redirect_url}` → the status shape (admin only; errors `{detail, code}`: 400 `bad_url`/`authorization_denied`/`missing_code`/`missing_state`/`code_expired`, 409 `state_invalid`/`state_expired`/`not_configured`, 502 `schwab_unreachable`) |
 | trades | CRUD, close, category assign, rationale, wheel-by-id |
 | commentary | CRUD per trade, AI summary (Claude Haiku 4.5, 1h cache) |
 | alerts | read, dismiss, snooze |
@@ -424,11 +555,15 @@ Names only — values live in the git-ignored repo-root `.env` (dev) or the Port
 | App | `SECRET_KEY`, `OWNER_EMAIL` (seeds the owner/admin, migration 015), `OWNER_DISPLAY_NAME` |
 | Login (Part 5) | `PUBLIC_BASE_URL` (dev; prod derives it from `TM_HOSTNAME`), `TM_HOSTNAME`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `AUTH_STATE_SECRET` (≥32 chars), `SESSION_DAYS`, `EXTENSION_IDS` (comma-separated allow-list) |
 | HTTPS (prod only) | `ACME_EMAIL`, `CF_DNS_API_TOKEN` |
-| Market data | `SCHWAB_APP_KEY`, `SCHWAB_APP_SECRET`, `MARKET_DATA_PROVIDER` (only `schwab`) |
+| Market data | `SCHWAB_APP_KEY`, `SCHWAB_APP_SECRET` (not needed on a token follower), `MARKET_DATA_PROVIDER` (only `schwab`) |
+| Schwab token sync | `SCHWAB_TOKEN_SYNC_SECRET` (production and dev; ≥ 32 chars; on production it enables the export), `SCHWAB_TOKEN_SYNC_URL` (dev only: production's https origin; set = token follower mode) |
 | LLMs (optional) | `ANTHROPIC_API_KEY` (commentary summaries), `GEMINI_API_KEY` (signal commentary; read via `os.environ`, not pydantic Settings) |
 | Scheduler | `ALERT_ENGINE_INTERVAL_MINUTES`, `PRICE_REFRESH_INTERVAL_MINUTES`, `MARKET_HOURS_START`, `MARKET_HOURS_END`, `BRIEFING_GENERATE_TIME` |
 
-With `PUBLIC_BASE_URL` on https, the backend refuses to start unless the Google client id/secret and a 32+ character `AUTH_STATE_SECRET` are set.
+With `PUBLIC_BASE_URL` on https, the backend refuses to start unless the Google client id/secret and a 32+ character `AUTH_STATE_SECRET` are set. It also refuses to start when the token sync configuration is incomplete:
+- a sync secret shorter than 32 characters;
+- a sync URL without a secret;
+- a sync URL that isn't an https origin (http is allowed only for localhost).
 
 ---
 
@@ -454,8 +589,11 @@ cd frontend && npm run build
 # Tests
 cd backend && pytest tests/ -q    # 6 known pre-existing failures (section 6)
 
-# Schwab re-auth (every 7 days): Reconnect Schwab in the app (admin): banner or Settings → Market data
-# Fallback, for the DB in .env's DATABASE_URL:
+# Schwab re-auth (every 7 days): Reconnect Schwab in the PRODUCTION app only (admin): banner or Settings → Market data.
+# Dev follows production's tokens: in the repo-root .env set
+#   SCHWAB_TOKEN_SYNC_URL=https://tm.<domain>   SCHWAB_TOKEN_SYNC_SECRET=<same as the NAS stack>
+# Dev then pulls tokens from production (Settings → Market data → Pull now) and never reconnects.
+# Fallback, for the DB in .env's DATABASE_URL (asks for confirmation on a follower):
 python scripts/schwab_auth.py     # paste-URL OAuth flow (shares backend/app/services/schwab_oauth.py)
 ```
 

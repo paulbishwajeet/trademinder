@@ -6,6 +6,7 @@ from fastapi.responses import JSONResponse
 from app.config import settings
 from app.deps import get_current_user
 from app.routers import accounts, admin, auth, extension, me, dashboard, trades, commentary, alerts, market, market_data, briefing, categories, positions, signals, sessions, wheel, screener, chain
+from app.services.account_facts import AccountFactsError
 from app.services.market_data import prime_market_data
 from app.services.market_data_errors import MarketDataUnavailable
 from app.scheduler import scheduler, start_scheduler
@@ -40,6 +41,12 @@ app.add_middleware(
 )
 
 
+@app.exception_handler(AccountFactsError)
+async def account_facts_error_handler(request: Request, exc: AccountFactsError):
+    """Impossible account-fact combinations: 422 with a code and the fields to highlight."""
+    return JSONResponse(status_code=422, content={"detail": exc.detail, "code": exc.code, "fields": exc.fields})
+
+
 @app.exception_handler(MarketDataUnavailable)
 async def market_data_unavailable_handler(request: Request, exc: MarketDataUnavailable):
     """Pure market endpoints: 503 with a structured code the SPA and extension recognise."""
@@ -58,6 +65,8 @@ async def health():
 # behind it here, so a route can't be left unauthenticated by forgetting a dependency.
 app.include_router(auth.router)
 app.include_router(me.router)
+# Server-to-server Schwab token export: authenticated only by the sync secret header (404 when disabled).
+app.include_router(market_data.sync_router)
 _signed_in = [Depends(get_current_user)]
 for _module in (admin, extension, accounts, dashboard, trades, commentary, alerts, market, market_data, briefing, categories, positions, signals, sessions, wheel, screener, chain):
     app.include_router(_module.router, dependencies=_signed_in)

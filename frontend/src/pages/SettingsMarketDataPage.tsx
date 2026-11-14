@@ -2,6 +2,8 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { useMarketData } from '../context/MarketDataContext'
 import { ReconnectSchwabButton } from '../components/MarketData/ReconnectSchwabDialog'
+import { PullTokensButton } from '../components/MarketData/PullTokensButton'
+import { PULL_OUTCOME_LABEL, isFollower } from '../lib/tokenSync'
 import type { MarketDataState } from '../api/marketData'
 
 const STATE_LABEL: Record<MarketDataState, { text: string; className: string }> = {
@@ -15,7 +17,8 @@ function fmt(ts: string | null): string {
   return ts ? new Date(ts).toLocaleString() : '—'
 }
 
-/** Settings → Market data (admin only): the Schwab connection's status, with Reconnect at any time. */
+/** Settings → Market data (admin only): the Schwab connection's status, with Reconnect at any time — or, on a
+ *  token follower (dev), where the tokens come from and Pull now (reconnecting happens in production only). */
 export function SettingsMarketDataPage() {
   const { status, refresh } = useMarketData()
   const [loaded, setLoaded] = useState(false)
@@ -29,13 +32,22 @@ export function SettingsMarketDataPage() {
 
   const label = status ? STATE_LABEL[status.state] : null
   const hours = status?.hours_remaining
+  const follower = isFollower(status)
 
   return (
     <div className="max-w-2xl">
-      <p className="text-sm text-gray-500">
-        Market data comes from one Schwab connection shared by every user. Schwab ends it 7 days after each
-        login, so reconnect before then. You can reconnect at any time; the new connection lasts 7 days from now.
-      </p>
+      {follower ? (
+        <p className="text-sm text-gray-500">
+          This environment follows production&rsquo;s Schwab connection: it pulls the current tokens from production
+          and never reconnects or refreshes itself, because a second Schwab login would end production&rsquo;s
+          connection. Reconnect in production (Settings → Market data there) once a week.
+        </p>
+      ) : (
+        <p className="text-sm text-gray-500">
+          Market data comes from one Schwab connection shared by every user. Schwab ends it 7 days after each
+          login, so reconnect before then. You can reconnect at any time; the new connection lasts 7 days from now.
+        </p>
+      )}
 
       <div className="mt-4 rounded-lg border border-gray-200 bg-white">
         {!status ? (
@@ -43,6 +55,17 @@ export function SettingsMarketDataPage() {
         ) : (
           <dl className="divide-y divide-gray-100 text-sm">
             <Row label="Provider"><span className="capitalize">{status.provider}</span></Row>
+            <Row label="Token source">{follower ? 'Production (token follower)' : 'This server'}</Row>
+            {follower && (
+              <>
+                <Row label="Last pull">{fmt(status.last_pull_at)}</Row>
+                <Row label="Last pull outcome">
+                  {status.last_pull_outcome
+                    ? <span className={status.last_pull_outcome === 'ok' ? '' : 'text-red-700'}>{PULL_OUTCOME_LABEL[status.last_pull_outcome]}</span>
+                    : '—'}
+                </Row>
+              </>
+            )}
             <Row label="State">
               {label && <span className={`rounded px-2 py-0.5 text-xs font-medium ${label.className}`}>{label.text}</span>}
             </Row>
@@ -56,12 +79,19 @@ export function SettingsMarketDataPage() {
         )}
       </div>
 
-      <div className="mt-4 flex items-center gap-3">
-        <ReconnectSchwabButton />
-        <span className="text-xs text-gray-400">
-          Fallback: run <span className="font-mono">scripts/schwab_auth.py</span> against the server's database.
-        </span>
-      </div>
+      {follower ? (
+        <div className="mt-4 flex items-center gap-3">
+          <PullTokensButton />
+          <span className="text-xs text-gray-400">At most one pull a minute. Reconnect is disabled here.</span>
+        </div>
+      ) : (
+        <div className="mt-4 flex items-center gap-3">
+          <ReconnectSchwabButton />
+          <span className="text-xs text-gray-400">
+            Fallback: run <span className="font-mono">scripts/schwab_auth.py</span> against the server's database.
+          </span>
+        </div>
+      )}
     </div>
   )
 }

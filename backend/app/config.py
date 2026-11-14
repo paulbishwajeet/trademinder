@@ -19,6 +19,12 @@ class Settings(BaseSettings):
     # Market data provider behind app.services.market_data. Only "schwab" exists today; anything
     # else fails at startup rather than at the first market data call.
     market_data_provider: str = "schwab"
+    # Token follower (dev only): production's origin, e.g. https://tm.example.com. Set → this environment never
+    # calls Schwab's token endpoint and pulls the token pair from production instead. Unset → today's behavior.
+    schwab_token_sync_url: str = ""
+    # Shared secret (32+ characters) for the token export. Production: enables POST /api/market-data/sync/tokens.
+    # Dev: sent with each pull. Never logged.
+    schwab_token_sync_secret: str = ""
 
     # Seeds the first (admin) user in migration 015. That row is the bootstrap admin: the first Google
     # sign-in with this email binds to it (and so to the existing data).
@@ -61,6 +67,25 @@ class Settings(BaseSettings):
         return value
 
     @model_validator(mode="after")
+    def _token_sync(self):
+        """Refuse to start with a half or weak token-sync configuration."""
+        self.schwab_token_sync_url = self.schwab_token_sync_url.strip().rstrip("/")
+        self.schwab_token_sync_secret = self.schwab_token_sync_secret.strip()
+        if self.schwab_token_sync_secret and len(self.schwab_token_sync_secret) < 32:
+            raise ValueError("SCHWAB_TOKEN_SYNC_SECRET must be at least 32 characters (openssl rand -hex 32)")
+        url = self.schwab_token_sync_url
+        if url:
+            if not self.schwab_token_sync_secret:
+                raise ValueError("SCHWAB_TOKEN_SYNC_URL is set (token follower mode) but SCHWAB_TOKEN_SYNC_SECRET is not")
+            local = re.fullmatch(r"http://(localhost|127\.0\.0\.1)(:\d+)?", url)
+            if not (local or re.fullmatch(r"https://[A-Za-z0-9.\-]+(:\d+)?", url)):
+                raise ValueError(
+                    "SCHWAB_TOKEN_SYNC_URL must be production's https origin, e.g. https://tm.example.com "
+                    "(plain http only for localhost)"
+                )
+        return self
+
+    @model_validator(mode="after")
     def _https_needs_google(self):
         """Fail fast: a production (https) deployment without Google sign-in configured can't log anyone in."""
         if self.public_base_url.startswith("https://"):
@@ -73,6 +98,16 @@ class Settings(BaseSettings):
             if missing:
                 raise ValueError(f"PUBLIC_BASE_URL is https but these are not set: {', '.join(missing)}")
         return self
+
+    @property
+    def token_follower(self) -> bool:
+        """Dev mode: pull Schwab tokens from production instead of refreshing (or reconnecting) here."""
+        return bool(self.schwab_token_sync_url)
+
+    @property
+    def token_export_enabled(self) -> bool:
+        """Production: serve the token pair to followers. Never on a follower itself."""
+        return bool(self.schwab_token_sync_secret) and not self.token_follower
 
     @property
     def secure_cookies(self) -> bool:

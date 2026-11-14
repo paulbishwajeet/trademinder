@@ -1,8 +1,9 @@
 import re
 import uuid
 from datetime import datetime
-from typing import Annotated, Optional
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field
+from decimal import Decimal
+from typing import Annotated, Literal, Optional
+from pydantic import AfterValidator, BaseModel, BeforeValidator, ConfigDict, Field
 
 # Broker is free text; this is the list the UI offers.
 KNOWN_BROKERS = ["E*TRADE", "Schwab", "Fidelity", "Robinhood", "Other"]
@@ -21,6 +22,71 @@ def _no_account_number(label: str) -> str:
 
 
 ExternalLabel = Annotated[str, Field(min_length=1, max_length=100), AfterValidator(_no_account_number)]
+
+# Account facts (migration 019). Values mirror app.services.account_facts; the KB matches on the
+# account_tax_status / account_purpose spellings.
+TaxTreatment = Literal["taxable", "traditional_ira", "roth_ira", "other_tax_advantaged"]
+AccountPurpose = Literal["trading", "long_term"]
+MarginType = Literal["cash", "limited_margin", "margin", "portfolio_margin"]
+OptionsTier = Literal["none", "covered", "cash_secured_and_long", "spreads", "uncovered"]
+AccountTaxStatus = Literal["taxable", "tax_advantaged"]
+
+
+def _blank_to_none(value):
+    if isinstance(value, str):
+        value = value.strip()
+        return value or None
+    return value
+
+
+OptionsLevelLabel = Annotated[Optional[Annotated[str, Field(max_length=40)]], BeforeValidator(_blank_to_none)]
+
+
+Objective = Literal["income", "growth", "mixed"]
+AssignmentStance = Literal["willing", "selective", "unwilling"]
+LimitSource = Literal["account", "default", "cash_account", "position_limit"]
+
+
+class LimitInfo(BaseModel):
+    """One defaulted limit. `source` says where `effective` came from: the account's stored value, the
+    house default, a cash account (margin limit 0), or the position limit capping the speculative default."""
+    stored: Optional[Decimal] = None
+    effective: Decimal
+    source: LimitSource
+    default: Decimal
+
+
+class AccountLimits(BaseModel):
+    max_position_pct: LimitInfo
+    max_speculative_position_pct: LimitInfo
+    max_margin_used_pct: LimitInfo
+
+
+class AccountGoalsInput(BaseModel):
+    """Goal and preferences, every one optional. On update, absent = left alone and an explicit null
+    clears it (a limit then falls back to the house default). Ranges and cross-field rules run in the
+    service (422 with a code)."""
+    objective: Optional[Objective] = None
+    assignment_stance: Optional[AssignmentStance] = None
+    monthly_premium_target: Optional[Decimal] = None
+    annual_yield_target_pct: Optional[Decimal] = None
+    max_position_pct: Optional[Decimal] = None
+    max_speculative_position_pct: Optional[Decimal] = None
+    max_margin_used_pct: Optional[Decimal] = None
+    min_cash_reserve_pct: Optional[Decimal] = None
+    defensive_at_loss_pct: Optional[Decimal] = None
+
+
+class AccountFactsInput(BaseModel):
+    """Every fact is optional. On update, an absent field is left alone and an explicit null clears it.
+    Combination rules and money checks run in the service (422 with a code)."""
+    tax_treatment: Optional[TaxTreatment] = None
+    account_purpose: Optional[AccountPurpose] = None
+    margin_type: Optional[MarginType] = None
+    options_tier: Optional[OptionsTier] = None
+    options_level_label: OptionsLevelLabel = None
+    net_liquidation_value: Optional[Decimal] = None
+    cash_balance: Optional[Decimal] = None
 
 
 class AccountSummary(BaseModel):
@@ -49,9 +115,36 @@ class AccountResponse(AccountSummary):
     category_ids: list[uuid.UUID] = []
     # True when the account holds nothing and may be hard-deleted (otherwise archive it).
     can_delete: bool = False
+    # Account facts. Money serializes as JSON strings.
+    tax_treatment: Optional[TaxTreatment] = None
+    account_purpose: Optional[AccountPurpose] = None
+    margin_type: Optional[MarginType] = None
+    options_tier: Optional[OptionsTier] = None
+    options_level_label: Optional[str] = None
+    net_liquidation_value: Optional[Decimal] = None
+    cash_balance: Optional[Decimal] = None
+    values_as_of: Optional[datetime] = None
+    facts_updated_at: Optional[datetime] = None
+    # Derived, read-only
+    account_tax_status: Optional[AccountTaxStatus] = None
+    facts_complete: bool = False
+    # Goal and preferences. Percent and money serialize as JSON strings; 10 means 10%.
+    objective: Optional[Objective] = None
+    assignment_stance: Optional[AssignmentStance] = None
+    monthly_premium_target: Optional[Decimal] = None
+    annual_yield_target_pct: Optional[Decimal] = None
+    max_position_pct: Optional[Decimal] = None
+    max_speculative_position_pct: Optional[Decimal] = None
+    max_margin_used_pct: Optional[Decimal] = None
+    min_cash_reserve_pct: Optional[Decimal] = None
+    defensive_at_loss_pct: Optional[Decimal] = None
+    goals_updated_at: Optional[datetime] = None
+    # Derived, read-only
+    limits: AccountLimits
+    goals_complete: bool = False
 
 
-class AccountCreate(BaseModel):
+class AccountCreate(AccountFactsInput, AccountGoalsInput):
     broker: Annotated[str, Field(min_length=1, max_length=30)]
     nickname: Annotated[str, Field(min_length=1, max_length=50)]
     last_four: Optional[LastFour] = None
@@ -62,7 +155,7 @@ class AccountCreate(BaseModel):
     default_category_id: Optional[uuid.UUID] = None
 
 
-class AccountUpdate(BaseModel):
+class AccountUpdate(AccountFactsInput, AccountGoalsInput):
     broker: Optional[Annotated[str, Field(min_length=1, max_length=30)]] = None
     nickname: Optional[Annotated[str, Field(min_length=1, max_length=50)]] = None
     last_four: Optional[LastFour] = None

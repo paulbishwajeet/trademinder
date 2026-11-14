@@ -20,6 +20,123 @@ Why the project is the way it is. **Newest entries first.**
 
 ---
 
+### 2026-11-13 — Schwab token follower: one grant, owned by production; dev pulls its tokens
+- **Area:** backend, frontend, infra
+- **Type:** endpoint, convention, ops learning, deviation
+- **What changed:**
+  - **Settings:** new `SCHWAB_TOKEN_SYNC_URL` (dev only: production's origin) and `SCHWAB_TOKEN_SYNC_SECRET`
+    (both sides, ≥ 32 chars). The app refuses to start with a half or weak configuration. With the URL unset, the
+    app behaves as before. `docker-compose.prod.yml` passes the secret through.
+  - **Production export:** `POST /api/market-data/sync/tokens`.
+    - It's outside the session seam and authenticated only by the `X-Token-Sync-Secret` header, compared in
+      constant time.
+    - Responses: 404 unless enabled; 401 `sync_unauthorized`; 503 `upstream_offline`; 502 `upstream_error`.
+    - It ensures ≥ 10 minutes of access-token life under the provider's refresh lock.
+  - **Dev (follower):** the provider never calls Schwab's token endpoint.
+    - Every refresh path pulls from production instead: single-flight under the provider lock, at most one
+      attempt a minute, one retry of the original call.
+    - Failures use the existing offline mode, and a later pull recovers it.
+  - **401s:** in both modes, a 401 on a data call now renews once and retries once. Before, there was no retry.
+  - **Status and pull now:** `GET /market-data/status` adds `token_source`, `last_pull_at` and
+    `last_pull_outcome`. The new admin `POST /market-data/sync/pull` returns 409 `not_follower` and 429
+    `pull_rate_limited`.
+  - **Reconnect on a follower:** the endpoints return 409 `token_follower`, the UI hides Reconnect (Pull now
+    instead), and the CLI asks for confirmation.
+- **Why (ops learning):** reconnecting in dev and then in production created two Schwab grants. A new grant
+  invalidates the previous refresh token, so one environment failed at its next refresh. That reverses the
+  2026-11-12 observation that two logins could coexist. There can be one grant only.
+- **Deviations:** the prompt doesn't cover these:
+  - the export is also 404 on a server that is itself a follower, so there are no chained followers;
+  - a transient refresh failure on production is 502 `upstream_error`, not `upstream_offline` (the follower
+    treats it as `unreachable` and retries after a minute);
+  - "Pull now" obeys the same one-minute limit (429);
+  - the export route is listed in `tests/test_auth.py` EXEMPT, because it has its own secret auth.
+- **Impact:**
+  - **No migration**; the head stays 020.
+  - **Weekly routine:** reconnect in production only (runbook "Weekly routine").
+  - **NAS:** the stack needs `SCHWAB_TOKEN_SYNC_SECRET` and a redeploy before dev can follow.
+- **Links:** `feature/schwab-token-follower` · `2e08f53` · `context/feature-schwab-token-follower.md` ·
+  `docs/superpowers/specs/2026-11-13-schwab-token-follower-design.md`
+
+### 2026-11-13 — Account goal and preferences, part 2 of the account profile (migration 020)
+- **Area:** backend, frontend, data
+- **Type:** schema, endpoint, convention, deviation
+- **What changed:**
+  - **Migration 020:** nullable columns on `brokerage_accounts`:
+    - `objective`, `assignment_stance`;
+    - `monthly_premium_target`, `annual_yield_target_pct`;
+    - `max_position_pct`, `max_speculative_position_pct`, `max_margin_used_pct`;
+    - `min_cash_reserve_pct`, `defensive_at_loss_pct`;
+    - `goals_updated_at`.
+
+    There are enum and range `CHECK`s, existing accounts stay unset, and the downgrade is clean.
+  - **House defaults:** `app/services/house_defaults.py` holds the KB's house rules: max position 10%, max
+    speculative position 3% (the top of 1–3%), max margin used 30%. They're planned to move to the imported KB.
+  - **Stored versus effective:** an unset limit means the house default, never "no limit", and defaults are never
+    written to the row. The accounts responses carry `limits.<field> = {stored, effective, source, default}`,
+    plus `goals_complete` and `goals_updated_at`; an explicit `null` reverts a limit to the default. There are no
+    new endpoints.
+  - **Rules:** `cash_account_margin` and `speculative_above_position` are 422 `{detail, code, fields}`. Facts and
+    goals are now validated in one pass, so both edit orders fail.
+  - **UI:** Settings → Accounts gets a "Goal and preferences" dialog section with segmented choices, optional
+    targets, and limit inputs labelled `default` with **Use default**. The margin limit is hidden on cash
+    accounts. A "Goal not set" marker sits next to "Facts incomplete" in a renamed "Profile" column.
+- **Why:**
+  - Guidance will weigh moves by goal and preferences, after gating them by facts.
+  - Keeping defaults out of the row lets a later KB import change them for every account that didn't override
+    them.
+- **Deviation:** the prompt named `source` as `account` or `default`. Two more values say why when neither
+  applies:
+  - `cash_account`: the margin limit on a cash account is 0;
+  - `position_limit`: the speculative default is capped at a tighter position limit, so tightening one limit
+    doesn't force setting a second.
+- **Impact:**
+  - **Limited margin:** `limited_margin` gets no margin rule; that's an open question.
+  - **`default` field:** each limit object carries the house default, so the UI never duplicates the constants.
+  - **Unused for now:** nothing reads these fields yet.
+- **Links:** `feature/account-goals` · `1c9ec72` · `context/feature-account-goals.md` ·
+  `docs/superpowers/specs/2026-11-13-account-goals-design.md`
+
+### 2026-11-13 — Account facts, part 1 of the account profile (migration 019)
+- **Area:** backend, frontend, data
+- **Type:** schema, endpoint, convention
+- **What changed:**
+  - **Migration 019:** nullable columns on `brokerage_accounts`:
+    - `tax_treatment`, `account_purpose`, `margin_type`, `options_tier`, `options_level_label`;
+    - `net_liquidation_value`, `cash_balance`, `values_as_of`;
+    - `facts_updated_at`.
+
+    The enumerations are strings with named `CHECK`s, and money also has `≥ 0` checks. Existing accounts are left
+    unset, and the downgrade drops everything.
+  - **Options tier vocabulary:** broker-neutral and cumulative: `none` → `covered` → `cash_secured_and_long` →
+    `spreads` → `uncovered`. The broker's own name for the level goes in `options_level_label`.
+  - **KB-aligned spellings:** `account_purpose` (`trading` / `long_term`) is stored. `account_tax_status`
+    (`taxable` / `tax_advantaged`) is derived from `tax_treatment`.
+  - **Endpoint shape (no new endpoints):**
+    - The accounts create, patch and list (and create-and-link) carry the facts.
+    - Responses add `account_tax_status`, `facts_complete`, `facts_updated_at` and `values_as_of`.
+    - Rule violations return 422 `{detail, code, fields}` (`tax_advantaged_margin`, `uncovered_requires_margin`,
+      `negative_value`, `invalid_value`), checked on the merged stored + request values.
+  - **UI:** Settings → Accounts gets an "Account facts" dialog section, a Facts column with a **Facts
+    incomplete** marker that opens the dialog on that section, and a Value column that is muted when older than 7
+    days.
+  - **Convention:** `fields` joins the structured-error body; `ApiError.fields` in the SPA.
+- **Why:**
+  - Later KB-powered guidance needs account-level gates.
+  - Facts are per account, because an IRA and a taxable account at the same broker differ.
+  - Brokers number option levels differently, hence a neutral tier.
+  - No balance source existed: the Margin page parses an upload in the browser and stores nothing, and the
+    extension's status/reconcile payloads carry positions only. So the balances are entered by hand.
+- **Impact:**
+  - **Timestamps:** `facts_updated_at` moves only when one of the five facts actually changes. Money edits move
+    `values_as_of` instead, so daily balance updates don't make guidance stale. This is a choice the prompt left
+    open.
+  - **Negative cash:** `cash_balance` can't be negative, although a margin debit is negative cash in reality. This
+    is an open question for later.
+  - **Unused for now:** nothing reads the facts yet.
+- **Links:** `feature/account-facts` · `11e5039` · `context/feature-account-facts.md` ·
+  `docs/superpowers/specs/2026-11-13-account-facts-design.md`
+
 ### 2026-11-12 — In-app Schwab reconnect, phase 1: paste the redirect URL
 - **Area:** backend, frontend, infra
 - **Type:** endpoint, convention, deferred

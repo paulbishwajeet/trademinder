@@ -72,7 +72,53 @@ export interface AccountLink {
   last_seen_at: string | null
 }
 
-export interface BrokerageAccount extends AccountSummary {
+// Account facts (gates later guidance reads). null = not set. Vocabulary and labels: src/lib/accountFacts.ts.
+export type TaxTreatment = 'taxable' | 'traditional_ira' | 'roth_ira' | 'other_tax_advantaged'
+export type AccountPurpose = 'trading' | 'long_term'
+export type MarginType = 'cash' | 'limited_margin' | 'margin' | 'portfolio_margin'
+export type OptionsTier = 'none' | 'covered' | 'cash_secured_and_long' | 'spreads' | 'uncovered'
+export type AccountTaxStatus = 'taxable' | 'tax_advantaged'
+
+export interface AccountFacts {
+  tax_treatment: TaxTreatment | null
+  account_purpose: AccountPurpose | null
+  margin_type: MarginType | null
+  options_tier: OptionsTier | null
+  options_level_label: string | null
+  net_liquidation_value: string | null  // Decimal as string; parseFloat to display
+  cash_balance: string | null
+}
+
+// Goal and preferences (weights later guidance reads). null = not set. Percent as string: "10.00" = 10%.
+// Vocabulary and labels: src/lib/accountGoals.ts.
+export type Objective = 'income' | 'growth' | 'mixed'
+export type AssignmentStance = 'willing' | 'selective' | 'unwilling'
+
+export interface AccountGoals {
+  objective: Objective | null
+  assignment_stance: AssignmentStance | null
+  monthly_premium_target: string | null
+  annual_yield_target_pct: string | null
+  max_position_pct: string | null              // null = house default
+  max_speculative_position_pct: string | null  // null = house default
+  max_margin_used_pct: string | null           // null = house default
+  min_cash_reserve_pct: string | null
+  defensive_at_loss_pct: string | null
+}
+
+export type LimitField = 'max_position_pct' | 'max_speculative_position_pct' | 'max_margin_used_pct'
+// account: stored value · default: house default · cash_account: margin limit 0 on a cash account ·
+// position_limit: the speculative default capped at a tighter position limit
+export type LimitSource = 'account' | 'default' | 'cash_account' | 'position_limit'
+
+export interface LimitInfo {
+  stored: string | null
+  effective: string
+  source: LimitSource
+  default: string  // the house default, even while overridden
+}
+
+export interface BrokerageAccount extends AccountSummary, AccountFacts, AccountGoals {
   link: AccountLink | null
   default_category_id: string | null
   is_default: boolean
@@ -81,6 +127,13 @@ export interface BrokerageAccount extends AccountSummary {
   created_at: string
   category_ids: string[]
   can_delete: boolean  // empty account — may be hard-deleted; otherwise archive it
+  values_as_of: string | null      // when a money value last changed
+  facts_updated_at: string | null  // when a fact last changed (money excluded)
+  account_tax_status: AccountTaxStatus | null  // derived, KB spelling
+  facts_complete: boolean          // tax treatment, purpose, margin type and options tier all set
+  goals_updated_at: string | null  // when a goal or preference last changed
+  limits: Record<LimitField, LimitInfo>
+  goals_complete: boolean          // objective and assignment stance both set
 }
 
 export interface Category {
@@ -136,7 +189,7 @@ export interface DashboardSummary {
   market_data_offline?: boolean
 }
 
-export interface BrokerageAccountCreate {
+export interface BrokerageAccountCreate extends Partial<AccountFacts>, Partial<AccountGoals> {
   broker: string
   nickname: string
   last_four?: string | null
@@ -146,7 +199,8 @@ export interface BrokerageAccountCreate {
   default_category_id?: string | null
 }
 
-export interface BrokerageAccountUpdate {
+// Facts and goals: omit to leave alone, null to clear (a limit then falls back to the house default).
+export interface BrokerageAccountUpdate extends Partial<AccountFacts>, Partial<AccountGoals> {
   broker?: string
   nickname?: string
   last_four?: string | null

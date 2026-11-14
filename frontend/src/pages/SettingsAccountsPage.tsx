@@ -6,18 +6,27 @@ import { accountsApi } from '../api/accounts'
 import { useAccounts } from '../context/AccountsContext'
 import { AccountDialog } from '../components/Accounts/AccountDialog'
 import { accountPath } from '../lib/paths'
+import { factsSummary, formatMoney, valuesAreStale } from '../lib/accountFacts'
+import { goalsSummary } from '../lib/accountGoals'
 import type { BrokerageAccount } from '../types'
 
 export function SettingsAccountsPage() {
   const { accounts, categories, refresh } = useAccounts()
   const [editing, setEditing] = useState<BrokerageAccount | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [dialogSection, setDialogSection] = useState<'facts' | 'goals' | undefined>(undefined)
   const [confirmDelete, setConfirmDelete] = useState<BrokerageAccount | null>(null)
   const [confirmUnlink, setConfirmUnlink] = useState<BrokerageAccount | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const categoryName = (id: string | null) => categories.find(c => c.id === id)?.name ?? '—'
+
+  function openEditor(account: BrokerageAccount | null, section?: 'facts' | 'goals') {
+    setEditing(account)
+    setDialogSection(section)
+    setDialogOpen(true)
+  }
 
   async function run(account: BrokerageAccount, action: () => Promise<unknown>) {
     setBusyId(account.id)
@@ -49,6 +58,8 @@ export function SettingsAccountsPage() {
               <th className="px-4 py-2">Last four</th>
               <th className="px-4 py-2">Categories</th>
               <th className="px-4 py-2">Default category</th>
+              <th className="px-4 py-2">Profile</th>
+              <th className="px-4 py-2">Value</th>
               <th className="px-4 py-2">E*TRADE link</th>
               <th className="px-4 py-2">Status</th>
               <th className="px-4 py-2 text-right">Actions</th>
@@ -64,6 +75,48 @@ export function SettingsAccountsPage() {
                 <td className="px-4 py-2">{a.last_four ?? '—'}</td>
                 <td className="px-4 py-2">{a.category_ids.length}</td>
                 <td className="px-4 py-2">{categoryName(a.default_category_id)}</td>
+                <td className="px-4 py-2">
+                  {a.facts_complete && a.goals_complete ? (
+                    <div className="text-gray-700">
+                      <div>{factsSummary(a)}</div>
+                      <div className="text-xs text-gray-500">{goalsSummary(a)}</div>
+                    </div>
+                  ) : (
+                    <div className="space-y-1">
+                      {a.facts_complete
+                        ? <div className="text-gray-700">{factsSummary(a)}</div>
+                        : (
+                          <button onClick={() => openEditor(a, 'facts')} disabled={busyId === a.id}
+                            title={factsSummary(a) || 'No facts set yet'}
+                            className="mr-1 whitespace-nowrap rounded bg-amber-100 px-2 py-0.5 text-xs text-amber-800 hover:bg-amber-200 disabled:opacity-50">
+                            Facts incomplete
+                          </button>
+                        )}
+                      {a.goals_complete
+                        ? <div className="text-xs text-gray-500">{goalsSummary(a)}</div>
+                        : (
+                          <button onClick={() => openEditor(a, 'goals')} disabled={busyId === a.id}
+                            title={goalsSummary(a) || 'No goal set yet'}
+                            className="whitespace-nowrap rounded bg-sky-100 px-2 py-0.5 text-xs text-sky-800 hover:bg-sky-200 disabled:opacity-50">
+                            Goal not set
+                          </button>
+                        )}
+                    </div>
+                  )}
+                </td>
+                <td className="whitespace-nowrap px-4 py-2">
+                  {a.net_liquidation_value === null && a.cash_balance === null
+                    ? <span className="text-gray-400">—</span>
+                    : (
+                      <div className={valuesAreStale(a.values_as_of) ? 'text-gray-400' : 'text-gray-800'}>
+                        <div>{formatMoney(a.net_liquidation_value)}</div>
+                        <div className="text-xs">
+                          cash {formatMoney(a.cash_balance)}
+                          {a.values_as_of && <> · as of {new Date(a.values_as_of).toLocaleDateString()}</>}
+                        </div>
+                      </div>
+                    )}
+                </td>
                 <td className="px-4 py-2">
                   {a.link ? (
                     <div className="flex items-start gap-2">
@@ -89,7 +142,7 @@ export function SettingsAccountsPage() {
                       : <span className="rounded bg-green-100 px-2 py-0.5 text-xs text-green-700">Active</span>}
                 </td>
                 <td className="space-x-2 whitespace-nowrap px-4 py-2 text-right">
-                  <button onClick={() => { setEditing(a); setDialogOpen(true) }}
+                  <button onClick={() => openEditor(a)}
                     className="text-blue-600 hover:underline disabled:opacity-50" disabled={busyId === a.id}>Edit</button>
                   {a.is_archived
                     ? <button onClick={() => run(a, () => accountsApi.restore(a.id))}
@@ -107,12 +160,12 @@ export function SettingsAccountsPage() {
         </table>
       </div>
 
-      <button onClick={() => { setEditing(null); setDialogOpen(true) }}
+      <button onClick={() => openEditor(null)}
         className="mt-4 rounded bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700">
         + Add account
       </button>
 
-      <AccountDialog open={dialogOpen} onOpenChange={setDialogOpen} account={editing} />
+      <AccountDialog open={dialogOpen} onOpenChange={setDialogOpen} account={editing} initialSection={dialogSection} />
 
       <Dialog.Root open={confirmUnlink !== null} onOpenChange={o => { if (!o) setConfirmUnlink(null) }}>
         <Dialog.Portal>

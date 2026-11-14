@@ -166,6 +166,24 @@ Ownership is **user → brokerage account → trades / wheels / spreads**.
 - **`screener_account_memberships`** — one screener row per user per symbol (market data fetched once); each symbol belongs to one or more accounts. Screener notes carry an `account_id` because a note reflects one account's situation.
 - Every user-owned table carries `user_id`. `trades`, `wheel_sessions`, `trade_sessions` (spreads) and `screener_commentary` also carry `account_id`; slots, legs, premium logs, rationale, commentary, alerts and signals inherit their account through their parent. Market data (`schwab_tokens`, quotes, technicals, signal caches) is app-level and shared.
 - Migration 016 backfilled all existing data to the owner and a default account nicknamed "E\*TRADE".
+- **Account facts (migration 019):** each account can record its tax treatment (taxable, traditional IRA, Roth IRA,
+  other tax-advantaged), purpose (trading, long term), margin type (cash, limited margin, margin, portfolio margin),
+  a broker-neutral options tier (none, covered, cash-secured and long, spreads, uncovered) with the broker's own
+  label for it, and optional net liquidation value and cash with an as-of date.
+  - All of them are optional and editable in Settings → Accounts, and accounts missing any of the four main facts
+    show **Facts incomplete**.
+  - Impossible combinations are rejected: an IRA with margin, or uncovered options without margin.
+  - Nothing else in the app reads them yet.
+- **Goal and preferences (migration 020):** each account can also record its objective (income, growth, mixed),
+  assignment stance (willing, selective, unwilling), optional monthly premium and annual yield targets, and risk
+  limits.
+  - **Limits:** max position, max speculative position and max margin used fall back to house defaults (10%, 3%,
+    30%) until you override them, and **Use default** resets one. Minimum cash reserve and defensive-at-loss have
+    no default.
+  - **Rules:** a cash account can't have a margin limit, and the speculative limit can't exceed the position
+    limit.
+  - **Display:** accounts without an objective and stance show **Goal not set**.
+  - Nothing else in the app reads them yet.
 
 ### Migration 001 — Initial Schema
 
@@ -326,9 +344,20 @@ no retries and no log spam.
 | Mixed endpoints (trades, trade detail, wheel detail, active slots, positions/status, dashboard summary, screener list) | Return their database data with the `X-Market-Data-Offline: true` header. Market fields are `null` (screener rows are served as stored, with `stale: true`). Object responses also carry `market_data_offline: true`. |
 | Everything else | Keeps working: journal, commentary, wheels, slot resolves, accounts, Reconcile, categories, margin CSV analysis. |
 
-- **Recovery (re-auth):** **Reconnect in the app**: the admin clicks **Reconnect Schwab** (on the banner or in
-  Settings → Market data), logs in at Schwab, and pastes the address of the page that fails to load afterwards.
-  The new tokens take effect immediately, with no restart; runbook: `docs/deployment/schwab-reconnect.md`.
+- **Reconnect only in production; dev follows.**
+  - **One grant:** each Schwab login invalidates the previous grant's refresh token, so only production
+    reconnects and refreshes.
+  - **Dev as a token follower:** dev sets `SCHWAB_TOKEN_SYNC_URL` (production's https origin) and the shared
+    `SCHWAB_TOKEN_SYNC_SECRET`, which production also sets.
+    - Dev then pulls production's current tokens instead of refreshing: when its access token runs low, after a
+      401, or while offline. It pulls at most once a minute, and the original call is retried once.
+    - Dev's Reconnect is disabled (409, hidden), and Settings → Market data shows "Token source: Production",
+      the last pull and **Pull now**.
+  - **Setup:** `docs/deployment/schwab-reconnect.md` ("One-time setup").
+- **Recovery (re-auth):** **Reconnect in the production app**: the admin clicks **Reconnect Schwab** (on the banner
+  or in Settings → Market data), logs in at Schwab, and pastes the address of the page that fails to load
+  afterwards. The new tokens take effect immediately, with no restart; runbook:
+  `docs/deployment/schwab-reconnect.md`.
   - **CLI fallback:** `python scripts/schwab_auth.py` writes the row of whichever database `DATABASE_URL` points
     to; the provider re-reads the row at most once a minute and resumes on its own.
   - Going offline and coming back are each logged once.
@@ -337,12 +366,18 @@ no retries and no log spam.
   (admin only), and `GET /api/me` tells the SPA whether the user is an admin.
 - **Reconnect endpoints** (admin only): `start` returns Schwab's authorize URL with a signed, single-use,
   10-minute state. `complete` validates the pasted URL, exchanges the code, and stores the tokens. Errors are
-  `{detail, code}` (400/409/502). The CLI and the app share `app/services/schwab_oauth.py`.
+  `{detail, code}` (400/409/502). The CLI and the app share `app/services/schwab_oauth.py`. On a token follower
+  both return 409 `token_follower`.
+- **Token sync:** `POST /api/market-data/sync/tokens` is server to server, outside the session check, and
+  authenticated only by the `X-Token-Sync-Secret` header. It's production → dev, and returns 404 unless production
+  sets the secret. `POST /api/market-data/sync/pull` (admin, follower only) pulls now.
 
 ```
 GET    /api/market-data/status      (admin) provider, state ok|expiring|critical|offline, expiry, last success/error
 POST   /api/market-data/reconnect/start     (admin) → { authorize_url, state_expires_at }
 POST   /api/market-data/reconnect/complete  (admin) { redirect_url } → same shape as /status
+POST   /api/market-data/sync/pull   (admin, follower only) pull tokens from production now → same shape as /status
+POST   /api/market-data/sync/tokens (server to server, X-Token-Sync-Secret only) production → follower token pair
 GET    /api/me                      current user (id, email, display_name, role)
 GET    /api/market/quote/{ticker}
 GET    /api/market/options/{ticker}
@@ -568,8 +603,9 @@ TradeMinder is multi-user. Sign-in is with **Google**, which serves only as the 
   last-used time, which the service worker sends as a bearer header on every call. Only extension IDs in
   `EXTENSION_IDS` can receive tokens.
 - **Settings → Connected extensions** lists and revokes them.
-- **Schwab re-auth:** the in-app **Reconnect Schwab** (admin only) is the default, and `scripts/schwab_auth.py` is
-  the fallback. See `docs/deployment/schwab-reconnect.md`.
+- **Schwab re-auth:** the in-app **Reconnect Schwab** (admin only) in production is the default, and
+  `scripts/schwab_auth.py` is the fallback. Never reconnect on dev: dev follows production's tokens. See
+  `docs/deployment/schwab-reconnect.md`.
 
 Local dev with real sign-in: set `PUBLIC_BASE_URL=http://localhost:5430` and the Google client id/secret in
 `.env`, and add `http://localhost:5430/api/auth/google/callback` to the OAuth client's redirect URIs.
